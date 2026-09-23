@@ -190,7 +190,7 @@
           <button id="nav-my-shifts-btn" onclick="switchView('my-shifts')" class="px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white flex items-center">
             📋 My Shifts <span id="my-shifts-count" class="hidden ml-1.5 px-2 py-0.2 bg-amber-400 text-amber-950 font-bold rounded-full text-xs">0</span>
           </button>
-          <button id="nav-admin-btn" onclick="switchView('admin')" class="hidden px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white flex items-center gap-1.5">
+          <button id="nav-admin-btn" onclick="switchView('admin')" class="hidden px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white items-center gap-1.5">
             🛡️ Admin Panel
           </button>
         </div>
@@ -235,7 +235,7 @@
       <!-- VIEW 1: Schedule View -->
       <div id="view-schedule" class="space-y-4">
         <!-- Admin Action Bar (Visible to Admins) -->
-        <div id="admin-schedule-bar" class="hidden bg-amber-900/10 border border-amber-300/80 rounded-xl p-3.5 flex flex-wrap justify-between items-center gap-3">
+        <div id="admin-schedule-bar" class="hidden bg-amber-900/10 border border-amber-300/80 rounded-xl p-3.5 flex-wrap justify-between items-center gap-3">
           <div class="flex items-center gap-2.5">
             <span class="text-xl">👑</span>
             <div>
@@ -503,6 +503,6 @@
 
   <!-- Project Configuration (Ignored by Git, loaded from firebase-config.js) -->
   <script src="firebase-config.js"></script>
-  <script src="app.js?v=2.3.0"></script>
+  <script src="app.js?v=2.4.0"></script>
 </body>
 </html>

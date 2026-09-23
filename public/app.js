@@ -61,26 +61,52 @@ window.filterCategory = filterCategory;
 window.claimShift = claimShift;
 window.cancelShift = cancelShift;
 
-// Admin & Manager Window Exports
-window.openCreateShiftModal = openCreateShiftModal;
-window.closeCreateShiftModal = closeCreateShiftModal;
-window.handleCategorySelectChange = handleCategorySelectChange;
-window.handleCreateShiftSubmit = handleCreateShiftSubmit;
-
-window.openAssignManagerModal = openAssignManagerModal;
-window.closeAssignManagerModal = closeAssignManagerModal;
-window.handleSaveManagerAssignment = handleSaveManagerAssignment;
-
+// Manager Window Exports (Guarded by manager/admin role internally)
 window.managerClaimShift = managerClaimShift;
 window.managerUnassignShift = managerUnassignShift;
-
 window.openShiftRosterModal = openShiftRosterModal;
 window.closeShiftRosterModal = closeShiftRosterModal;
-window.adminCancelUserShift = adminCancelUserShift;
 
-window.handleAdminUserSearch = handleAdminUserSearch;
-window.handleAdminRoleFilter = handleAdminRoleFilter;
-window.changeUserRole = changeUserRole;
+// Dynamic Admin Function Management:
+// Ensure NONE of the API functions used by admins are available to non-admin users.
+function updateAdminExports(isAdmin) {
+  const adminFunctionNames = [
+    "openCreateShiftModal",
+    "closeCreateShiftModal",
+    "handleCategorySelectChange",
+    "handleCreateShiftSubmit",
+    "openAssignManagerModal",
+    "closeAssignManagerModal",
+    "handleSaveManagerAssignment",
+    "adminCancelUserShift",
+    "handleAdminUserSearch",
+    "handleAdminRoleFilter",
+    "renderAdminUsers",
+    "changeUserRole",
+  ];
+
+  if (isAdmin) {
+    window.openCreateShiftModal = openCreateShiftModal;
+    window.closeCreateShiftModal = closeCreateShiftModal;
+    window.handleCategorySelectChange = handleCategorySelectChange;
+    window.handleCreateShiftSubmit = handleCreateShiftSubmit;
+    window.openAssignManagerModal = openAssignManagerModal;
+    window.closeAssignManagerModal = closeAssignManagerModal;
+    window.handleSaveManagerAssignment = handleSaveManagerAssignment;
+    window.adminCancelUserShift = adminCancelUserShift;
+    window.handleAdminUserSearch = handleAdminUserSearch;
+    window.handleAdminRoleFilter = handleAdminRoleFilter;
+    window.renderAdminUsers = renderAdminUsers;
+    window.changeUserRole = changeUserRole;
+  } else {
+    adminFunctionNames.forEach(fnName => {
+      delete window[fnName];
+    });
+  }
+}
+
+// Initial state: ensure admin functions are NOT available to non-admin users
+updateAdminExports(false);
 
 // System Initialization
 document.addEventListener("DOMContentLoaded", () => {
@@ -193,6 +219,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const forgotForm = document.getElementById("form-forgot-password");
       if (forgotForm) forgotForm.reset();
       showAuthSubView("tabs");
+      updateRoleUI();
+      updateAdminExports(false);
     }
   });
 });
@@ -202,8 +230,13 @@ function initRoute() {
   const hash = window.location.hash;
   if (hash === "#my-shifts" || window.location.pathname.endsWith("/my-shifts")) {
     switchView("my-shifts");
-  } else if (hash === "#admin" && currentUserRole === "admin") {
-    switchView("admin");
+  } else if (hash === "#admin") {
+    if (currentUserRole === "admin") {
+      switchView("admin");
+    } else {
+      window.location.hash = "#schedule";
+      switchView("schedule");
+    }
   } else {
     switchView("schedule");
   }
@@ -216,6 +249,7 @@ function initRoute() {
       if (currentUserRole === "admin") {
         switchView("admin");
       } else {
+        window.location.hash = "#schedule";
         switchView("schedule");
       }
     } else {
@@ -240,6 +274,7 @@ function switchView(viewName) {
 
   const activeClass = "px-3.5 py-1.5 rounded-md text-sm font-semibold transition bg-amber-700 text-white shadow-sm flex items-center";
   const inactiveClass = "px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white flex items-center";
+  const hiddenAdminClass = "hidden px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white items-center";
 
   if (scheduleView) scheduleView.classList.add("hidden");
   if (myShiftsView) myShiftsView.classList.add("hidden");
@@ -247,7 +282,14 @@ function switchView(viewName) {
 
   if (navScheduleBtn) navScheduleBtn.className = inactiveClass;
   if (navMyShiftsBtn) navMyShiftsBtn.className = inactiveClass;
-  if (navAdminBtn) navAdminBtn.className = inactiveClass;
+
+  if (navAdminBtn) {
+    if (currentUserRole === "admin") {
+      navAdminBtn.className = (viewName === "admin") ? activeClass : inactiveClass;
+    } else {
+      navAdminBtn.className = hiddenAdminClass;
+    }
+  }
 
   if (viewName === "my-shifts") {
     if (myShiftsView) myShiftsView.classList.remove("hidden");
@@ -256,6 +298,10 @@ function switchView(viewName) {
       window.location.hash = "#my-shifts";
     }
   } else if (viewName === "admin") {
+    if (currentUserRole !== "admin") {
+      switchView("schedule");
+      return;
+    }
     if (adminView) adminView.classList.remove("hidden");
     if (navAdminBtn) navAdminBtn.className = activeClass;
     if (window.location.hash !== "#admin") {
@@ -557,8 +603,23 @@ function subscribeToCurrentUserProfile(uid) {
 
     if (currentUserRole === "admin") {
       subscribeToAllUsers();
+      if (window.location.hash === "#admin") {
+        switchView("admin");
+      }
     } else if (currentUserRole === "manager") {
       subscribeToAllUsers();
+      if (currentView === "admin") {
+        switchView("schedule");
+      }
+    } else {
+      if (allUsersUnsubscribe) {
+        allUsersUnsubscribe();
+        allUsersUnsubscribe = null;
+      }
+      allUsersMap.clear();
+      if (currentView === "admin") {
+        switchView("schedule");
+      }
     }
 
     renderShifts(currentShiftsDocs);
@@ -575,6 +636,10 @@ function updateRoleUI() {
   const roleBadge = document.getElementById("user-role-badge");
   const navAdminBtn = document.getElementById("nav-admin-btn");
   const adminScheduleBar = document.getElementById("admin-schedule-bar");
+
+  const activeClass = "px-3.5 py-1.5 rounded-md text-sm font-semibold transition bg-amber-700 text-white shadow-sm flex items-center";
+  const inactiveClass = "px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white flex items-center";
+  const hiddenAdminClass = "hidden px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white items-center";
 
   if (currentUser) {
     if (roleBadge) {
@@ -596,21 +661,25 @@ function updateRoleUI() {
 
   if (currentUserRole === "admin") {
     if (navAdminBtn) {
-      navAdminBtn.classList.remove("hidden");
-      navAdminBtn.classList.add("flex");
+      navAdminBtn.className = (currentView === "admin") ? activeClass : inactiveClass;
     }
     if (adminScheduleBar) {
       adminScheduleBar.classList.remove("hidden");
       adminScheduleBar.classList.add("flex");
     }
+    updateAdminExports(true);
   } else {
     if (navAdminBtn) {
-      navAdminBtn.classList.add("hidden");
-      navAdminBtn.classList.remove("flex");
+      navAdminBtn.className = hiddenAdminClass;
     }
     if (adminScheduleBar) {
       adminScheduleBar.classList.add("hidden");
       adminScheduleBar.classList.remove("flex");
+    }
+    updateAdminExports(false);
+
+    if (currentView === "admin") {
+      switchView("schedule");
     }
   }
 }
@@ -1109,6 +1178,12 @@ async function cancelShift(shiftId) {
 // REQUIREMENT A: Create New Shifts (Admin)
 // ============================================================================
 function openCreateShiftModal() {
+  if (currentUserRole !== "admin") {
+    console.error("Permission denied: Only administrators can create shifts.");
+    alert("Permission denied: Only administrators can create shifts.");
+    return;
+  }
+
   const modal = document.getElementById("create-shift-modal");
   const daySelect = document.getElementById("new-shift-day");
   const catSelect = document.getElementById("new-shift-category");
@@ -1151,7 +1226,8 @@ function openCreateShiftModal() {
 }
 
 function closeCreateShiftModal() {
-  document.getElementById("create-shift-modal").classList.add("hidden");
+  const modal = document.getElementById("create-shift-modal");
+  if (modal) modal.classList.add("hidden");
 }
 
 function handleCategorySelectChange(val) {
@@ -1166,6 +1242,11 @@ function handleCategorySelectChange(val) {
 
 async function handleCreateShiftSubmit(event) {
   event.preventDefault();
+  if (currentUserRole !== "admin") {
+    console.error("Permission denied: Only administrators can create shifts.");
+    alert("Permission denied: Only administrators can create shifts.");
+    return;
+  }
 
   const dayIndex = parseInt(document.getElementById("new-shift-day").value, 10);
   let categoryName = document.getElementById("new-shift-category").value;
@@ -1235,6 +1316,12 @@ async function handleCreateShiftSubmit(event) {
 // REQUIREMENT B: View Roster & Cancel Individual Users' Shifts (Admin)
 // ============================================================================
 async function openShiftRosterModal(shiftId) {
+  if (currentUserRole !== "admin" && currentUserRole !== "manager") {
+    console.error("Permission denied: Manager or Administrator privileges required.");
+    alert("Permission denied: Manager or Administrator privileges required.");
+    return;
+  }
+
   activeRosterShiftId = shiftId;
   const modal = document.getElementById("shift-roster-modal");
   const titleEl = document.getElementById("roster-modal-shift-title");
@@ -1340,6 +1427,12 @@ function closeShiftRosterModal() {
 }
 
 async function adminCancelUserShift(shiftId, targetUserId, userName) {
+  if (currentUserRole !== "admin") {
+    console.error("Permission denied: Only administrators can cancel volunteer shifts.");
+    alert("Permission denied: Only administrators can cancel volunteer shifts.");
+    return;
+  }
+
   if (!confirm(`Are you sure you want to cancel the shift registration for ${userName}?\n\nThis will remove the volunteer and decrement the shift capacity.`)) {
     return;
   }
@@ -1358,16 +1451,19 @@ async function adminCancelUserShift(shiftId, targetUserId, userName) {
 // REQUIREMENT C: Change Standard Volunteer Users to Manager or Admin (Admin)
 // ============================================================================
 function handleAdminUserSearch(query) {
+  if (currentUserRole !== "admin") return;
   adminUserFilterText = (query || "").trim().toLowerCase();
   renderAdminUsers();
 }
 
 function handleAdminRoleFilter(role) {
+  if (currentUserRole !== "admin") return;
   adminRoleFilter = role;
   renderAdminUsers();
 }
 
 function renderAdminUsers() {
+  if (currentUserRole !== "admin") return;
   const tableBody = document.getElementById("admin-users-table-body");
   if (!tableBody) return;
 
@@ -1467,6 +1563,12 @@ function renderAdminUsers() {
 }
 
 async function changeUserRole(targetUserId, newRole, userName, selectEl) {
+  if (currentUserRole !== "admin") {
+    console.error("Permission denied: Only administrators can change user roles.");
+    alert("Permission denied: Only administrators can change user roles.");
+    return;
+  }
+
   const confirmMsg = `Are you sure you want to change the role of "${userName}" to "${newRole.toUpperCase()}"?`;
   if (!confirm(confirmMsg)) {
     renderAdminUsers();
@@ -1489,6 +1591,11 @@ async function changeUserRole(targetUserId, newRole, userName, selectEl) {
 // REQUIREMENT D: Manager Users Assign Themselves (Only 1 Manager Per Shift)
 // ============================================================================
 async function managerClaimShift(shiftId) {
+  if (currentUserRole !== "manager" && currentUserRole !== "admin") {
+    alert("Permission denied: Manager privileges required.");
+    return;
+  }
+
   if (!confirm("Assign yourself as the manager for this shift?")) {
     return;
   }
@@ -1503,6 +1610,11 @@ async function managerClaimShift(shiftId) {
 }
 
 async function managerUnassignShift(shiftId) {
+  if (currentUserRole !== "manager" && currentUserRole !== "admin") {
+    alert("Permission denied: Manager privileges required.");
+    return;
+  }
+
   if (!confirm("Are you sure you want to step down as manager for this shift?")) {
     return;
   }
@@ -1520,6 +1632,12 @@ async function managerUnassignShift(shiftId) {
 // REQUIREMENT E: Admins Assign Manager Users to Shifts
 // ============================================================================
 async function openAssignManagerModal(shiftId) {
+  if (currentUserRole !== "admin") {
+    console.error("Permission denied: Only administrators can assign shift managers.");
+    alert("Permission denied: Only administrators can assign shift managers.");
+    return;
+  }
+
   activeAssignModalShiftId = shiftId;
   const modal = document.getElementById("assign-manager-modal");
   const shiftInfoEl = document.getElementById("assign-modal-shift-info");
@@ -1547,10 +1665,17 @@ async function openAssignManagerModal(shiftId) {
 
 function closeAssignManagerModal() {
   activeAssignModalShiftId = null;
-  document.getElementById("assign-manager-modal").classList.add("hidden");
+  const modal = document.getElementById("assign-manager-modal");
+  if (modal) modal.classList.add("hidden");
 }
 
 async function handleSaveManagerAssignment() {
+  if (currentUserRole !== "admin") {
+    console.error("Permission denied: Only administrators can assign shift managers.");
+    alert("Permission denied: Only administrators can assign shift managers.");
+    return;
+  }
+
   if (!activeAssignModalShiftId) return;
 
   const selectEl = document.getElementById("assign-manager-select");

@@ -1,0 +1,76 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && getUserData().role == 'admin';
+    }
+
+    function isManager() {
+      return isAuthenticated() && (getUserData().role == 'manager' || getUserData().role == 'admin');
+    }
+
+    // User Profiles
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      // Allow creation only if role is volunteer or omitted, preventing privilege escalation
+      allow create: if isAuthenticated()
+                    && request.auth.uid == userId
+                    && (!('role' in request.resource.data) || request.resource.data.role == 'volunteer');
+      // Only admins can alter the 'role' field
+      allow update: if isAdmin() || (
+        isAuthenticated()
+        && request.auth.uid == userId
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+      );
+    }
+
+    // Categories Configuration
+    match /categories/{categoryId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Shifts Collection
+    match /shifts/{shiftId} {
+      allow read: if isAuthenticated();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (
+        isManager()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['managerId', 'managerName', 'managerEmail'])
+        && (
+          ((!('managerId' in resource.data) || resource.data.managerId == null || resource.data.managerId == '')
+           && request.resource.data.managerId == request.auth.uid)
+          ||
+          (resource.data.managerId == request.auth.uid
+           && (!('managerId' in request.resource.data) || request.resource.data.managerId == null || request.resource.data.managerId == ''))
+        )
+      );
+    }
+
+    // Registrations Collection
+    // Managed exclusively through Cloud Functions (claimShift, cancelShift)
+    // using Firebase Admin SDK to guarantee atomic capacity counts and strict 7-day lockout.
+    // Direct client write/create/delete is disabled for non-admins to prevent race conditions & desync.
+    match /registrations/{registrationId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Incentives Configuration
+    match /incentives/{incentiveId} {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+  }
+}

@@ -11,337 +11,498 @@
   <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-functions-compat.js"></script>
 </head>
-<body class="bg-amber-50 text-slate-800 min-h-screen flex flex-col font-sans">
+<body class="bg-amber-50 text-slate-800 min-h-screen font-sans">
 
-  <!-- Navigation Bar -->
-  <nav class="bg-amber-900 text-white p-4 shadow-md sticky top-0 z-50">
-    <div class="max-w-6xl mx-auto flex flex-wrap justify-between items-center gap-3">
-      <div class="flex items-center space-x-2.5 cursor-pointer" onclick="switchView('schedule')">
-        <span class="text-2xl">🍺</span>
-        <h1 class="text-xl font-bold tracking-tight">BrewCrew Festival Portal</h1>
+  <!-- 1. INITIAL APP LOADING SCREEN (Zero Flicker) -->
+  <div id="app-loading" class="fixed inset-0 z-50 bg-amber-50 flex flex-col items-center justify-center p-4">
+    <div class="text-4xl mb-3 animate-bounce">🍺</div>
+    <h1 class="text-xl font-bold text-amber-950 mb-2">BrewCrew Volunteer Portal</h1>
+    <div class="flex items-center space-x-2 text-sm text-slate-500">
+      <svg class="animate-spin h-5 w-5 text-amber-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+      </svg>
+      <span>Loading volunteer platform...</span>
+    </div>
+  </div>
+
+  <!-- 2. UNAUTHENTICATED SCREEN (Strict Login Prompt Only) -->
+  <div id="auth-screen" class="hidden min-h-screen w-full flex items-center justify-center p-4 bg-gradient-to-b from-amber-50 to-amber-100/70">
+    <div class="max-w-md w-full bg-white rounded-2xl shadow-xl border border-amber-200 overflow-hidden my-6">
+      
+      <!-- Card Banner -->
+      <div class="bg-amber-900 text-white p-6 text-center">
+        <span class="text-4xl mb-2 inline-block">🍺</span>
+        <h1 class="text-2xl font-bold tracking-tight">BrewCrew Festival Portal</h1>
+        <p class="text-xs text-amber-200 mt-1">Beer &amp; Cider Festival Volunteer Management</p>
       </div>
 
-      <!-- Center View Switcher -->
-      <div id="nav-tabs" class="flex items-center space-x-1 bg-amber-950/40 p-1 rounded-lg">
-        <button id="nav-schedule-btn" onclick="switchView('schedule')" class="px-3.5 py-1.5 rounded-md text-sm font-semibold transition bg-amber-700 text-white shadow-sm">
-          📅 Browse Shifts
-        </button>
-        <button id="nav-my-shifts-btn" onclick="switchView('my-shifts')" class="px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white flex items-center">
-          📋 My Shifts <span id="my-shifts-count" class="hidden ml-1.5 px-2 py-0.2 bg-amber-400 text-amber-950 font-bold rounded-full text-xs">0</span>
-        </button>
-        <button id="nav-admin-btn" onclick="switchView('admin')" class="hidden px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white flex items-center gap-1.5">
-          🛡️ Admin Panel
-        </button>
-      </div>
-
-      <!-- Auth Controls -->
-      <div id="auth-controls" class="flex items-center space-x-3">
-        <div id="user-info" class="hidden items-center space-x-2 text-sm">
-          <img id="user-avatar" class="w-8 h-8 rounded-full border border-amber-300 object-cover" src="" alt="Avatar" />
-          <div class="flex flex-col">
-            <span id="user-name" class="font-medium text-amber-100 text-xs sm:text-sm leading-tight"></span>
-            <span id="user-role-badge" class="hidden text-[10px] font-bold px-1.5 py-0.2 rounded w-fit uppercase tracking-wider"></span>
-          </div>
+      <div class="p-6 space-y-5">
+        <!-- Introductory Prompt -->
+        <div class="text-center">
+          <h2 class="text-base font-bold text-slate-800">Volunteer &amp; Staff Sign In</h2>
+          <p class="text-xs text-slate-500 mt-1">Please sign in to access festival shift schedules, claim bar shifts, and earn volunteer rewards.</p>
         </div>
-        <button id="login-btn" onclick="loginWithGoogle()" class="bg-amber-600 hover:bg-amber-500 px-4 py-2 rounded text-sm font-semibold transition shadow">
-          Sign In with Google
+
+        <!-- Google OAuth Quick Button -->
+        <button id="google-signin-btn" onclick="loginWithGoogle()" class="w-full flex items-center justify-center gap-3 py-2.5 px-4 bg-white hover:bg-slate-50 text-slate-700 text-sm font-semibold rounded-xl border border-slate-300 shadow-sm transition">
+          <svg class="w-4 h-4" viewBox="0 0 24 24">
+            <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.17z"/>
+            <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"/>
+            <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.16 0 9.99 0 12s.45 3.84 1.25 5.42l4.03-3.15z"/>
+            <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+          </svg>
+          <span id="google-btn-text">Sign In with Google</span>
         </button>
-        <button id="logout-btn" onclick="logout()" class="hidden bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded text-sm font-semibold transition">
-          Logout
-        </button>
+
+        <!-- Visual Divider -->
+        <div class="relative flex items-center justify-center">
+          <div class="border-t border-slate-200 w-full"></div>
+          <span class="bg-white px-3 text-[11px] font-semibold text-slate-400 uppercase tracking-wider absolute">or continue with email</span>
+        </div>
+
+        <!-- Main Authentication Section (Tabs & Forms) -->
+        <div id="auth-main-view" class="space-y-4">
+          <!-- Toggle Tabs -->
+          <div class="flex rounded-lg bg-slate-100 p-1">
+            <button id="tab-btn-signin" type="button" onclick="showAuthTab('signin')" class="flex-1 py-1.5 text-xs font-bold rounded-md bg-white text-slate-800 shadow-sm transition">
+              Sign In
+            </button>
+            <button id="tab-btn-register" type="button" onclick="showAuthTab('register')" class="flex-1 py-1.5 text-xs font-bold rounded-md text-slate-500 hover:text-slate-800 transition">
+              Create Account
+            </button>
+          </div>
+
+          <!-- Sign In Form -->
+          <form id="form-signin" onsubmit="handleEmailSignIn(event)" class="space-y-3">
+            <div id="signin-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1" for="signin-email">Email Address</label>
+              <input type="email" id="signin-email" required placeholder="you@example.com" class="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+
+            <div>
+              <div class="flex justify-between items-center mb-1">
+                <label class="block text-xs font-semibold text-slate-700" for="signin-password">Password</label>
+                <button type="button" onclick="showAuthSubView('forgot')" class="text-[11px] font-semibold text-amber-700 hover:text-amber-800">
+                  Forgot password?
+                </button>
+              </div>
+              <div class="relative">
+                <input type="password" id="signin-password" required placeholder="••••••••" class="w-full text-xs sm:text-sm px-3 py-2 pr-9 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                <button type="button" onclick="togglePasswordVisibility('signin-password', 'signin-eye-btn')" id="signin-eye-btn" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-sm" aria-label="Toggle password visibility">
+                  👁️
+                </button>
+              </div>
+            </div>
+
+            <button type="submit" id="btn-submit-signin" class="w-full py-2.5 px-4 bg-amber-700 hover:bg-amber-600 text-white text-sm font-bold rounded-xl shadow transition flex items-center justify-center gap-2">
+              <span id="btn-signin-text">Sign In with Email</span>
+            </button>
+          </form>
+
+          <!-- Register Form -->
+          <form id="form-register" onsubmit="handleEmailSignUp(event)" class="hidden space-y-3">
+            <div id="register-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1" for="register-name">Full Name</label>
+              <input type="text" id="register-name" required placeholder="e.g. Alex Smith" class="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1" for="register-email">Email Address</label>
+              <input type="email" id="register-email" required placeholder="you@example.com" class="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1" for="register-password">Password (min. 6 characters)</label>
+              <div class="relative">
+                <input type="password" id="register-password" required minlength="6" placeholder="••••••••" class="w-full text-xs sm:text-sm px-3 py-2 pr-9 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                <button type="button" onclick="togglePasswordVisibility('register-password', 'register-eye-btn')" id="register-eye-btn" class="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-sm" aria-label="Toggle password visibility">
+                  👁️
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1" for="register-confirm-password">Confirm Password</label>
+              <input type="password" id="register-confirm-password" required minlength="6" placeholder="••••••••" class="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+
+            <p class="text-[11px] text-slate-500 bg-amber-50/80 p-2.5 rounded-lg border border-amber-200">
+              ℹ️ New accounts join as festival <strong>Volunteers</strong>. Shift managers and team leads are designated by event administrators.
+            </p>
+
+            <button type="submit" id="btn-submit-register" class="w-full py-2.5 px-4 bg-amber-700 hover:bg-amber-600 text-white text-sm font-bold rounded-xl shadow transition flex items-center justify-center gap-2">
+              <span id="btn-register-text">Create Volunteer Account</span>
+            </button>
+          </form>
+        </div>
+
+        <!-- Subview: Forgot Password Form -->
+        <div id="auth-forgot-view" class="hidden space-y-4">
+          <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+            <h3 class="text-sm font-bold text-slate-800">Reset Your Password</h3>
+            <button type="button" onclick="showAuthSubView('tabs')" class="text-xs text-amber-700 hover:text-amber-800 font-semibold">
+              ← Back to Sign In
+            </button>
+          </div>
+
+          <p class="text-xs text-slate-600">
+            Enter your registered email address and we will send you a secure link to reset your password.
+          </p>
+
+          <form id="form-forgot-password" onsubmit="handlePasswordReset(event)" class="space-y-3">
+            <div id="forgot-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1" for="forgot-email">Account Email Address</label>
+              <input type="email" id="forgot-email" required placeholder="you@example.com" class="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+
+            <button type="submit" id="btn-submit-forgot" class="w-full py-2.5 px-4 bg-amber-700 hover:bg-amber-600 text-white text-sm font-bold rounded-xl shadow transition flex items-center justify-center gap-2">
+              <span id="btn-forgot-text">Send Password Reset Link</span>
+            </button>
+          </form>
+        </div>
+
       </div>
     </div>
-  </nav>
+  </div>
 
-  <main class="max-w-6xl mx-auto p-4 space-y-6 flex-grow w-full">
-
-    <!-- Incentive Tracker Bar -->
-    <section id="incentive-section" class="bg-white p-5 rounded-xl shadow-sm border border-amber-200">
-      <div class="flex justify-between items-center mb-2">
-        <h2 class="text-base font-bold text-amber-900 flex items-center gap-2">
-          <span>🏆</span> Your Incentive Progress
-        </h2>
-        <span id="hours-badge" class="text-xs font-semibold px-2.5 py-1 bg-amber-100 text-amber-900 rounded-full">0 / 8 Hours</span>
-      </div>
-      <div class="w-full bg-slate-200 rounded-full h-3.5 mb-2 overflow-hidden">
-        <div id="progress-bar" class="bg-gradient-to-r from-amber-500 to-amber-600 h-3.5 rounded-full transition-all duration-500" style="width: 0%"></div>
-      </div>
-      <div class="flex justify-between items-center text-xs text-slate-600">
-        <p id="incentive-status" class="font-medium">Log in to view earned rewards (4 Hours = Free Entry | 8 Hours = Entry + T-Shirt)</p>
-        <span class="text-slate-400 hidden sm:inline">Milestones: 4h • 8h</span>
-      </div>
-    </section>
-
-    <!-- VIEW 1: Schedule View -->
-    <div id="view-schedule" class="space-y-4">
-      <!-- Admin Action Bar (Visible to Admins) -->
-      <div id="admin-schedule-bar" class="hidden bg-amber-900/10 border border-amber-300/80 rounded-xl p-3.5 flex flex-wrap justify-between items-center gap-3">
-        <div class="flex items-center gap-2.5">
-          <span class="text-xl">👑</span>
-          <div>
-            <p class="text-xs font-bold text-amber-950 uppercase tracking-wide">Administrator Controls Active</p>
-            <p class="text-xs text-slate-600">Create new shifts, assign shift managers, and manage individual volunteer registrations directly.</p>
-          </div>
+  <!-- 3. AUTHENTICATED APPLICATION INTERFACE (Shown ONLY After Successful Sign-In) -->
+  <div id="authenticated-app" class="hidden min-h-screen flex flex-col">
+    <!-- Navigation Bar -->
+    <nav class="bg-amber-900 text-white p-4 shadow-md sticky top-0 z-40">
+      <div class="max-w-6xl mx-auto flex flex-wrap justify-between items-center gap-3">
+        <div class="flex items-center space-x-2.5 cursor-pointer" onclick="switchView('schedule')">
+          <span class="text-2xl">🍺</span>
+          <h1 class="text-xl font-bold tracking-tight">BrewCrew Festival Portal</h1>
         </div>
-        <button onclick="openCreateShiftModal()" class="bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
-          <span>➕</span> Create New Shift
-        </button>
-      </div>
 
-      <!-- Day Navigation Tabs (7 Days) -->
-      <div class="flex space-x-2 overflow-x-auto pb-2 border-b border-amber-300" id="day-tabs">
-        <!-- Generated via JS: Days 1 to 7 -->
-      </div>
-
-      <!-- Category Filter Bar -->
-      <div class="flex flex-wrap items-center gap-2" id="category-filters">
-        <!-- Dynamic Buttons: All Areas, Cider Bar, Cask Bar, Keg Bar, Token and Merch, Gate -->
-      </div>
-
-      <!-- Shifts Timeline & Card Grid -->
-      <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="shifts-grid">
-        <p class="text-slate-500 italic">Select a day and sign in to view and register for shifts.</p>
-      </section>
-    </div>
-
-    <!-- VIEW 2: My Shifts View -->
-    <div id="view-my-shifts" class="hidden space-y-4">
-      <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200">
-        <div class="flex flex-wrap justify-between items-center gap-2 mb-4">
-          <div>
-            <h2 class="text-lg font-bold text-slate-800">My Registered Shifts</h2>
-            <p class="text-xs text-slate-500">Manage your festival shifts. Cancellations are locked within 7 days of shift start time.</p>
-          </div>
-          <button onclick="switchView('schedule')" class="text-xs bg-amber-100 hover:bg-amber-200 text-amber-900 font-semibold px-3 py-1.5 rounded-lg transition">
-            + Browse Available Shifts
+        <!-- Center View Switcher -->
+        <div id="nav-tabs" class="flex items-center space-x-1 bg-amber-950/40 p-1 rounded-lg">
+          <button id="nav-schedule-btn" onclick="switchView('schedule')" class="px-3.5 py-1.5 rounded-md text-sm font-semibold transition bg-amber-700 text-white shadow-sm">
+            📅 Browse Shifts
+          </button>
+          <button id="nav-my-shifts-btn" onclick="switchView('my-shifts')" class="px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white flex items-center">
+            📋 My Shifts <span id="my-shifts-count" class="hidden ml-1.5 px-2 py-0.2 bg-amber-400 text-amber-950 font-bold rounded-full text-xs">0</span>
+          </button>
+          <button id="nav-admin-btn" onclick="switchView('admin')" class="hidden px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white flex items-center gap-1.5">
+            🛡️ Admin Panel
           </button>
         </div>
-        <div id="my-shifts-list" class="space-y-3">
-          <p class="text-slate-500 italic">Loading your shifts...</p>
+
+        <!-- Auth User Controls -->
+        <div id="auth-controls" class="flex items-center space-x-3">
+          <div id="user-info" class="flex items-center space-x-2 text-sm">
+            <img id="user-avatar" class="w-8 h-8 rounded-full border border-amber-300 object-cover" src="" alt="Avatar" />
+            <div class="flex flex-col">
+              <span id="user-name" class="font-medium text-amber-100 text-xs sm:text-sm leading-tight"></span>
+              <span id="user-role-badge" class="hidden text-[10px] font-bold px-1.5 py-0.2 rounded w-fit uppercase tracking-wider"></span>
+            </div>
+          </div>
+          <!-- Hidden fallback login-btn kept for internal script references if any -->
+          <button id="login-btn" class="hidden"></button>
+          <button id="logout-btn" onclick="logout()" class="bg-red-700 hover:bg-red-600 px-3 py-1.5 rounded text-sm font-semibold transition shadow-sm">
+            Logout
+          </button>
         </div>
       </div>
-    </div>
+    </nav>
 
-    <!-- VIEW 3: Admin Panel (Roles & Crew) -->
-    <div id="view-admin" class="hidden space-y-5">
-      <!-- Admin Header & Stats -->
-      <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200">
-        <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
-          <div>
-            <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
-              <span>🛡️</span> Festival Crew &amp; Role Management
-            </h2>
-            <p class="text-xs text-slate-500">Promote volunteers to Shift Managers or Administrators, and oversee permissions.</p>
+    <main class="max-w-6xl mx-auto p-4 space-y-6 flex-grow w-full">
+
+      <!-- Incentive Tracker Bar -->
+      <section id="incentive-section" class="bg-white p-5 rounded-xl shadow-sm border border-amber-200">
+        <div class="flex justify-between items-center mb-2">
+          <h2 class="text-base font-bold text-amber-900 flex items-center gap-2">
+            <span>🏆</span> Your Incentive Progress
+          </h2>
+          <span id="hours-badge" class="text-xs font-semibold px-2.5 py-1 bg-amber-100 text-amber-900 rounded-full">0 / 8 Hours</span>
+        </div>
+        <div class="w-full bg-slate-200 rounded-full h-3.5 mb-2 overflow-hidden">
+          <div id="progress-bar" class="bg-gradient-to-r from-amber-500 to-amber-600 h-3.5 rounded-full transition-all duration-500" style="width: 0%"></div>
+        </div>
+        <div class="flex justify-between items-center text-xs text-slate-600">
+          <p id="incentive-status" class="font-medium">Book shifts to earn rewards (4 Hours = Free Entry | 8 Hours = Entry + T-Shirt)</p>
+          <span class="text-slate-400 hidden sm:inline">Milestones: 4h • 8h</span>
+        </div>
+      </section>
+
+      <!-- VIEW 1: Schedule View -->
+      <div id="view-schedule" class="space-y-4">
+        <!-- Admin Action Bar (Visible to Admins) -->
+        <div id="admin-schedule-bar" class="hidden bg-amber-900/10 border border-amber-300/80 rounded-xl p-3.5 flex flex-wrap justify-between items-center gap-3">
+          <div class="flex items-center gap-2.5">
+            <span class="text-xl">👑</span>
+            <div>
+              <p class="text-xs font-bold text-amber-950 uppercase tracking-wide">Administrator Controls Active</p>
+              <p class="text-xs text-slate-600">Create new shifts, assign shift managers, and manage individual volunteer registrations directly.</p>
+            </div>
           </div>
-          <button onclick="openCreateShiftModal()" class="text-xs bg-amber-700 hover:bg-amber-800 text-white font-bold px-3.5 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
+          <button onclick="openCreateShiftModal()" class="bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
             <span>➕</span> Create New Shift
           </button>
         </div>
 
-        <!-- Role Summary Counters -->
-        <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-slate-100">
-          <div class="bg-amber-50/70 p-3 rounded-lg border border-amber-200 text-center">
-            <span class="text-xs text-slate-500 font-semibold block">Total Crew</span>
-            <span id="stat-total-users" class="text-xl font-extrabold text-amber-950">0</span>
+        <!-- Day Navigation Tabs (7 Days) -->
+        <div class="flex space-x-2 overflow-x-auto pb-2 border-b border-amber-300" id="day-tabs">
+          <!-- Generated via JS: Days 1 to 7 -->
+        </div>
+
+        <!-- Category Filter Bar -->
+        <div class="flex flex-wrap items-center gap-2" id="category-filters">
+          <!-- Dynamic Buttons: All Areas, Cider Bar, Cask Bar, Keg Bar, Token and Merch, Gate -->
+        </div>
+
+        <!-- Shifts Timeline & Card Grid -->
+        <section class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="shifts-grid">
+          <p class="text-slate-500 italic">Loading festival shifts...</p>
+        </section>
+      </div>
+
+      <!-- VIEW 2: My Shifts View -->
+      <div id="view-my-shifts" class="hidden space-y-4">
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200">
+          <div class="flex flex-wrap justify-between items-center gap-2 mb-4">
+            <div>
+              <h2 class="text-lg font-bold text-slate-800">My Registered Shifts</h2>
+              <p class="text-xs text-slate-500">Manage your festival shifts. Cancellations are locked within 7 days of shift start time.</p>
+            </div>
+            <button onclick="switchView('schedule')" class="text-xs bg-amber-100 hover:bg-amber-200 text-amber-900 font-semibold px-3 py-1.5 rounded-lg transition">
+              + Browse Available Shifts
+            </button>
           </div>
-          <div class="bg-amber-50/40 p-3 rounded-lg border border-amber-200 text-center">
-            <span class="text-xs text-amber-800 font-semibold block">Volunteers</span>
-            <span id="stat-volunteers" class="text-xl font-extrabold text-amber-800">0</span>
-          </div>
-          <div class="bg-blue-50/80 p-3 rounded-lg border border-blue-200 text-center">
-            <span class="text-xs text-blue-700 font-semibold block">Shift Managers</span>
-            <span id="stat-managers" class="text-xl font-extrabold text-blue-900">0</span>
-          </div>
-          <div class="bg-purple-50/80 p-3 rounded-lg border border-purple-200 text-center">
-            <span class="text-xs text-purple-700 font-semibold block">Administrators</span>
-            <span id="stat-admins" class="text-xl font-extrabold text-purple-900">0</span>
+          <div id="my-shifts-list" class="space-y-3">
+            <p class="text-slate-500 italic">Loading your shifts...</p>
           </div>
         </div>
       </div>
 
-      <!-- Crew Members List Section -->
-      <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200 space-y-4">
-        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
-            <span>👥</span> Crew Member Directory &amp; Role Assignment
-          </h3>
-          <div class="flex flex-wrap items-center gap-2">
-            <input type="text" id="admin-user-search" oninput="handleAdminUserSearch(this.value)" placeholder="Search by name or email..." class="text-xs px-3 py-1.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 w-60" />
-            <select id="admin-role-filter" onchange="handleAdminRoleFilter(this.value)" class="text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
-              <option value="ALL">All Roles</option>
-              <option value="volunteer">Volunteers</option>
-              <option value="manager">Shift Managers</option>
-              <option value="admin">Administrators</option>
-            </select>
+      <!-- VIEW 3: Admin Panel (Roles & Crew) -->
+      <div id="view-admin" class="hidden space-y-5">
+        <!-- Admin Header & Stats -->
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200">
+          <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
+            <div>
+              <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                <span>🛡️</span> Festival Crew &amp; Role Management
+              </h2>
+              <p class="text-xs text-slate-500">Promote volunteers to Shift Managers or Administrators, and oversee permissions.</p>
+            </div>
+            <button onclick="openCreateShiftModal()" class="text-xs bg-amber-700 hover:bg-amber-800 text-white font-bold px-3.5 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
+              <span>➕</span> Create New Shift
+            </button>
+          </div>
+
+          <!-- Role Summary Counters -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-3 border-t border-slate-100">
+            <div class="bg-amber-50/70 p-3 rounded-lg border border-amber-200 text-center">
+              <span class="text-xs text-slate-500 font-semibold block">Total Crew</span>
+              <span id="stat-total-users" class="text-xl font-extrabold text-amber-950">0</span>
+            </div>
+            <div class="bg-amber-50/40 p-3 rounded-lg border border-amber-200 text-center">
+              <span class="text-xs text-amber-800 font-semibold block">Volunteers</span>
+              <span id="stat-volunteers" class="text-xl font-extrabold text-amber-800">0</span>
+            </div>
+            <div class="bg-blue-50/80 p-3 rounded-lg border border-blue-200 text-center">
+              <span class="text-xs text-blue-700 font-semibold block">Shift Managers</span>
+              <span id="stat-managers" class="text-xl font-extrabold text-blue-900">0</span>
+            </div>
+            <div class="bg-purple-50/80 p-3 rounded-lg border border-purple-200 text-center">
+              <span class="text-xs text-purple-700 font-semibold block">Administrators</span>
+              <span id="stat-admins" class="text-xl font-extrabold text-purple-900">0</span>
+            </div>
           </div>
         </div>
 
-        <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs">
-            <thead class="bg-amber-50/80 text-amber-950 font-bold border-b border-amber-200">
-              <tr>
-                <th class="p-3">Crew Member</th>
-                <th class="p-3">Email Address</th>
-                <th class="p-3">Current Role</th>
-                <th class="p-3 text-right">Assign Role</th>
-              </tr>
-            </thead>
-            <tbody id="admin-users-table-body" class="divide-y divide-slate-100">
-              <tr>
-                <td colspan="4" class="p-4 text-center text-slate-500 italic">Loading crew members...</td>
-              </tr>
-            </tbody>
-          </table>
+        <!-- Crew Members List Section -->
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200 space-y-4">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+              <span>👥</span> Crew Member Directory &amp; Role Assignment
+            </h3>
+            <div class="flex flex-wrap items-center gap-2">
+              <input type="text" id="admin-user-search" oninput="handleAdminUserSearch(this.value)" placeholder="Search by name or email..." class="text-xs px-3 py-1.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 w-60" />
+              <select id="admin-role-filter" onchange="handleAdminRoleFilter(this.value)" class="text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+                <option value="ALL">All Roles</option>
+                <option value="volunteer">Volunteers</option>
+                <option value="manager">Shift Managers</option>
+                <option value="admin">Administrators</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-amber-50/80 text-amber-950 font-bold border-b border-amber-200">
+                <tr>
+                  <th class="p-3">Crew Member</th>
+                  <th class="p-3">Email Address</th>
+                  <th class="p-3">Current Role</th>
+                  <th class="p-3 text-right">Assign Role</th>
+                </tr>
+              </thead>
+              <tbody id="admin-users-table-body" class="divide-y divide-slate-100">
+                <tr>
+                  <td colspan="4" class="p-4 text-center text-slate-500 italic">Loading crew members...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
+      </div>
+
+    </main>
+
+    <!-- Modal 1: Create New Shift Modal -->
+    <div id="create-shift-modal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+      <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4 my-8 max-h-[90vh] overflow-y-auto border border-amber-200">
+        <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+          <h3 class="font-bold text-lg text-slate-900 flex items-center gap-2">
+            <span>➕</span> Create New Festival Shift
+          </h3>
+          <button onclick="closeCreateShiftModal()" class="text-slate-400 hover:text-slate-600 text-xl font-bold p-1">&times;</button>
+        </div>
+
+        <form id="create-shift-form" onsubmit="handleCreateShiftSubmit(event)" class="space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <!-- Day Index -->
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Festival Day</label>
+              <select id="new-shift-day" class="w-full text-sm p-2.5 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                <option value="1">Day 1</option>
+                <option value="2">Day 2</option>
+                <option value="3">Day 3</option>
+                <option value="4">Day 4</option>
+                <option value="5">Day 5</option>
+                <option value="6">Day 6</option>
+                <option value="7">Day 7</option>
+              </select>
+            </div>
+
+            <!-- Capacity -->
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Volunteer Capacity</label>
+              <input type="number" id="new-shift-capacity" min="1" max="100" value="4" required class="w-full text-sm p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none" />
+            </div>
+          </div>
+
+          <!-- Category Area -->
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Area / Bar Category</label>
+            <select id="new-shift-category" onchange="handleCategorySelectChange(this.value)" class="w-full text-sm p-2.5 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+              <!-- Dynamic Category Options + Other -->
+            </select>
+            <input type="text" id="new-shift-custom-category" placeholder="Enter custom area name..." class="hidden mt-2 w-full text-sm p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none" />
+          </div>
+
+          <!-- Date & Times -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Start Date &amp; Time</label>
+              <input type="datetime-local" id="new-shift-start" required class="w-full text-sm p-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none" />
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">End Date &amp; Time</label>
+              <input type="datetime-local" id="new-shift-end" required class="w-full text-sm p-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none" />
+            </div>
+          </div>
+
+          <!-- Manager Assignment -->
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">
+              Assign Shift Manager <span class="text-slate-400 font-normal">(Optional)</span>
+            </label>
+            <select id="new-shift-manager" class="w-full text-sm p-2.5 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+              <option value="">-- None / Assigned On-Site --</option>
+            </select>
+            <p class="text-[11px] text-slate-500 mt-1">Managers and Admins can also be assigned later.</p>
+          </div>
+
+          <div class="flex justify-end space-x-2 pt-3 border-t border-slate-100">
+            <button type="button" onclick="closeCreateShiftModal()" class="px-4 py-2 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100 transition">
+              Cancel
+            </button>
+            <button type="submit" id="btn-submit-create-shift" class="px-4 py-2 rounded-lg text-sm font-bold text-white bg-amber-700 hover:bg-amber-600 transition shadow-sm">
+              Create Shift
+            </button>
+          </div>
+        </form>
       </div>
     </div>
 
-  </main>
-
-  <!-- Modal 1: Create New Shift Modal -->
-  <div id="create-shift-modal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
-    <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4 my-8 max-h-[90vh] overflow-y-auto border border-amber-200">
-      <div class="flex justify-between items-center border-b border-slate-100 pb-3">
-        <h3 class="font-bold text-lg text-slate-900 flex items-center gap-2">
-          <span>➕</span> Create New Festival Shift
-        </h3>
-        <button onclick="closeCreateShiftModal()" class="text-slate-400 hover:text-slate-600 text-xl font-bold p-1">&times;</button>
-      </div>
-
-      <form id="create-shift-form" onsubmit="handleCreateShiftSubmit(event)" class="space-y-4">
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <!-- Day Index -->
-          <div>
-            <label class="block text-xs font-bold text-slate-700 mb-1">Festival Day</label>
-            <select id="new-shift-day" class="w-full text-sm p-2.5 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
-              <option value="1">Day 1</option>
-              <option value="2">Day 2</option>
-              <option value="3">Day 3</option>
-              <option value="4">Day 4</option>
-              <option value="5">Day 5</option>
-              <option value="6">Day 6</option>
-              <option value="7">Day 7</option>
-            </select>
-          </div>
-
-          <!-- Capacity -->
-          <div>
-            <label class="block text-xs font-bold text-slate-700 mb-1">Volunteer Capacity</label>
-            <input type="number" id="new-shift-capacity" min="1" max="100" value="4" required class="w-full text-sm p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none" />
-          </div>
+    <!-- Modal 2: Assign Manager Modal -->
+    <div id="assign-manager-modal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 border border-amber-200">
+        <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+          <h3 class="font-bold text-lg text-slate-900 flex items-center gap-2">
+            <span>👔</span> Assign Shift Manager
+          </h3>
+          <button onclick="closeAssignManagerModal()" class="text-slate-400 hover:text-slate-600 text-xl font-bold p-1">&times;</button>
         </div>
 
-        <!-- Category Area -->
+        <div class="bg-amber-50/70 p-3 rounded-lg border border-amber-200 text-xs space-y-1">
+          <p class="font-bold text-amber-950" id="assign-modal-shift-info">Shift info</p>
+          <p class="text-slate-600" id="assign-modal-time-info">Time info</p>
+          <p class="text-slate-700" id="assign-modal-current-manager">Current Manager: None</p>
+        </div>
+
         <div>
-          <label class="block text-xs font-bold text-slate-700 mb-1">Area / Bar Category</label>
-          <select id="new-shift-category" onchange="handleCategorySelectChange(this.value)" class="w-full text-sm p-2.5 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
-            <!-- Dynamic Category Options + Other -->
+          <label class="block text-xs font-bold text-slate-700 mb-1">Select Shift Manager</label>
+          <select id="assign-manager-select" class="w-full text-sm p-2.5 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+            <!-- Populated with users having manager or admin role -->
           </select>
-          <input type="text" id="new-shift-custom-category" placeholder="Enter custom area name..." class="hidden mt-2 w-full text-sm p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none" />
-        </div>
-
-        <!-- Date & Times -->
-        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label class="block text-xs font-bold text-slate-700 mb-1">Start Date &amp; Time</label>
-            <input type="datetime-local" id="new-shift-start" required class="w-full text-sm p-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none" />
-          </div>
-          <div>
-            <label class="block text-xs font-bold text-slate-700 mb-1">End Date &amp; Time</label>
-            <input type="datetime-local" id="new-shift-end" required class="w-full text-sm p-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none" />
-          </div>
-        </div>
-
-        <!-- Manager Assignment -->
-        <div>
-          <label class="block text-xs font-bold text-slate-700 mb-1">
-            Assign Shift Manager <span class="text-slate-400 font-normal">(Optional)</span>
-          </label>
-          <select id="new-shift-manager" class="w-full text-sm p-2.5 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
-            <option value="">-- None / Assigned On-Site --</option>
-          </select>
-          <p class="text-[11px] text-slate-500 mt-1">Managers and Admins can also be assigned later.</p>
+          <p class="text-[11px] text-slate-500 mt-1.5">Note: Only one manager can be assigned per shift.</p>
         </div>
 
         <div class="flex justify-end space-x-2 pt-3 border-t border-slate-100">
-          <button type="button" onclick="closeCreateShiftModal()" class="px-4 py-2 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100 transition">
+          <button type="button" onclick="closeAssignManagerModal()" class="px-4 py-2 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100 transition">
             Cancel
           </button>
-          <button type="submit" id="btn-submit-create-shift" class="px-4 py-2 rounded-lg text-sm font-bold text-white bg-amber-700 hover:bg-amber-600 transition shadow-sm">
-            Create Shift
+          <button type="button" id="btn-save-manager-assign" onclick="handleSaveManagerAssignment()" class="px-4 py-2 rounded-lg text-sm font-bold text-white bg-amber-700 hover:bg-amber-600 transition shadow-sm">
+            Save Manager
           </button>
         </div>
-      </form>
-    </div>
-  </div>
-
-  <!-- Modal 2: Assign Manager Modal -->
-  <div id="assign-manager-modal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-    <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 border border-amber-200">
-      <div class="flex justify-between items-center border-b border-slate-100 pb-3">
-        <h3 class="font-bold text-lg text-slate-900 flex items-center gap-2">
-          <span>👔</span> Assign Shift Manager
-        </h3>
-        <button onclick="closeAssignManagerModal()" class="text-slate-400 hover:text-slate-600 text-xl font-bold p-1">&times;</button>
-      </div>
-
-      <div class="bg-amber-50/70 p-3 rounded-lg border border-amber-200 text-xs space-y-1">
-        <p class="font-bold text-amber-950" id="assign-modal-shift-info">Shift info</p>
-        <p class="text-slate-600" id="assign-modal-time-info">Time info</p>
-        <p class="text-slate-700" id="assign-modal-current-manager">Current Manager: None</p>
-      </div>
-
-      <div>
-        <label class="block text-xs font-bold text-slate-700 mb-1">Select Shift Manager</label>
-        <select id="assign-manager-select" class="w-full text-sm p-2.5 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
-          <!-- Populated with users having manager or admin role -->
-        </select>
-        <p class="text-[11px] text-slate-500 mt-1.5">Note: Only one manager can be assigned per shift.</p>
-      </div>
-
-      <div class="flex justify-end space-x-2 pt-3 border-t border-slate-100">
-        <button type="button" onclick="closeAssignManagerModal()" class="px-4 py-2 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100 transition">
-          Cancel
-        </button>
-        <button type="button" id="btn-save-manager-assign" onclick="handleSaveManagerAssignment()" class="px-4 py-2 rounded-lg text-sm font-bold text-white bg-amber-700 hover:bg-amber-600 transition shadow-sm">
-          Save Manager
-        </button>
       </div>
     </div>
-  </div>
 
-  <!-- Modal 3: Shift Roster Modal (View & Cancel Individual Users) -->
-  <div id="shift-roster-modal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-    <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4 max-h-[85vh] flex flex-col border border-amber-200">
-      <div class="flex justify-between items-center border-b border-slate-100 pb-3 flex-shrink-0">
-        <div>
-          <h3 class="font-bold text-lg text-slate-900 flex items-center gap-2">
-            <span>👥</span> Registered Volunteers Roster
-          </h3>
-          <p class="text-xs text-slate-500" id="roster-modal-shift-title">Shift Details</p>
+    <!-- Modal 3: Shift Roster Modal (View & Cancel Individual Users) -->
+    <div id="shift-roster-modal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4 max-h-[85vh] flex flex-col border border-amber-200">
+        <div class="flex justify-between items-center border-b border-slate-100 pb-3 flex-shrink-0">
+          <div>
+            <h3 class="font-bold text-lg text-slate-900 flex items-center gap-2">
+              <span>👥</span> Registered Volunteers Roster
+            </h3>
+            <p class="text-xs text-slate-500" id="roster-modal-shift-title">Shift Details</p>
+          </div>
+          <button onclick="closeShiftRosterModal()" class="text-slate-400 hover:text-slate-600 text-xl font-bold p-1">&times;</button>
         </div>
-        <button onclick="closeShiftRosterModal()" class="text-slate-400 hover:text-slate-600 text-xl font-bold p-1">&times;</button>
-      </div>
 
-      <div class="overflow-y-auto flex-grow space-y-2.5 pr-1" id="roster-modal-list">
-        <p class="text-xs text-slate-500 italic py-4 text-center">Loading registrations...</p>
-      </div>
+        <div class="overflow-y-auto flex-grow space-y-2.5 pr-1" id="roster-modal-list">
+          <p class="text-xs text-slate-500 italic py-4 text-center">Loading registrations...</p>
+        </div>
 
-      <div class="pt-3 border-t border-slate-100 flex justify-between items-center flex-shrink-0 text-xs text-slate-500">
-        <span id="roster-modal-count">0 Volunteers Registered</span>
-        <button type="button" onclick="closeShiftRosterModal()" class="px-4 py-1.5 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100 transition">
-          Close
-        </button>
+        <div class="pt-3 border-t border-slate-100 flex justify-between items-center flex-shrink-0 text-xs text-slate-500">
+          <span id="roster-modal-count">0 Volunteers Registered</span>
+          <button type="button" onclick="closeShiftRosterModal()" class="px-4 py-1.5 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100 transition">
+            Close
+          </button>
+        </div>
       </div>
     </div>
-  </div>
 
-  <footer class="mt-auto py-4 text-center text-xs text-slate-500 border-t border-amber-200">
-    BrewCrew Volunteer Portal &bull; Beer &amp; Cider Festival
-  </footer>
+    <footer class="mt-auto py-4 text-center text-xs text-slate-500 border-t border-amber-200">
+      BrewCrew Volunteer Portal &bull; Beer &amp; Cider Festival
+    </footer>
+  </div>
 
   <!-- Project Configuration (Ignored by Git, loaded from firebase-config.js) -->
   <script src="firebase-config.js"></script>
-  <script src="app.js?v=2.2.0"></script>
+  <script src="app.js?v=2.3.0"></script>
 </body>
 </html>

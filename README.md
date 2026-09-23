@@ -78,7 +78,7 @@ The **BrewCrew Platform** streamlines volunteer coordination for beer and cider 
 * **Frontend:** Vanilla JavaScript SPA with Tailwind CSS and Firebase Web SDK (v10 Compat).
 * **Backend:** Firebase Cloud Functions 2nd Gen running on Node.js 24 runtime with Firebase Admin SDK.
 * **Database:** Cloud Firestore (`europe-west2`) secured with granular declarative security rules (`firestore.rules`).
-* **Authentication:** Firebase Authentication with Google Sign-In provider.
+* **Authentication:** Firebase Authentication supporting both Email & Password (with self-service password reset) and Google Sign-In, gated behind a strict authentication gateway.
 * **Hosting:** Firebase Hosting with SPA rewrites (`/index.html`) and cache-invalidation headers.
 * **Email Service:** Nodemailer configured for Gmail / Google Workspace SMTP.
 

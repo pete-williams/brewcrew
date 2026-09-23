@@ -50,6 +50,12 @@ let activeRosterShiftId = null;
 // Expose action functions to window explicitly for HTML onclick handlers
 window.switchView = switchView;
 window.loginWithGoogle = loginWithGoogle;
+window.handleEmailSignIn = handleEmailSignIn;
+window.handleEmailSignUp = handleEmailSignUp;
+window.handlePasswordReset = handlePasswordReset;
+window.showAuthTab = showAuthTab;
+window.showAuthSubView = showAuthSubView;
+window.togglePasswordVisibility = togglePasswordVisibility;
 window.logout = logout;
 window.filterCategory = filterCategory;
 window.claimShift = claimShift;
@@ -92,37 +98,67 @@ document.addEventListener("DOMContentLoaded", () => {
     adminBtn.addEventListener("click", () => switchView("admin"));
   }
 
-  initRoute();
-  renderDayTabs();
-  renderCategoryFilters();
-  initCategoryListener();
-
+  // Setup Auth State Listener (Strict Gateway: Interface is completely hidden until authenticated)
   auth.onAuthStateChanged(user => {
+    // Hide initial app loading screen
+    const appLoading = document.getElementById("app-loading");
+    if (appLoading) {
+      appLoading.classList.add("hidden");
+    }
+
+    const authScreen = document.getElementById("auth-screen");
+    const authenticatedApp = document.getElementById("authenticated-app");
+
     currentUser = user;
     if (user) {
-      document.getElementById("login-btn").classList.add("hidden");
-      document.getElementById("logout-btn").classList.remove("hidden");
+      // 1. Hide Login Screen, Reveal Authenticated Platform
+      if (authScreen) {
+        authScreen.classList.add("hidden");
+        authScreen.classList.remove("flex");
+      }
+      if (authenticatedApp) {
+        authenticatedApp.classList.remove("hidden");
+      }
 
+      // 2. Populate Authenticated User Details in Navbar
       const userInfo = document.getElementById("user-info");
-      userInfo.classList.remove("hidden");
-      userInfo.classList.add("flex");
-      document.getElementById("user-name").innerText = user.displayName || user.email;
-      document.getElementById("user-avatar").src = user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || "User")}&background=b45309&color=fff`;
+      if (userInfo) {
+        userInfo.classList.remove("hidden");
+        userInfo.classList.add("flex");
+      }
+      const userNameEl = document.getElementById("user-name");
+      if (userNameEl) {
+        userNameEl.innerText = user.displayName || user.email;
+      }
+      const userAvatarEl = document.getElementById("user-avatar");
+      if (userAvatarEl) {
+        userAvatarEl.src = user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || user.email || "Volunteer")}&background=b45309&color=fff`;
+      }
 
+      // 3. Sync User Profile & Initialize Authenticated Realtime Listeners
       syncUserProfile(user);
       subscribeToCurrentUserProfile(user.uid);
       subscribeToUserRegistrations(user.uid);
+      initCategoryListener();
+      renderDayTabs();
+      renderCategoryFilters();
+      subscribeToShifts();
+      initRoute();
     } else {
+      // Unauthenticated State: Ensure interface is NOT loaded and only login prompt is visible
       currentUserProfile = null;
       currentUserRole = "volunteer";
 
-      document.getElementById("login-btn").classList.remove("hidden");
-      document.getElementById("logout-btn").classList.add("hidden");
+      // 1. Hide Authenticated App, Show Login Prompt Screen
+      if (authenticatedApp) {
+        authenticatedApp.classList.add("hidden");
+      }
+      if (authScreen) {
+        authScreen.classList.remove("hidden");
+        authScreen.classList.add("flex");
+      }
 
-      const userInfo = document.getElementById("user-info");
-      userInfo.classList.add("hidden");
-      userInfo.classList.remove("flex");
-
+      // 2. Teardown All Realtime Listeners to Protect Data and Prevent Permission Denied Errors
       if (userProfileUnsubscribe) {
         userProfileUnsubscribe();
         userProfileUnsubscribe = null;
@@ -131,22 +167,33 @@ document.addEventListener("DOMContentLoaded", () => {
         allUsersUnsubscribe();
         allUsersUnsubscribe = null;
       }
-      allUsersMap.clear();
-
-      updateRoleUI();
-
       if (registrationsUnsubscribe) {
         registrationsUnsubscribe();
         registrationsUnsubscribe = null;
       }
-      userRegistrations.clear();
-      updateIncentiveAndMyShifts();
-
-      if (currentView === "admin") {
-        switchView("schedule");
+      if (shiftsUnsubscribe) {
+        shiftsUnsubscribe();
+        shiftsUnsubscribe = null;
       }
+      if (categoriesUnsubscribe) {
+        categoriesUnsubscribe();
+        categoriesUnsubscribe = null;
+      }
+
+      allUsersMap.clear();
+      userRegistrations.clear();
+      currentShiftsDocs = [];
+
+      // 3. Clear Auth Form Inputs & Alerts
+      clearAuthAlerts();
+      const signinForm = document.getElementById("form-signin");
+      if (signinForm) signinForm.reset();
+      const registerForm = document.getElementById("form-register");
+      if (registerForm) registerForm.reset();
+      const forgotForm = document.getElementById("form-forgot-password");
+      if (forgotForm) forgotForm.reset();
+      showAuthSubView("tabs");
     }
-    subscribeToShifts();
   });
 });
 
@@ -162,6 +209,7 @@ function initRoute() {
   }
 
   window.addEventListener("hashchange", () => {
+    if (!currentUser) return;
     if (window.location.hash === "#my-shifts") {
       switchView("my-shifts");
     } else if (window.location.hash === "#admin") {
@@ -193,17 +241,17 @@ function switchView(viewName) {
   const activeClass = "px-3.5 py-1.5 rounded-md text-sm font-semibold transition bg-amber-700 text-white shadow-sm flex items-center";
   const inactiveClass = "px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white flex items-center";
 
-  scheduleView.classList.add("hidden");
-  myShiftsView.classList.add("hidden");
+  if (scheduleView) scheduleView.classList.add("hidden");
+  if (myShiftsView) myShiftsView.classList.add("hidden");
   if (adminView) adminView.classList.add("hidden");
 
-  navScheduleBtn.className = inactiveClass;
-  navMyShiftsBtn.className = inactiveClass;
+  if (navScheduleBtn) navScheduleBtn.className = inactiveClass;
+  if (navMyShiftsBtn) navMyShiftsBtn.className = inactiveClass;
   if (navAdminBtn) navAdminBtn.className = inactiveClass;
 
   if (viewName === "my-shifts") {
-    myShiftsView.classList.remove("hidden");
-    navMyShiftsBtn.className = activeClass;
+    if (myShiftsView) myShiftsView.classList.remove("hidden");
+    if (navMyShiftsBtn) navMyShiftsBtn.className = activeClass;
     if (window.location.hash !== "#my-shifts") {
       window.location.hash = "#my-shifts";
     }
@@ -215,26 +263,256 @@ function switchView(viewName) {
     }
     renderAdminUsers();
   } else {
-    scheduleView.classList.remove("hidden");
-    navScheduleBtn.className = activeClass;
+    if (scheduleView) scheduleView.classList.remove("hidden");
+    if (navScheduleBtn) navScheduleBtn.className = activeClass;
     if (window.location.hash !== "#schedule") {
       window.location.hash = "#schedule";
     }
   }
 }
 
-// Authentication
+// Authentication & Credential Management
 function loginWithGoogle() {
+  const googleBtn = document.getElementById("google-signin-btn");
+  const googleBtnText = document.getElementById("google-btn-text");
+  if (googleBtnText) googleBtnText.innerText = "Signing in...";
+  if (googleBtn) googleBtn.disabled = true;
+  clearAuthAlerts();
+
   const provider = new firebase.auth.GoogleAuthProvider();
-  auth.signInWithPopup(provider).catch(err => {
-    if (err.code !== "auth/popup-closed-by-user") {
-      alert("Sign in failed: " + err.message);
+  auth.signInWithPopup(provider)
+    .catch(err => {
+      if (err.code !== "auth/popup-closed-by-user") {
+        showAuthAlert("signin-alert", getFriendlyAuthErrorMessage(err));
+      }
+    })
+    .finally(() => {
+      if (googleBtnText) googleBtnText.innerText = "Sign In with Google";
+      if (googleBtn) googleBtn.disabled = false;
+    });
+}
+
+async function handleEmailSignIn(event) {
+  event.preventDefault();
+  clearAuthAlerts();
+
+  const emailInput = document.getElementById("signin-email");
+  const passwordInput = document.getElementById("signin-password");
+  const submitBtn = document.getElementById("btn-submit-signin");
+  const submitText = document.getElementById("btn-signin-text");
+
+  const email = emailInput?.value?.trim();
+  const password = passwordInput?.value;
+
+  if (!email || !password) {
+    showAuthAlert("signin-alert", "Please enter both email and password.");
+    return;
+  }
+
+  if (submitBtn) submitBtn.disabled = true;
+  if (submitText) submitText.innerText = "Signing in...";
+
+  try {
+    await auth.signInWithEmailAndPassword(email, password);
+  } catch (err) {
+    console.error("Sign in error:", err);
+    showAuthAlert("signin-alert", getFriendlyAuthErrorMessage(err));
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+    if (submitText) submitText.innerText = "Sign In with Email";
+  }
+}
+
+async function handleEmailSignUp(event) {
+  event.preventDefault();
+  clearAuthAlerts();
+
+  const nameInput = document.getElementById("register-name");
+  const emailInput = document.getElementById("register-email");
+  const passwordInput = document.getElementById("register-password");
+  const confirmPasswordInput = document.getElementById("register-confirm-password");
+  const submitBtn = document.getElementById("btn-submit-register");
+  const submitText = document.getElementById("btn-register-text");
+
+  const fullName = nameInput?.value?.trim();
+  const email = emailInput?.value?.trim();
+  const password = passwordInput?.value;
+  const confirmPassword = confirmPasswordInput?.value;
+
+  if (!fullName) {
+    showAuthAlert("register-alert", "Please enter your full name.");
+    return;
+  }
+  if (!email) {
+    showAuthAlert("register-alert", "Please enter a valid email address.");
+    return;
+  }
+  if (!password || password.length < 6) {
+    showAuthAlert("register-alert", "Password must be at least 6 characters.");
+    return;
+  }
+  if (password !== confirmPassword) {
+    showAuthAlert("register-alert", "Passwords do not match. Please re-enter.");
+    return;
+  }
+
+  if (submitBtn) submitBtn.disabled = true;
+  if (submitText) submitText.innerText = "Creating account...";
+
+  try {
+    const cred = await auth.createUserWithEmailAndPassword(email, password);
+    const user = cred.user;
+
+    // Update Auth profile displayName
+    await user.updateProfile({
+      displayName: fullName
+    });
+
+    // Create user profile in Firestore
+    await db.collection("users").doc(user.uid).set({
+      fullName: fullName,
+      email: email.toLowerCase(),
+      role: "volunteer",
+      createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  } catch (err) {
+    console.error("Registration error:", err);
+    showAuthAlert("register-alert", getFriendlyAuthErrorMessage(err));
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+    if (submitText) submitText.innerText = "Create Volunteer Account";
+  }
+}
+
+async function handlePasswordReset(event) {
+  event.preventDefault();
+  clearAuthAlerts();
+
+  const emailInput = document.getElementById("forgot-email");
+  const submitBtn = document.getElementById("btn-submit-forgot");
+  const submitText = document.getElementById("btn-forgot-text");
+
+  const email = emailInput?.value?.trim();
+  if (!email) {
+    showAuthAlert("forgot-alert", "Please enter your account email address.");
+    return;
+  }
+
+  if (submitBtn) submitBtn.disabled = true;
+  if (submitText) submitText.innerText = "Sending reset link...";
+
+  try {
+    await auth.sendPasswordResetEmail(email.toLowerCase());
+    showAuthAlert("forgot-alert", "Password reset email sent! Check your inbox for instructions.", true);
+    if (emailInput) emailInput.value = "";
+  } catch (err) {
+    console.error("Password reset error:", err);
+    showAuthAlert("forgot-alert", getFriendlyAuthErrorMessage(err));
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+    if (submitText) submitText.innerText = "Send Password Reset Link";
+  }
+}
+
+function showAuthTab(tab) {
+  const tabBtnSignIn = document.getElementById("tab-btn-signin");
+  const tabBtnRegister = document.getElementById("tab-btn-register");
+  const formSignIn = document.getElementById("form-signin");
+  const formRegister = document.getElementById("form-register");
+  
+  clearAuthAlerts();
+
+  if (tab === "register") {
+    if (tabBtnRegister) tabBtnRegister.className = "flex-1 py-1.5 text-xs font-bold rounded-md bg-white text-slate-800 shadow-sm transition";
+    if (tabBtnSignIn) tabBtnSignIn.className = "flex-1 py-1.5 text-xs font-bold rounded-md text-slate-500 hover:text-slate-800 transition";
+    if (formSignIn) formSignIn.classList.add("hidden");
+    if (formRegister) formRegister.classList.remove("hidden");
+  } else {
+    if (tabBtnSignIn) tabBtnSignIn.className = "flex-1 py-1.5 text-xs font-bold rounded-md bg-white text-slate-800 shadow-sm transition";
+    if (tabBtnRegister) tabBtnRegister.className = "flex-1 py-1.5 text-xs font-bold rounded-md text-slate-500 hover:text-slate-800 transition";
+    if (formRegister) formRegister.classList.add("hidden");
+    if (formSignIn) formSignIn.classList.remove("hidden");
+  }
+}
+
+function showAuthSubView(view) {
+  const mainView = document.getElementById("auth-main-view");
+  const forgotView = document.getElementById("auth-forgot-view");
+  clearAuthAlerts();
+
+  if (view === "forgot") {
+    if (mainView) mainView.classList.add("hidden");
+    if (forgotView) forgotView.classList.remove("hidden");
+  } else {
+    if (forgotView) forgotView.classList.add("hidden");
+    if (mainView) mainView.classList.remove("hidden");
+  }
+}
+
+function togglePasswordVisibility(inputId, btnId) {
+  const input = document.getElementById(inputId);
+  const btn = document.getElementById(btnId);
+  if (!input) return;
+
+  if (input.type === "password") {
+    input.type = "text";
+    if (btn) btn.innerText = "🙈";
+  } else {
+    input.type = "password";
+    if (btn) btn.innerText = "👁️";
+  }
+}
+
+function showAuthAlert(containerId, message, isSuccess = false) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  el.classList.remove("hidden");
+  if (isSuccess) {
+    el.className = "p-3 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-300";
+    el.innerHTML = `✓ ${message}`;
+  } else {
+    el.className = "p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-800 border border-rose-300";
+    el.innerHTML = `⚠️ ${message}`;
+  }
+}
+
+function clearAuthAlerts() {
+  ["signin-alert", "register-alert", "forgot-alert"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) {
+      el.classList.add("hidden");
+      el.innerText = "";
     }
   });
 }
 
+function getFriendlyAuthErrorMessage(error) {
+  if (!error) return "An unexpected error occurred. Please try again.";
+  switch (error.code) {
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+      return "Incorrect email or password. Please verify your credentials.";
+    case "auth/user-not-found":
+      return "No account found with this email. Please register or check for typos.";
+    case "auth/email-already-in-use":
+      return "An account with this email address already exists. Try signing in, or use Google Sign-In if you previously used Google.";
+    case "auth/weak-password":
+      return "Password must be at least 6 characters.";
+    case "auth/invalid-email":
+      return "Please enter a valid email address.";
+    case "auth/too-many-requests":
+      return "Access temporarily disabled due to many failed attempts. You can reset your password or try again later.";
+    case "auth/network-request-failed":
+      return "Network connection issue. Please check your internet connection.";
+    case "auth/popup-closed-by-user":
+      return "Sign in cancelled by user.";
+    default:
+      return error.message || "Authentication failed.";
+  }
+}
+
 function logout() {
-  auth.signOut();
+  auth.signOut().catch(err => console.error("Sign out error:", err));
 }
 
 async function syncUserProfile(user) {
@@ -248,6 +526,13 @@ async function syncUserProfile(user) {
         role: "volunteer",
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
+    } else {
+      const data = doc.data();
+      if ((!data.fullName || data.fullName === "Volunteer") && user.displayName) {
+        await userRef.update({
+          fullName: user.displayName
+        });
+      }
     }
   } catch (err) {
     console.error("Error syncing user profile:", err);
@@ -580,7 +865,7 @@ function renderShifts(docs) {
     let actionBtnHtml = "";
     if (!currentUser) {
       actionBtnHtml = `
-        <button onclick="loginWithGoogle()" class="mt-4 w-full py-2.5 rounded-lg text-sm font-bold text-white bg-amber-700 hover:bg-amber-600 transition shadow-sm">
+        <button disabled class="mt-4 w-full py-2.5 rounded-lg text-sm font-bold text-slate-400 bg-slate-200 cursor-not-allowed">
           Sign In to Register
         </button>
       `;
@@ -678,14 +963,11 @@ async function updateIncentiveAndMyShifts() {
     document.getElementById("progress-bar").style.width = "0%";
     document.getElementById("hours-badge").innerText = "0 / 8 Hours";
     document.getElementById("incentive-status").innerText =
-      "Log in to view earned rewards (4 Hours = Free Entry | 8 Hours = Entry + T-Shirt)";
+      "Please sign in to view earned rewards.";
     if (listContainer) {
       listContainer.innerHTML = `
         <div class="text-center py-8">
           <p class="text-slate-500 mb-3">Please sign in to view and manage your registered shifts.</p>
-          <button onclick="loginWithGoogle()" class="bg-amber-700 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-semibold transition">
-            Sign In with Google
-          </button>
         </div>
       `;
     }
@@ -792,7 +1074,6 @@ async function updateIncentiveAndMyShifts() {
 // Volunteer Shift Actions
 async function claimShift(shiftId) {
   if (!currentUser) {
-    loginWithGoogle();
     return;
   }
 

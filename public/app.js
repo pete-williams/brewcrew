@@ -28,6 +28,31 @@ let selectedDay = 1;
 let selectedCategory = "ALL";
 let currentView = "schedule";
 
+// Festival Configuration State (Default fallback + dynamic Firestore config/festival)
+const defaultFestivalConfig = {
+  festivalName: "BrewCrew Festival Portal",
+  festivalWebsite: "",
+  festivalLogoUrl: "",
+  volunteerManager: {
+    name: "Volunteer Coordinator",
+    email: "volunteer@festival.org",
+    phone: ""
+  },
+  days: [
+    { dayIndex: 1, date: "2027-02-01", name: "Prep Day", description: "Equipment setup and venue preparation" },
+    { dayIndex: 2, date: "2027-02-02", name: "Opening Session", description: "Festival opening and tasting" },
+    { dayIndex: 3, date: "2027-02-03", name: "Main Session", description: "Main festival session" },
+    { dayIndex: 4, date: "2027-02-04", name: "Evening Session", description: "Evening festival session" },
+    { dayIndex: 5, date: "2027-02-05", name: "Weekend Kickoff", description: "Weekend festival kickoff" },
+    { dayIndex: 6, date: "2027-02-06", name: "Grand Tasting", description: "Grand tasting day" },
+    { dayIndex: 7, date: "2027-02-07", name: "Takedown & Wrap", description: "Closing session and takedown" }
+  ]
+};
+
+let currentFestivalConfig = { ...defaultFestivalConfig };
+let festivalConfigUnsubscribe = null;
+let adminEditingSessions = [];
+
 // Categories State (Default fallback + dynamic Firestore)
 const defaultCategories = ["Cider Bar", "Cask Bar", "Keg Bar", "Token and Merch", "Gate"];
 let availableCategories = [...defaultCategories];
@@ -53,6 +78,7 @@ window.loginWithGoogle = loginWithGoogle;
 window.handleEmailSignIn = handleEmailSignIn;
 window.handleEmailSignUp = handleEmailSignUp;
 window.handlePasswordReset = handlePasswordReset;
+window.handleRequiredPhoneSubmit = handleRequiredPhoneSubmit;
 window.showAuthTab = showAuthTab;
 window.showAuthSubView = showAuthSubView;
 window.togglePasswordVisibility = togglePasswordVisibility;
@@ -83,6 +109,11 @@ function updateAdminExports(isAdmin) {
     "handleAdminRoleFilter",
     "renderAdminUsers",
     "changeUserRole",
+    "renderAdminFestivalConfig",
+    "handleSaveFestivalConfig",
+    "handleAddFestivalSession",
+    "handleRemoveFestivalSession",
+    "previewFestivalLogo",
   ];
 
   if (isAdmin) {
@@ -98,6 +129,11 @@ function updateAdminExports(isAdmin) {
     window.handleAdminRoleFilter = handleAdminRoleFilter;
     window.renderAdminUsers = renderAdminUsers;
     window.changeUserRole = changeUserRole;
+    window.renderAdminFestivalConfig = renderAdminFestivalConfig;
+    window.handleSaveFestivalConfig = handleSaveFestivalConfig;
+    window.handleAddFestivalSession = handleAddFestivalSession;
+    window.handleRemoveFestivalSession = handleRemoveFestivalSession;
+    window.previewFestivalLogo = previewFestivalLogo;
   } else {
     adminFunctionNames.forEach(fnName => {
       delete window[fnName];
@@ -110,6 +146,9 @@ updateAdminExports(false);
 
 // System Initialization
 document.addEventListener("DOMContentLoaded", () => {
+  // Immediately subscribe to festival settings (public read document)
+  subscribeToFestivalConfig();
+
   // Bind navigation listeners
   const scheduleBtn = document.getElementById("nav-schedule-btn");
   if (scheduleBtn) {
@@ -183,6 +222,9 @@ document.addEventListener("DOMContentLoaded", () => {
         authScreen.classList.remove("hidden");
         authScreen.classList.add("flex");
       }
+
+      const phoneModal = document.getElementById("phone-required-modal");
+      if (phoneModal) phoneModal.classList.add("hidden");
 
       // 2. Teardown All Realtime Listeners to Protect Data and Prevent Permission Denied Errors
       if (userProfileUnsubscribe) {
@@ -308,6 +350,7 @@ function switchView(viewName) {
       window.location.hash = "#admin";
     }
     renderAdminUsers();
+    renderAdminFestivalConfig();
   } else {
     if (scheduleView) scheduleView.classList.remove("hidden");
     if (navScheduleBtn) navScheduleBtn.className = activeClass;
@@ -375,6 +418,7 @@ async function handleEmailSignUp(event) {
 
   const nameInput = document.getElementById("register-name");
   const emailInput = document.getElementById("register-email");
+  const phoneInput = document.getElementById("register-phone");
   const passwordInput = document.getElementById("register-password");
   const confirmPasswordInput = document.getElementById("register-confirm-password");
   const submitBtn = document.getElementById("btn-submit-register");
@@ -382,6 +426,7 @@ async function handleEmailSignUp(event) {
 
   const fullName = nameInput?.value?.trim();
   const email = emailInput?.value?.trim();
+  const phoneNumber = phoneInput?.value?.trim();
   const password = passwordInput?.value;
   const confirmPassword = confirmPasswordInput?.value;
 
@@ -391,6 +436,10 @@ async function handleEmailSignUp(event) {
   }
   if (!email) {
     showAuthAlert("register-alert", "Please enter a valid email address.");
+    return;
+  }
+  if (!phoneNumber) {
+    showAuthAlert("register-alert", "Contact phone number is mandatory for festival volunteer coordination.");
     return;
   }
   if (!password || password.length < 6) {
@@ -418,6 +467,7 @@ async function handleEmailSignUp(event) {
     await db.collection("users").doc(user.uid).set({
       fullName: fullName,
       email: email.toLowerCase(),
+      phoneNumber: phoneNumber,
       role: "volunteer",
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
@@ -570,6 +620,7 @@ async function syncUserProfile(user) {
         fullName: user.displayName || "Volunteer",
         email: user.email,
         role: "volunteer",
+        phoneNumber: "",
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
     } else {
@@ -597,6 +648,15 @@ function subscribeToCurrentUserProfile(uid) {
     } else {
       currentUserProfile = null;
       currentUserRole = "volunteer";
+    }
+
+    // Mandatory Phone Enforcement:
+    // If the authenticated user does not have a phone number on file, trigger blocking modal
+    const phoneModal = document.getElementById("phone-required-modal");
+    if (currentUser && currentUserProfile && !currentUserProfile.phoneNumber) {
+      if (phoneModal) phoneModal.classList.remove("hidden");
+    } else {
+      if (phoneModal) phoneModal.classList.add("hidden");
     }
 
     updateRoleUI();
@@ -630,6 +690,47 @@ function subscribeToCurrentUserProfile(uid) {
   }, err => {
     console.error("Error subscribing to user profile:", err);
   });
+}
+
+async function handleRequiredPhoneSubmit(event) {
+  event.preventDefault();
+  const phoneInput = document.getElementById("required-phone-input");
+  const phoneAlert = document.getElementById("phone-required-alert");
+  const submitBtn = document.getElementById("btn-submit-required-phone");
+  const submitText = document.getElementById("btn-required-phone-text");
+
+  const phone = phoneInput?.value?.trim();
+  if (!phone) {
+    if (phoneAlert) {
+      phoneAlert.className = "p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-800 border border-rose-300";
+      phoneAlert.innerText = "Please enter a valid contact phone number.";
+      phoneAlert.classList.remove("hidden");
+    }
+    return;
+  }
+
+  if (submitBtn) submitBtn.disabled = true;
+  if (submitText) submitText.innerText = "Saving phone number...";
+
+  try {
+    await db.collection("users").doc(currentUser.uid).update({
+      phoneNumber: phone,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    const phoneModal = document.getElementById("phone-required-modal");
+    if (phoneModal) phoneModal.classList.add("hidden");
+    if (phoneAlert) phoneAlert.classList.add("hidden");
+  } catch (err) {
+    console.error("Failed to save phone number:", err);
+    if (phoneAlert) {
+      phoneAlert.className = "p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-800 border border-rose-300";
+      phoneAlert.innerText = "Failed to update phone number: " + err.message;
+      phoneAlert.classList.remove("hidden");
+    }
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+    if (submitText) submitText.innerText = "Save Phone Number & Continue";
+  }
 }
 
 function updateRoleUI() {
@@ -781,27 +882,211 @@ function filterCategory(cat) {
   renderShifts(currentShiftsDocs);
 }
 
-// Day Tabs
+// Festival Configuration Dynamic Listener & Realtime Branding
+function subscribeToFestivalConfig() {
+  if (festivalConfigUnsubscribe) return;
+
+  festivalConfigUnsubscribe = db.collection("config").doc("festival").onSnapshot(doc => {
+    if (doc.exists) {
+      const data = doc.data();
+      currentFestivalConfig = {
+        festivalName: data.festivalName || defaultFestivalConfig.festivalName,
+        festivalWebsite: data.festivalWebsite || "",
+        festivalLogoUrl: data.festivalLogoUrl || "",
+        volunteerManager: {
+          name: data.volunteerManager?.name || "",
+          email: data.volunteerManager?.email || "",
+          phone: data.volunteerManager?.phone || ""
+        },
+        days: (data.days && Array.isArray(data.days) && data.days.length > 0)
+          ? data.days
+          : defaultFestivalConfig.days
+      };
+    } else {
+      currentFestivalConfig = { ...defaultFestivalConfig };
+    }
+
+    applyFestivalBranding();
+    renderDayTabs();
+    if (currentUserRole === "admin" && currentView === "admin") {
+      renderAdminFestivalConfig();
+    }
+  }, err => {
+    console.warn("Festival config listener error (using fallback defaults):", err);
+    currentFestivalConfig = { ...defaultFestivalConfig };
+    applyFestivalBranding();
+    renderDayTabs();
+  });
+}
+
+function applyFestivalBranding() {
+  const cfg = currentFestivalConfig;
+
+  // Document Title
+  document.title = (cfg.festivalName || "BrewCrew") + " - Volunteer Portal";
+
+  // Auth Screen Branding
+  const authName = document.getElementById("auth-festival-name");
+  if (authName) authName.innerText = cfg.festivalName || "BrewCrew Festival Portal";
+
+  const authLogoImg = document.getElementById("auth-festival-logo-img");
+  const authLogoEmoji = document.getElementById("auth-festival-logo-emoji");
+  if (authLogoImg && authLogoEmoji) {
+    if (cfg.festivalLogoUrl) {
+      authLogoImg.src = cfg.festivalLogoUrl;
+      authLogoImg.classList.remove("hidden");
+      authLogoEmoji.classList.add("hidden");
+    } else {
+      authLogoImg.classList.add("hidden");
+      authLogoEmoji.classList.remove("hidden");
+    }
+  }
+
+  const authWebsiteWrap = document.getElementById("auth-festival-website-wrap");
+  const authWebsite = document.getElementById("auth-festival-website");
+  if (authWebsiteWrap && authWebsite) {
+    if (cfg.festivalWebsite) {
+      authWebsite.href = cfg.festivalWebsite;
+      authWebsiteWrap.classList.remove("hidden");
+    } else {
+      authWebsiteWrap.classList.add("hidden");
+    }
+  }
+
+  // Authenticated Navbar Branding
+  const navName = document.getElementById("nav-festival-name");
+  if (navName) navName.innerText = cfg.festivalName || "BrewCrew Festival Portal";
+
+  const navLogoImg = document.getElementById("nav-festival-logo-img");
+  const navLogoEmoji = document.getElementById("nav-festival-logo-emoji");
+  if (navLogoImg && navLogoEmoji) {
+    if (cfg.festivalLogoUrl) {
+      navLogoImg.src = cfg.festivalLogoUrl;
+      navLogoImg.classList.remove("hidden");
+      navLogoEmoji.classList.add("hidden");
+    } else {
+      navLogoImg.classList.add("hidden");
+      navLogoEmoji.classList.remove("hidden");
+    }
+  }
+
+  // Footer Branding
+  const footerName = document.getElementById("footer-festival-name");
+  if (footerName) footerName.innerText = cfg.festivalName || "BrewCrew Festival Portal";
+
+  const footerWebsiteWrap = document.getElementById("footer-festival-website-wrap");
+  const footerWebsite = document.getElementById("footer-festival-website");
+  if (footerWebsiteWrap && footerWebsite) {
+    if (cfg.festivalWebsite) {
+      footerWebsite.href = cfg.festivalWebsite;
+      footerWebsiteWrap.classList.remove("hidden");
+    } else {
+      footerWebsiteWrap.classList.add("hidden");
+    }
+  }
+
+  // Coordinator Contact Widgets (Schedule View Banner & Footer)
+  const mgr = cfg.volunteerManager || {};
+  const hasMgrInfo = Boolean(mgr.name || mgr.email || mgr.phone);
+
+  const banner = document.getElementById("coordinator-contact-banner");
+  const bannerName = document.getElementById("coordinator-banner-name");
+  const bannerEmail = document.getElementById("coordinator-banner-email");
+  const bannerPhone = document.getElementById("coordinator-banner-phone");
+
+  const footerContact = document.getElementById("footer-contact-info");
+  const footerMgrName = document.getElementById("footer-coordinator-name");
+  const footerMgrEmail = document.getElementById("footer-coordinator-email");
+  const footerMgrPhone = document.getElementById("footer-coordinator-phone");
+
+  if (hasMgrInfo) {
+    if (banner) {
+      banner.classList.remove("hidden");
+      banner.classList.add("flex");
+    }
+    if (bannerName) bannerName.innerText = mgr.name || "Volunteer Coordinator";
+    if (bannerEmail) {
+      if (mgr.email) {
+        bannerEmail.href = `mailto:${mgr.email}`;
+        bannerEmail.innerText = mgr.email;
+        bannerEmail.classList.remove("hidden");
+      } else {
+        bannerEmail.classList.add("hidden");
+      }
+    }
+    if (bannerPhone) {
+      if (mgr.phone) {
+        bannerPhone.href = `tel:${mgr.phone}`;
+        bannerPhone.innerText = mgr.phone;
+        bannerPhone.classList.remove("hidden");
+      } else {
+        bannerPhone.classList.add("hidden");
+      }
+    }
+
+    if (footerContact) footerContact.classList.remove("hidden");
+    if (footerMgrName) footerMgrName.innerText = mgr.name || "Volunteer Coordinator";
+    if (footerMgrEmail) {
+      if (mgr.email) {
+        footerMgrEmail.href = `mailto:${mgr.email}`;
+        footerMgrEmail.innerText = mgr.email;
+        footerMgrEmail.classList.remove("hidden");
+      } else {
+        footerMgrEmail.classList.add("hidden");
+      }
+    }
+    if (footerMgrPhone) {
+      if (mgr.phone) {
+        footerMgrPhone.href = `tel:${mgr.phone}`;
+        footerMgrPhone.innerText = mgr.phone;
+        footerMgrPhone.classList.remove("hidden");
+      } else {
+        footerMgrPhone.classList.add("hidden");
+      }
+    }
+  } else {
+    if (banner) {
+      banner.classList.add("hidden");
+      banner.classList.remove("flex");
+    }
+    if (footerContact) footerContact.classList.add("hidden");
+  }
+}
+
+// Day / Session Navigation Tabs
 function renderDayTabs() {
   const container = document.getElementById("day-tabs");
   if (!container) return;
 
+  const daysList = currentFestivalConfig.days || defaultFestivalConfig.days;
+
+  // Validate selectedDay
+  const dayExists = daysList.some(d => d.dayIndex === selectedDay);
+  if (!dayExists && daysList.length > 0) {
+    selectedDay = daysList[0].dayIndex;
+  }
+
   container.innerHTML = "";
-  for (let i = 1; i <= 7; i++) {
+  daysList.forEach(session => {
+    const isSelected = selectedDay === session.dayIndex;
     const btn = document.createElement("button");
-    btn.className = `px-4 py-2 rounded-t-lg text-sm font-bold whitespace-nowrap transition ${
-      selectedDay === i
+    btn.className = `px-3.5 py-2 rounded-t-lg text-xs font-bold whitespace-nowrap transition flex flex-col items-start ${
+      isSelected
         ? "bg-amber-800 text-white shadow-sm"
         : "bg-white text-amber-900 border border-amber-200 hover:bg-amber-100"
     }`;
-    btn.innerText = `Day ${i}`;
+
+    btn.innerHTML = `
+      <span class="font-bold">${escapeHtml(session.name || `Day ${session.dayIndex}`)}</span>
+      ${session.date ? `<span class="text-[10px] ${isSelected ? 'text-amber-200' : 'text-slate-400'} font-normal">${escapeHtml(session.date)}</span>` : ''}
+    `;
     btn.onclick = () => {
-      selectedDay = i;
+      selectedDay = session.dayIndex;
       renderDayTabs();
       subscribeToShifts();
     };
     container.appendChild(btn);
-  }
+  });
 }
 
 // Real-Time Shifts Listener
@@ -1193,7 +1478,28 @@ function openCreateShiftModal() {
   const endInput = document.getElementById("new-shift-end");
   const mgrSelect = document.getElementById("new-shift-manager");
 
-  daySelect.value = selectedDay;
+  // Populate Festival Days & Sessions dynamically
+  const daysList = currentFestivalConfig.days || defaultFestivalConfig.days;
+  if (daySelect) {
+    daySelect.innerHTML = daysList.map(session => `
+      <option value="${session.dayIndex}" data-date="${session.date || ''}">
+        Day ${session.dayIndex}: ${escapeHtml(session.name || `Day ${session.dayIndex}`)}${session.date ? ` (${session.date})` : ''}
+      </option>
+    `).join("");
+    daySelect.value = selectedDay;
+
+    daySelect.onchange = () => {
+      const opt = daySelect.options[daySelect.selectedIndex];
+      const dateStr = opt?.getAttribute("data-date");
+      if (dateStr) {
+        const s = new Date(dateStr + "T12:00:00");
+        const e = new Date(dateStr + "T16:00:00");
+        if (!isNaN(s.getTime())) startInput.value = formatForDateTimeLocal(s);
+        if (!isNaN(e.getTime())) endInput.value = formatForDateTimeLocal(e);
+      }
+    };
+  }
+
   capInput.value = "4";
   customCatInput.value = "";
   customCatInput.classList.add("hidden");
@@ -1206,12 +1512,18 @@ function openCreateShiftModal() {
   populateManagerDropdowns();
   mgrSelect.value = "";
 
-  // Set default datetime: try inheriting date from existing shift on selectedDay
+  // Set default datetime: try inheriting from session date or existing shift
   let baseDate = new Date();
-  const dayShifts = currentShiftsDocs.filter(d => (d.data().dayIndex || 1) === selectedDay);
-  if (dayShifts.length > 0 && dayShifts[0].data().startTime) {
-    const sampleMs = getShiftStartTimeMs(dayShifts[0].data().startTime);
-    if (sampleMs) baseDate = new Date(sampleMs);
+  const currentSession = daysList.find(s => s.dayIndex === selectedDay);
+  if (currentSession && currentSession.date) {
+    const parsedDate = new Date(currentSession.date + "T12:00:00");
+    if (!isNaN(parsedDate.getTime())) baseDate = parsedDate;
+  } else {
+    const dayShifts = currentShiftsDocs.filter(d => (d.data().dayIndex || 1) === selectedDay);
+    if (dayShifts.length > 0 && dayShifts[0].data().startTime) {
+      const sampleMs = getShiftStartTimeMs(dayShifts[0].data().startTime);
+      if (sampleMs) baseDate = new Date(sampleMs);
+    }
   }
 
   const startDate = new Date(baseDate);
@@ -1378,6 +1690,7 @@ async function openShiftRosterModal(shiftId) {
         registeredAt: reg.registeredAt,
         fullName: user?.fullName || "Volunteer",
         email: user?.email || "Unknown email",
+        phoneNumber: user?.phoneNumber || "No phone on file",
         role: user?.role || "volunteer"
       };
     });
@@ -1407,7 +1720,7 @@ async function openShiftRosterModal(shiftId) {
           </div>
           <div class="truncate">
             <p class="font-bold text-slate-800 text-xs truncate">${escapeHtml(v.fullName)}</p>
-            <p class="text-[11px] text-slate-500 truncate">${escapeHtml(v.email)}</p>
+            <p class="text-[11px] text-slate-500 truncate">${escapeHtml(v.email)} &bull; 📞 ${escapeHtml(v.phoneNumber)}</p>
             <p class="text-[10px] text-slate-400">Registered: ${registeredDateStr}</p>
           </div>
         </div>
@@ -1496,14 +1809,15 @@ function renderAdminUsers() {
     const roleMatch = adminRoleFilter === "ALL" || (u.role || "volunteer") === adminRoleFilter;
     const nameStr = (u.fullName || "").toLowerCase();
     const emailStr = (u.email || "").toLowerCase();
-    const searchMatch = !adminUserFilterText || nameStr.includes(adminUserFilterText) || emailStr.includes(adminUserFilterText);
+    const phoneStr = (u.phoneNumber || "").toLowerCase();
+    const searchMatch = !adminUserFilterText || nameStr.includes(adminUserFilterText) || emailStr.includes(adminUserFilterText) || phoneStr.includes(adminUserFilterText);
     return roleMatch && searchMatch;
   });
 
   if (filteredUsers.length === 0) {
     tableBody.innerHTML = `
       <tr>
-        <td colspan="4" class="p-6 text-center text-slate-500 italic">
+        <td colspan="5" class="p-6 text-center text-slate-500 italic">
           No crew members found matching your search.
         </td>
       </tr>
@@ -1541,6 +1855,7 @@ function renderAdminUsers() {
         </div>
       </td>
       <td class="p-3 text-slate-600 font-mono text-[11px]">${escapeHtml(u.email || "No email")}</td>
+      <td class="p-3 text-slate-700 text-xs font-mono">${escapeHtml(u.phoneNumber || "—")}</td>
       <td class="p-3">
         <span class="text-[11px] font-bold px-2 py-0.5 rounded-full ${roleBadgeClass}">
           ${roleLabel}
@@ -1584,6 +1899,193 @@ async function changeUserRole(targetUserId, newRole, userName, selectEl) {
   } catch (err) {
     alert("Role update failed: " + err.message);
     renderAdminUsers();
+  }
+}
+
+// ============================================================================
+// REQUIREMENT: Admin Festival Configuration & Sessions Management
+// ============================================================================
+function previewFestivalLogo(url) {
+  const img = document.getElementById("admin-cfg-logo-preview-img");
+  const emoji = document.getElementById("admin-cfg-logo-preview-emoji");
+  if (!img || !emoji) return;
+  if (url && url.trim().startsWith("http")) {
+    img.src = url.trim();
+    img.classList.remove("hidden");
+    emoji.classList.add("hidden");
+  } else {
+    img.classList.add("hidden");
+    emoji.classList.remove("hidden");
+  }
+}
+
+function renderAdminFestivalConfig() {
+  if (currentUserRole !== "admin") return;
+
+  const nameInput = document.getElementById("admin-cfg-festival-name");
+  const websiteInput = document.getElementById("admin-cfg-festival-website");
+  const logoInput = document.getElementById("admin-cfg-festival-logo");
+  const mgrNameInput = document.getElementById("admin-cfg-manager-name");
+  const mgrEmailInput = document.getElementById("admin-cfg-manager-email");
+  const mgrPhoneInput = document.getElementById("admin-cfg-manager-phone");
+
+  if (nameInput) nameInput.value = currentFestivalConfig.festivalName || "";
+  if (websiteInput) websiteInput.value = currentFestivalConfig.festivalWebsite || "";
+  if (logoInput) {
+    logoInput.value = currentFestivalConfig.festivalLogoUrl || "";
+    previewFestivalLogo(currentFestivalConfig.festivalLogoUrl || "");
+  }
+
+  const mgr = currentFestivalConfig.volunteerManager || {};
+  if (mgrNameInput) mgrNameInput.value = mgr.name || "";
+  if (mgrEmailInput) mgrEmailInput.value = mgr.email || "";
+  if (mgrPhoneInput) mgrPhoneInput.value = mgr.phone || "";
+
+  // Clone days for admin session builder
+  adminEditingSessions = JSON.parse(JSON.stringify(currentFestivalConfig.days || defaultFestivalConfig.days));
+  renderAdminSessionsTable();
+}
+
+function renderAdminSessionsTable() {
+  const tbody = document.getElementById("admin-sessions-table-body");
+  if (!tbody) return;
+
+  if (!adminEditingSessions || adminEditingSessions.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-500 italic">No festival days/sessions configured. Add at least one day or session below.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  adminEditingSessions.forEach((session, index) => {
+    const tr = document.createElement("tr");
+    tr.className = "hover:bg-slate-50 transition";
+    tr.innerHTML = `
+      <td class="p-2.5 font-bold text-amber-950">#${session.dayIndex}</td>
+      <td class="p-2.5 font-mono text-[11px] text-slate-600">${escapeHtml(session.date || "Any")}</td>
+      <td class="p-2.5 font-semibold text-slate-800">${escapeHtml(session.name || "")}</td>
+      <td class="p-2.5 text-slate-500 text-[11px]">${escapeHtml(session.description || "")}</td>
+      <td class="p-2.5 text-right">
+        <button type="button" onclick="handleRemoveFestivalSession(${index})" class="text-rose-600 hover:text-rose-800 font-bold text-xs p-1" title="Remove this session">
+          ✕ Remove
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function handleAddFestivalSession() {
+  if (currentUserRole !== "admin") return;
+
+  const dateInput = document.getElementById("admin-new-session-date");
+  const nameInput = document.getElementById("admin-new-session-name");
+  const descInput = document.getElementById("admin-new-session-desc");
+
+  const date = dateInput?.value?.trim() || "";
+  const name = nameInput?.value?.trim() || "";
+  const desc = descInput?.value?.trim() || "";
+
+  if (!name) {
+    alert("Please provide a name for the festival day or session (e.g. 'Saturday Afternoon').");
+    return;
+  }
+
+  // Calculate next dayIndex
+  const maxDayIndex = adminEditingSessions.reduce((max, s) => Math.max(max, s.dayIndex || 0), 0);
+  const nextDayIndex = maxDayIndex + 1;
+
+  adminEditingSessions.push({
+    dayIndex: nextDayIndex,
+    date: date,
+    name: name,
+    description: desc
+  });
+
+  if (nameInput) nameInput.value = "";
+  if (descInput) descInput.value = "";
+
+  renderAdminSessionsTable();
+}
+
+function handleRemoveFestivalSession(index) {
+  if (currentUserRole !== "admin") return;
+  if (adminEditingSessions.length <= 1) {
+    alert("The festival must have at least one day or session configured.");
+    return;
+  }
+  adminEditingSessions.splice(index, 1);
+  // Re-number dayIndex sequentially
+  adminEditingSessions.forEach((s, idx) => {
+    s.dayIndex = idx + 1;
+  });
+  renderAdminSessionsTable();
+}
+
+async function handleSaveFestivalConfig() {
+  if (currentUserRole !== "admin") {
+    alert("Permission denied: Only administrators can modify festival configuration.");
+    return;
+  }
+
+  const name = document.getElementById("admin-cfg-festival-name")?.value?.trim();
+  const website = document.getElementById("admin-cfg-festival-website")?.value?.trim() || "";
+  const logo = document.getElementById("admin-cfg-festival-logo")?.value?.trim() || "";
+  const mgrName = document.getElementById("admin-cfg-manager-name")?.value?.trim() || "";
+  const mgrEmail = document.getElementById("admin-cfg-manager-email")?.value?.trim() || "";
+  const mgrPhone = document.getElementById("admin-cfg-manager-phone")?.value?.trim() || "";
+  const saveBtn = document.getElementById("btn-save-festival-config");
+  const alertEl = document.getElementById("admin-config-alert");
+
+  if (!name) {
+    alert("Festival Name cannot be empty.");
+    return;
+  }
+
+  if (adminEditingSessions.length === 0) {
+    alert("Please configure at least one festival day or session.");
+    return;
+  }
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.innerText = "Saving...";
+  }
+
+  try {
+    const configData = {
+      festivalName: name,
+      festivalWebsite: website,
+      festivalLogoUrl: logo,
+      volunteerManager: {
+        name: mgrName,
+        email: mgrEmail,
+        phone: mgrPhone
+      },
+      days: adminEditingSessions,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy: currentUser.uid
+    };
+
+    await db.collection("config").doc("festival").set(configData, { merge: true });
+
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-300";
+      alertEl.innerHTML = "✓ Festival configuration successfully updated!";
+      alertEl.classList.remove("hidden");
+      setTimeout(() => alertEl.classList.add("hidden"), 4000);
+    }
+  } catch (err) {
+    console.error("Error saving festival configuration:", err);
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-800 border border-rose-300";
+      alertEl.innerHTML = "⚠️ Failed to save configuration: " + err.message;
+      alertEl.classList.remove("hidden");
+    }
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = "<span>💾</span> Save Festival Configuration";
+    }
   }
 }
 

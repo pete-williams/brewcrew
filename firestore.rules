@@ -35,6 +35,14 @@ service cloud.firestore {
       );
     }
 
+    // Overall Festival Configuration (Branding, Dates, Contact Info)
+    // Read: Public (so login/landing screen can display festival name and logo)
+    // Write: Admin only
+    match /config/{configId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // Categories Configuration
     match /categories/{categoryId} {
       allow read: if isAuthenticated();

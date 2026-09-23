@@ -181,20 +181,63 @@ exports.onRegistrationCreated = onDocumentCreated(
         process.env.GCP_PROJECT ||
         "brewcrew-f27fb";
 
+      let festivalName = "BrewCrew Beer & Cider Festival";
+      let festivalWebsite = `https://${projectId}.web.app/`;
+      let managerInfoHtml = "";
+      let logoHtml = "";
+
+      try {
+        const configDoc = await db.collection("config").doc("festival").get();
+        if (configDoc.exists) {
+          const cfg = configDoc.data();
+          if (cfg.festivalName) festivalName = cfg.festivalName;
+          if (cfg.festivalWebsite) festivalWebsite = cfg.festivalWebsite;
+          if (cfg.festivalLogoUrl) {
+            logoHtml = `<div style="margin-bottom: 12px;">` +
+              `<img src="${cfg.festivalLogoUrl}" alt="${festivalName}" ` +
+              `style="max-height: 50px;" /></div>`;
+          }
+          if (cfg.volunteerManager) {
+            const vm = cfg.volunteerManager;
+            const vmName = vm.name || "Volunteer Team";
+            const vmEmail = vm.email ?
+              `Email: <a href="mailto:${vm.email}">${vm.email}</a><br/>` : "";
+            const vmPhone = vm.phone ?
+              `Phone: <a href="tel:${vm.phone}">${vm.phone}</a>` : "";
+
+            managerInfoHtml =
+              `<p style="margin-top: 16px; font-size: 13px; color: #64748b;">` +
+              `<strong>Volunteer Coordinator:</strong> ${vmName}<br/>` +
+              `${vmEmail}${vmPhone}</p>`;
+          }
+        }
+      } catch (e) {
+        console.warn(
+            "Could not load festival config for email, using defaults:",
+            e,
+        );
+      }
+
       const mailOptions = {
-        from: `"BrewCrew Volunteer Team" <${gmailEmail}>`,
+        from: `"${festivalName}" <${gmailEmail}>`,
         to: user.email,
-        subject: "Shift Registration Confirmation - Beer Festival",
+        subject: `Shift Registration Confirmation - ${festivalName}`,
         html: `
+      ${logoHtml}
       <h2>Hi ${user.fullName},</h2>
-      <p>You have successfully registered for a shift!</p>
+      <p>You are registered for <strong>${festivalName}</strong>!</p>
       <ul>
-        <li><strong>Day:</strong> Day ${shift.dayIndex}</li>
+        <li><strong>Session / Day:</strong> Day ${shift.dayIndex}</li>
+        <li><strong>Area:</strong> ${shift.categoryName || "General Area"}</li>
         <li><strong>Start Time:</strong> ${startTimeStr}</li>
         <li><strong>Duration:</strong> Minimum 2 Hours</li>
       </ul>
       <p>You can manage your shifts up to 7 days prior to the festival.</p>
-      <a href="https://${projectId}.web.app/">Manage My Shifts</a>
+      <p><a href="${festivalWebsite}" style="display:inline-block;` +
+        `padding:10px 18px;background-color:#b45309;color:#ffffff;` +
+        `text-decoration:none;border-radius:6px;font-weight:bold;">` +
+        `Manage My Shifts</a></p>
+      ${managerInfoHtml}
     `,
       };
 
@@ -228,9 +271,19 @@ exports.sendAdminBroadcast = onCall(async (request) => {
 
   const emails = usersSnap.docs.map((doc) => doc.data().email).filter(Boolean);
 
+  let broadcastFromName = "BrewCrew Updates";
+  try {
+    const configDoc = await db.collection("config").doc("festival").get();
+    if (configDoc.exists && configDoc.data().festivalName) {
+      broadcastFromName = configDoc.data().festivalName;
+    }
+  } catch (e) {
+    console.warn("Could not fetch festival name for broadcast:", e);
+  }
+
   const sendPromises = emails.map((email) =>
     transporter.sendMail({
-      from: `"BrewCrew Updates" <${gmailEmail}>`,
+      from: `"${broadcastFromName}" <${gmailEmail}>`,
       to: email,
       subject: subject,
       html: `<p>${body}</p>`,

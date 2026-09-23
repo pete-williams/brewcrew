@@ -32,9 +32,17 @@
       
       <!-- Card Banner -->
       <div class="bg-amber-900 text-white p-6 text-center">
-        <span class="text-4xl mb-2 inline-block">🍺</span>
-        <h1 class="text-2xl font-bold tracking-tight">BrewCrew Festival Portal</h1>
-        <p class="text-xs text-amber-200 mt-1">Beer &amp; Cider Festival Volunteer Management</p>
+        <div id="auth-festival-logo-container" class="mb-2 inline-flex items-center justify-center">
+          <span id="auth-festival-logo-emoji" class="text-4xl">🍺</span>
+          <img id="auth-festival-logo-img" class="hidden max-h-12 max-w-full mx-auto rounded object-contain" src="" alt="Festival Logo" />
+        </div>
+        <h1 id="auth-festival-name" class="text-2xl font-bold tracking-tight">BrewCrew Festival Portal</h1>
+        <p id="auth-festival-subtext" class="text-xs text-amber-200 mt-1">Volunteer Management Platform</p>
+        <div id="auth-festival-website-wrap" class="hidden mt-1.5">
+          <a id="auth-festival-website" href="#" target="_blank" rel="noopener noreferrer" class="text-[11px] text-amber-300 hover:text-white underline">
+            Visit Festival Website &rarr;
+          </a>
+        </div>
       </div>
 
       <div class="p-6 space-y-5">
@@ -117,6 +125,12 @@
             </div>
 
             <div>
+              <label class="block text-xs font-semibold text-slate-700 mb-1" for="register-phone">Phone Number <span class="text-rose-500 font-bold">*</span></label>
+              <input type="tel" id="register-phone" required placeholder="e.g. +44 7700 900123" class="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              <p class="text-[10px] text-slate-400 mt-0.5">Mandatory for festival volunteer coordination and safety.</p>
+            </div>
+
+            <div>
               <label class="block text-xs font-semibold text-slate-700 mb-1" for="register-password">Password (min. 6 characters)</label>
               <div class="relative">
                 <input type="password" id="register-password" required minlength="6" placeholder="••••••••" class="w-full text-xs sm:text-sm px-3 py-2 pr-9 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
@@ -178,8 +192,9 @@
     <nav class="bg-amber-900 text-white p-4 shadow-md sticky top-0 z-40">
       <div class="max-w-6xl mx-auto flex flex-wrap justify-between items-center gap-3">
         <div class="flex items-center space-x-2.5 cursor-pointer" onclick="switchView('schedule')">
-          <span class="text-2xl">🍺</span>
-          <h1 class="text-xl font-bold tracking-tight">BrewCrew Festival Portal</h1>
+          <span id="nav-festival-logo-emoji" class="text-2xl">🍺</span>
+          <img id="nav-festival-logo-img" class="hidden max-h-9 max-w-[140px] object-contain rounded" src="" alt="Festival Logo" />
+          <h1 id="nav-festival-name" class="text-xl font-bold tracking-tight">BrewCrew Festival Portal</h1>
         </div>
 
         <!-- Center View Switcher -->
@@ -246,6 +261,19 @@
           <button onclick="openCreateShiftModal()" class="bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold px-3.5 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
             <span>➕</span> Create New Shift
           </button>
+        </div>
+
+        <!-- Volunteer Coordinator Contact Banner -->
+        <div id="coordinator-contact-banner" class="hidden bg-amber-100/70 border border-amber-300 rounded-xl p-3 text-xs text-amber-950 flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <span class="text-base">📞</span>
+            <span><strong>Volunteer Coordinator:</strong> <span id="coordinator-banner-name">Coordinator</span></span>
+          </div>
+          <div class="flex items-center gap-3">
+            <a id="coordinator-banner-email" href="#" class="text-amber-900 underline font-medium">Email</a>
+            <span class="text-amber-400">&bull;</span>
+            <a id="coordinator-banner-phone" href="#" class="text-amber-900 underline font-medium">Phone</a>
+          </div>
         </div>
 
         <!-- Day Navigation Tabs (7 Days) -->
@@ -319,6 +347,116 @@
           </div>
         </div>
 
+        <!-- Admin Festival Configuration & Session Settings -->
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200 space-y-4">
+          <div class="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+                <span>⚙️</span> Festival Configuration &amp; Sessions
+              </h3>
+              <p class="text-xs text-slate-500">Configure global festival branding, manager contact details, and shift schedule days/sessions.</p>
+            </div>
+            <button onclick="handleSaveFestivalConfig()" id="btn-save-festival-config" class="text-xs bg-amber-700 hover:bg-amber-800 text-white font-bold px-4 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
+              <span>💾</span> Save Festival Configuration
+            </button>
+          </div>
+
+          <div id="admin-config-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+          <!-- General Details Form -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-cfg-festival-name">Festival Name</label>
+              <input type="text" id="admin-cfg-festival-name" placeholder="e.g. Manchester Beer &amp; Cider Festival" class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-cfg-festival-website">Festival Website</label>
+              <input type="url" id="admin-cfg-festival-website" placeholder="https://festival.example.org" class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-cfg-festival-logo">Logo Image URL</label>
+              <div class="flex gap-2">
+                <input type="url" id="admin-cfg-festival-logo" oninput="previewFestivalLogo(this.value)" placeholder="https://example.com/logo.png" class="flex-grow text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                <div id="admin-cfg-logo-preview-box" class="w-9 h-9 rounded border border-slate-200 flex items-center justify-center bg-slate-50 flex-shrink-0 overflow-hidden" title="Logo Preview">
+                  <span id="admin-cfg-logo-preview-emoji" class="text-lg">🍺</span>
+                  <img id="admin-cfg-logo-preview-img" class="hidden w-full h-full object-contain" src="" alt="Preview" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Volunteer Manager Contact Details -->
+          <div class="pt-3 border-t border-slate-100">
+            <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Volunteer Manager Contact Details</h4>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label class="block text-[11px] font-semibold text-slate-600 mb-1" for="admin-cfg-manager-name">Manager Name</label>
+                <input type="text" id="admin-cfg-manager-name" placeholder="e.g. Jane Doe" class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+              <div>
+                <label class="block text-[11px] font-semibold text-slate-600 mb-1" for="admin-cfg-manager-email">Manager Email</label>
+                <input type="email" id="admin-cfg-manager-email" placeholder="volunteer@example.org" class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+              <div>
+                <label class="block text-[11px] font-semibold text-slate-600 mb-1" for="admin-cfg-manager-phone">Manager Phone</label>
+                <input type="tel" id="admin-cfg-manager-phone" placeholder="+44 7123 456789" class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Festival Days / Sessions Builder -->
+          <div class="pt-3 border-t border-slate-100 space-y-3">
+            <div class="flex items-center justify-between">
+              <div>
+                <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider">Festival Days &amp; Sessions</h4>
+                <p class="text-[11px] text-slate-500">Days and sessions shifts can be scheduled on. Multiple sessions per calendar day are supported.</p>
+              </div>
+            </div>
+
+            <!-- Existing Sessions List Table -->
+            <div class="overflow-x-auto border border-slate-200 rounded-lg">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
+                  <tr>
+                    <th class="p-2.5 w-16">Day #</th>
+                    <th class="p-2.5 w-32">Date</th>
+                    <th class="p-2.5 w-48">Session / Day Name</th>
+                    <th class="p-2.5">Description</th>
+                    <th class="p-2.5 text-right w-20">Action</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-sessions-table-body" class="divide-y divide-slate-100">
+                  <!-- Populated by JS -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Add Session Row Form -->
+            <div class="bg-amber-50/50 p-3 rounded-lg border border-amber-200">
+              <p class="text-xs font-bold text-amber-900 mb-2">+ Add Festival Day or Session</p>
+              <div class="grid grid-cols-1 sm:grid-cols-4 gap-2.5 items-end">
+                <div>
+                  <label class="block text-[11px] font-medium text-slate-600 mb-1" for="admin-new-session-date">Session Date</label>
+                  <input type="date" id="admin-new-session-date" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                </div>
+                <div>
+                  <label class="block text-[11px] font-medium text-slate-600 mb-1" for="admin-new-session-name">Session Name</label>
+                  <input type="text" id="admin-new-session-name" placeholder="e.g. Saturday Morning" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                </div>
+                <div>
+                  <label class="block text-[11px] font-medium text-slate-600 mb-1" for="admin-new-session-desc">Description</label>
+                  <input type="text" id="admin-new-session-desc" placeholder="e.g. Equipment prep / tasting" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                </div>
+                <div>
+                  <button type="button" onclick="handleAddFestivalSession()" class="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition shadow-xs">
+                    + Add Session
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- Crew Members List Section -->
         <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200 space-y-4">
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -326,7 +464,7 @@
               <span>👥</span> Crew Member Directory &amp; Role Assignment
             </h3>
             <div class="flex flex-wrap items-center gap-2">
-              <input type="text" id="admin-user-search" oninput="handleAdminUserSearch(this.value)" placeholder="Search by name or email..." class="text-xs px-3 py-1.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 w-60" />
+              <input type="text" id="admin-user-search" oninput="handleAdminUserSearch(this.value)" placeholder="Search by name, email or phone..." class="text-xs px-3 py-1.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 w-60" />
               <select id="admin-role-filter" onchange="handleAdminRoleFilter(this.value)" class="text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
                 <option value="ALL">All Roles</option>
                 <option value="volunteer">Volunteers</option>
@@ -342,13 +480,14 @@
                 <tr>
                   <th class="p-3">Crew Member</th>
                   <th class="p-3">Email Address</th>
+                  <th class="p-3">Phone Number</th>
                   <th class="p-3">Current Role</th>
                   <th class="p-3 text-right">Assign Role</th>
                 </tr>
               </thead>
               <tbody id="admin-users-table-body" class="divide-y divide-slate-100">
                 <tr>
-                  <td colspan="4" class="p-4 text-center text-slate-500 italic">Loading crew members...</td>
+                  <td colspan="5" class="p-4 text-center text-slate-500 italic">Loading crew members...</td>
                 </tr>
               </tbody>
             </table>
@@ -496,8 +635,45 @@
       </div>
     </div>
 
-    <footer class="mt-auto py-4 text-center text-xs text-slate-500 border-t border-amber-200">
-      BrewCrew Volunteer Portal &bull; Beer &amp; Cider Festival
+    <!-- Modal 4: Phone Number Required Modal (Mandatory Onboarding for Users Missing Phone) -->
+    <div id="phone-required-modal" class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 border border-amber-200">
+        <div class="text-center">
+          <div class="text-3xl mb-2">📱</div>
+          <h3 class="font-bold text-lg text-slate-900">Contact Phone Number Required</h3>
+          <p class="text-xs text-slate-500 mt-1">
+            To coordinate shifts and ensure festival safety, all volunteers must have a contact phone number on file.
+          </p>
+        </div>
+        <form id="form-phone-required" onsubmit="handleRequiredPhoneSubmit(event)" class="space-y-4">
+          <div id="phone-required-alert" class="hidden p-3 rounded-lg text-xs"></div>
+          <div>
+            <label class="block text-xs font-semibold text-slate-700 mb-1" for="required-phone-input">Mobile Phone Number</label>
+            <input type="tel" id="required-phone-input" required placeholder="e.g. +44 7123 456789" class="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            <p class="text-[10px] text-slate-400 mt-1">Include country code if outside the UK (e.g. +44)</p>
+          </div>
+          <button type="submit" id="btn-submit-required-phone" class="w-full py-2.5 px-4 bg-amber-700 hover:bg-amber-600 text-white text-sm font-bold rounded-xl shadow transition flex items-center justify-center gap-2">
+            <span id="btn-required-phone-text">Save Phone Number &amp; Continue</span>
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Dynamic Festival Footer -->
+    <footer class="mt-auto py-5 text-center text-xs text-slate-500 border-t border-amber-200 space-y-1.5">
+      <div>
+        <span id="footer-festival-name" class="font-semibold text-slate-700">BrewCrew Festival Portal</span> &bull; Volunteer Management
+      </div>
+      <div id="footer-contact-info" class="hidden text-slate-600">
+        Volunteer Coordinator: <span id="footer-coordinator-name" class="font-medium text-slate-700"></span> &bull;
+        <a id="footer-coordinator-email" href="#" class="text-amber-800 underline"></a> &bull;
+        <a id="footer-coordinator-phone" href="#" class="text-amber-800 underline"></a>
+      </div>
+      <div id="footer-festival-website-wrap" class="hidden">
+        <a id="footer-festival-website" href="#" target="_blank" rel="noopener noreferrer" class="text-amber-800 hover:text-amber-950 underline">
+          Visit Festival Website &rarr;
+        </a>
+      </div>
     </footer>
   </div>
 

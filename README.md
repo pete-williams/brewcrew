@@ -81,6 +81,7 @@ The **BrewCrew Platform** streamlines volunteer coordination for beer and cider 
 * **Authentication:** Firebase Authentication supporting both Email & Password (with self-service password reset) and Google Sign-In, gated behind a strict authentication gateway.
 * **Hosting:** Firebase Hosting with SPA rewrites (`/index.html`) and cache-invalidation headers.
 * **Email Service:** Nodemailer configured for Gmail / Google Workspace SMTP.
+* **API Documentation:** Comprehensive specifications for all Cloud Functions and endpoints are documented in [`docs/API.md`](docs/API.md).
 
 ---
 
@@ -105,6 +106,9 @@ brewcrew-platform/
 ├── firestore.rules            # Declarative database security & RBAC rules
 ├── firestore.indexes.json     # Firestore composite index definitions
 ├── README.md                  # Project documentation
+├── AGENTS.md                  # Workspace rules and documentation maintenance policy
+├── docs/                      # Technical documentation
+│   └── API.md                 # Cloud Functions & API documentation
 ├── functions/                 # Backend Cloud Functions (2nd Gen)
 │   ├── .env                   # SMTP secrets (GMAIL_EMAIL, GMAIL_PASS) - NOT committed
 │   ├── .env.example           # Template for environment configuration

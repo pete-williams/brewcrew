@@ -310,8 +310,9 @@ Dispatches mass announcement emails to all registered volunteers and crew member
 #### Business Logic
 1. Verifies caller role is `admin`.
 2. Queries all documents in `/users`. Extracts distinct non-empty email addresses.
-3. Uses Nodemailer with Gmail SMTP credentials (`GMAIL_EMAIL`, `GMAIL_PASS` from `functions/.env`).
-4. Sends emails concurrently via `Promise.all` and returns the dispatched count.
+3. Retrieves `/config/festival` document to obtain dynamic `festivalName` (defaults to `"BrewCrew Volunteer Platform"`).
+4. Uses Nodemailer with Gmail SMTP credentials (`GMAIL_EMAIL`, `GMAIL_PASS` from `functions/.env`), with sender formatted as `"${festivalName} <${gmailEmail}>"`.
+5. Sends emails concurrently via `Promise.all` and returns the dispatched count.
 
 ---
 
@@ -326,9 +327,45 @@ Event-driven Cloud Function triggered whenever a volunteer registration is confi
 - **Behavior**:
   1. Triggered automatically on document creation in `/registrations`.
   2. Retrieves corresponding `/users/{regData.userId}` and `/shifts/{regData.shiftId}` documents.
-  3. Formats festival day, start time, and minimum hours.
-  4. Dispatches a transactional confirmation email to `user.email` containing booking details and portal management link.
-  5. Catches and logs errors without obstructing database operations.
+  3. Queries the `/config/festival` document to retrieve dynamic branding:
+     - `festivalName` (default: `"BrewCrew Volunteer Portal"`)
+     - `festivalWebsite` (default: `""`)
+     - `festivalLogoUrl` (default: `""`)
+     - `volunteerManager`: `{ name, email, phone }`
+  4. Formats festival day, start time, end time, and shift duration.
+  5. Injects dynamic branding, festival logo, portal link, and volunteer manager contact details into a personalized HTML confirmation email.
+  6. Dispatches transactional email to `user.email` via Nodemailer.
+  7. Catches and logs errors without obstructing database operations.
+
+---
+
+## Firestore Data Models & Schemas
+
+### 1. `/config/festival`
+
+Global festival settings document storing brand identity, manager contacts, and schedule sessions.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `festivalName` | `string` | Display name of the festival (e.g. `"Manchester Beer & Cider Festival"`). |
+| `festivalWebsite` | `string` | Official website URL of the festival. |
+| `festivalLogoUrl` | `string` | Public URL to festival logo image, displayed in navbars and emails. |
+| `volunteerManager` | `map` | Coordinator contact info: `{ name: string, email: string, phone: string }`. |
+| `days` | `array` | List of configured session objects: `[{ dayIndex: number, date: string, name: string, description: string }]`. Supports multiple sessions per calendar day. |
+| `updatedAt` | `timestamp` | Server timestamp when settings were last modified. |
+| `updatedBy` | `string` | UID of administrator who committed the update. |
+
+### 2. `/users/{userId}`
+
+User profile document created upon initial registration or OAuth sign-in.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `fullName` | `string` | Full name of the volunteer or crew member. |
+| `email` | `string` | Registered email address (lowercase). |
+| `phoneNumber` | `string` | **Mandatory** contact phone number required on registration and onboarding. |
+| `role` | `string` | Access tier: `"volunteer"`, `"manager"`, or `"admin"`. |
+| `createdAt` | `timestamp` | Server timestamp when the user profile was initialized. |
 
 ---
 
@@ -338,6 +375,7 @@ While Cloud Functions execute using the Firebase Admin SDK (which bypasses secur
 
 | Collection | Path | Read Rule | Write / Mutation Rule |
 | :--- | :--- | :--- | :--- |
+| `config` | `/config/{configId}` | **Public** (`allow read: if true;`) | `admin` only (`isAdmin()`). Enables unauthenticated login screen branding while guarding writes. |
 | `users` | `/users/{userId}` | Authenticated users | Create only as `volunteer`; update profile only; only `admin` can mutate `role`. |
 | `shifts` | `/shifts/{shiftId}` | Authenticated users | Create/Delete: `admin` only. Update: `admin` or assigned `manager` (manager fields only). |
 | `registrations` | `/registrations/{regId}` | Authenticated users | `admin` only. Client writes disabled to prevent race conditions; mutations routed through `claimShift` / `cancelShift`. |

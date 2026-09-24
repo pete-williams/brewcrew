@@ -10,6 +10,16 @@
   <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-functions-compat.js"></script>
+  <style>
+    /* Sleek mobile horizontal scrolling without scrollbars */
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+  </style>
 </head>
 <body class="bg-amber-50 text-slate-800 min-h-screen font-sans">
 
@@ -276,14 +286,48 @@
           </div>
         </div>
 
-        <!-- Day Navigation Tabs (7 Days) -->
-        <div class="flex space-x-2 overflow-x-auto pb-2 border-b border-amber-300" id="day-tabs">
-          <!-- Generated via JS: Days 1 to 7 -->
-        </div>
+        <!-- Two-Tier Day + Session Strip Navigation -->
+        <div class="space-y-3" id="schedule-navigation">
+          <!-- Tier 1: Festival Days Strip -->
+          <div class="bg-white p-3 rounded-2xl shadow-xs border border-amber-200">
+            <div class="flex items-center justify-between text-[11px] font-bold text-amber-950 mb-2 px-1">
+              <span class="tracking-wide uppercase text-[10px] text-amber-900 flex items-center gap-1.5">
+                <span>📅</span> Select Festival Day
+              </span>
+              <span id="festival-day-range" class="text-slate-500 font-medium text-xs"></span>
+            </div>
+            <div class="flex space-x-1.5 overflow-x-auto no-scrollbar sm:grid sm:grid-flow-col sm:auto-cols-fr" id="day-pills">
+              <!-- Dynamically generated Day buttons -->
+            </div>
+          </div>
 
-        <!-- Category Filter Bar -->
-        <div class="flex flex-wrap items-center gap-2" id="category-filters">
-          <!-- Dynamic Category Filter Buttons (Derived from active shifts) -->
+          <!-- Tier 2: Sessions for Selected Day -->
+          <div class="bg-amber-100/70 p-3 rounded-2xl border border-amber-300/90 shadow-xs">
+            <div class="flex items-center justify-between mb-2 px-1">
+              <span class="text-xs font-extrabold text-amber-950 flex items-center gap-1" id="selected-day-label">
+                Sessions for Selected Day:
+              </span>
+              <!-- Quick Next / Prev session stepper -->
+              <div class="flex items-center gap-1.5">
+                <button type="button" onclick="stepSession(-1)" title="Previous session" class="w-7 h-7 rounded-lg bg-white border border-amber-300 text-amber-900 font-bold text-xs flex items-center justify-center hover:bg-amber-50 shadow-xs transition">‹</button>
+                <button type="button" onclick="stepSession(1)" title="Next session" class="w-7 h-7 rounded-lg bg-white border border-amber-300 text-amber-900 font-bold text-xs flex items-center justify-center hover:bg-amber-50 shadow-xs transition">›</button>
+              </div>
+            </div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2" id="session-chips">
+              <!-- Dynamically generated Session chips for active day -->
+            </div>
+          </div>
+
+          <!-- Category Filter Bar + Open Spots Only Toggle -->
+          <div class="flex items-center justify-between gap-2 pt-1 flex-wrap sm:flex-nowrap">
+            <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1 flex-grow" id="category-filters">
+              <!-- Dynamic Category Filter Buttons -->
+            </div>
+            <!-- Toggle: Open Spots Only -->
+            <button id="toggle-open-only" onclick="toggleOpenSpotsOnly()" type="button" class="shrink-0 text-xs font-bold px-3 py-1.5 rounded-xl border transition flex items-center gap-1.5 bg-white border-amber-300 text-amber-950 hover:bg-amber-50 shadow-xs">
+              <span>⚡</span> Open Only
+            </button>
+          </div>
         </div>
 
         <!-- Shifts Timeline & Card Grid -->

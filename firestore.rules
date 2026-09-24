@@ -43,12 +43,6 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Categories Configuration
-    match /categories/{categoryId} {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin();
-    }
-
     // Shifts Collection
     match /shifts/{shiftId} {
       allow read: if isAuthenticated();

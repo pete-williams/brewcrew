@@ -1,23 +1,30 @@
 // functions/index.js
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
-const nodemailer = require("nodemailer");
 
 admin.initializeApp();
 const db = admin.firestore();
 
-// Retrieve Gmail credentials from process.env (.env file)
-const gmailEmail = process.env.GMAIL_EMAIL;
-const gmailPass = process.env.GMAIL_PASS;
+let cachedTransporter = null;
 
-// Configure Nodemailer Transporter for Gmail / Google Workspace
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: gmailEmail,
-    pass: gmailPass,
-  },
-});
+/**
+ * Lazy-load nodemailer transporter to avoid deployment
+ * initialization timeouts.
+ * @return {object} Configured nodemailer transporter instance.
+ */
+function getTransporter() {
+  if (!cachedTransporter) {
+    const nodemailer = require("nodemailer");
+    cachedTransporter = nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user: process.env.GMAIL_EMAIL,
+        pass: process.env.GMAIL_PASS,
+      },
+    });
+  }
+  return cachedTransporter;
+}
 
 /**
  * Atomic Shift Registration to Prevent Overbooking (Race Conditions)
@@ -224,6 +231,8 @@ exports.sendAdminBroadcast = onCall(async (request) => {
     </div>
   `;
 
+  const transporter = getTransporter();
+  const gmailEmail = process.env.GMAIL_EMAIL;
   const sendPromises = emails.map((email) =>
     transporter.sendMail({
       from: `"${broadcastFromName}" <${gmailEmail}>`,
@@ -237,6 +246,38 @@ exports.sendAdminBroadcast = onCall(async (request) => {
     await Promise.all(sendPromises);
     return {success: true, count: emails.length};
   } catch (err) {
+    throw new HttpsError("internal", err.message);
+  }
+});
+
+/**
+ * Retrieve unique category names from active shift documents.
+ */
+exports.getShiftCategories = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "User must be logged in.");
+  }
+
+  try {
+    const snapshot = await db.collection("shifts").get();
+    const categoriesSet = new Set();
+    snapshot.docs.forEach((doc) => {
+      const data = doc.data();
+      if (data && typeof data.categoryName === "string") {
+        const trimmed = data.categoryName.trim();
+        if (trimmed) {
+          categoriesSet.add(trimmed);
+        }
+      }
+    });
+
+    const categories = Array.from(categoriesSet).sort((a, b) => {
+      return a.localeCompare(b);
+    });
+
+    return {categories};
+  } catch (err) {
+    console.error("Error fetching shift categories:", err);
     throw new HttpsError("internal", err.message);
   }
 });

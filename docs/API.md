@@ -18,6 +18,7 @@ This document provides a comprehensive technical reference for all backend Cloud
   - [6. `updateUserRole`](#6-updateuserrole)
   - [7. `sendAdminBroadcast`](#7-sendadminbroadcast)
   - [8. `deleteFestivalSession`](#8-deletefestivalsession)
+  - [9. `getShiftCategories`](#9-getshiftcategories)
 - [Firestore Background Triggers](#firestore-background-triggers)
   - [1. `onRegistrationCreated` (Retired)](#1-onregistrationcreated-retired)
 - [Firestore Data Models & Schemas](#firestore-data-models--schemas)
@@ -394,6 +395,41 @@ Safely removes a festival session from `/config/festival`. Strictly prevents del
 
 ---
 
+### 9. `getShiftCategories`
+
+Retrieves all unique, active category/area names from active documents in the `/shifts` collection. This replaces hard-coded category presets and dedicated collections by sourcing areas dynamically from existing shift records.
+
+- **Trigger**: `onCall`
+- **Permissions**: `volunteer`, `manager`, or `admin` (Any authenticated user).
+
+#### Request Parameters (`data`)
+
+*None required*.
+
+#### Response (`result`)
+
+```json
+{
+  "categories": [
+    "Cask Bar",
+    "Cider Bar",
+    "Gate",
+    "Keg Bar",
+    "Token and Merch"
+  ]
+}
+```
+
+#### Business Logic & Safeguards
+1. Validates caller is authenticated (`request.auth`). Throws `unauthenticated` if caller is not logged in.
+2. Queries the `/shifts` collection.
+3. Iterates over all shift documents and extracts non-empty string values for `categoryName`, trimming whitespace.
+4. Deduplicates the category names using a `Set`.
+5. Returns `{ categories: string[] }` sorted alphabetically ascending.
+6. Returns an empty array `{ "categories": [] }` if no shifts exist.
+
+---
+
 ## Firestore Background Triggers
 
 ### 1. `onRegistrationCreated` (Retired)
@@ -464,7 +500,6 @@ While Cloud Functions execute using the Firebase Admin SDK (which bypasses secur
 | `users` | `/users/{userId}` | Authenticated users | Create only as `volunteer`; update profile only; only `admin` can mutate `role`. |
 | `shifts` | `/shifts/{shiftId}` | Authenticated users | Create/Delete: `admin` only. Update: `admin` or assigned `manager` (manager fields only). |
 | `registrations` | `/registrations/{regId}` | Authenticated users | `admin` only. Client writes disabled to prevent race conditions; mutations routed through `claimShift` / `cancelShift`. |
-| `categories` | `/categories/{catId}` | Authenticated users | `admin` only. |
 | `incentives` | `/incentives/{incId}` | Authenticated users | `admin` only. |
 
 ---

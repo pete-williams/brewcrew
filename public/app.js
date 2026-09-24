@@ -88,15 +88,13 @@ let adminEditingSessions = [];
 let adminInlineEditingSessionId = null;
 const adminExpandedSessionIds = new Set();
 
-// Categories State (Default fallback + dynamic Firestore)
-const defaultCategories = ["Cider Bar", "Cask Bar", "Keg Bar", "Token and Merch", "Gate"];
-let availableCategories = [...defaultCategories];
+// Categories State (Dynamically derived from shift records)
+let availableCategories = [];
 
 // Realtime Registrations & Users Cache & Listeners
 const userRegistrations = new Map(); // shiftId -> regData
 let shiftsUnsubscribe = null;
 let registrationsUnsubscribe = null;
-let categoriesUnsubscribe = null;
 let currentShiftsDocs = [];
 
 // Admin & Manager State
@@ -261,7 +259,7 @@ document.addEventListener("DOMContentLoaded", () => {
       syncUserProfile(user);
       subscribeToCurrentUserProfile(user.uid);
       subscribeToUserRegistrations(user.uid);
-      initCategoryListener();
+      fetchShiftCategories();
       renderDayTabs();
       renderCategoryFilters();
       subscribeToShifts();
@@ -300,11 +298,8 @@ document.addEventListener("DOMContentLoaded", () => {
         shiftsUnsubscribe();
         shiftsUnsubscribe = null;
       }
-      if (categoriesUnsubscribe) {
-        categoriesUnsubscribe();
-        categoriesUnsubscribe = null;
-      }
 
+      availableCategories = [];
       allUsersMap.clear();
       userRegistrations.clear();
       currentShiftsDocs = [];
@@ -895,19 +890,28 @@ function populateManagerDropdowns() {
   }
 }
 
-// Categories Dynamic Loading
-function initCategoryListener() {
-  categoriesUnsubscribe = db.collection("categories").onSnapshot(snapshot => {
-    if (!snapshot.empty) {
-      const cats = snapshot.docs.map(doc => doc.data().name).filter(Boolean);
-      if (cats.length > 0) {
-        availableCategories = cats;
-        renderCategoryFilters();
-      }
+// Dynamic Category Loading & Helpers
+async function fetchShiftCategories() {
+  try {
+    const getShiftCategoriesFn = functions.httpsCallable("getShiftCategories");
+    const result = await getShiftCategoriesFn();
+    if (result && result.data && Array.isArray(result.data.categories)) {
+      updateAvailableCategories(result.data.categories);
     }
-  }, err => {
-    console.warn("Categories listener error, using defaults:", err);
-  });
+  } catch (err) {
+    console.warn("Could not fetch shift categories from Cloud Function:", err);
+  }
+}
+
+function updateAvailableCategories(newCategories) {
+  availableCategories = Array.from(
+    new Set(newCategories.map(c => (typeof c === "string" ? c.trim() : "")).filter(Boolean))
+  ).sort((a, b) => a.localeCompare(b));
+
+  if (selectedCategory !== "ALL" && !availableCategories.includes(selectedCategory)) {
+    selectedCategory = "ALL";
+  }
+  renderCategoryFilters();
 }
 
 function renderCategoryFilters() {
@@ -1172,6 +1176,13 @@ function subscribeToShifts() {
   shiftsUnsubscribe = db.collection("shifts")
     .onSnapshot(snapshot => {
       currentShiftsDocs = snapshot.docs;
+      const shiftCats = currentShiftsDocs
+        .map(doc => {
+          const cat = doc.data()?.categoryName;
+          return (typeof cat === "string" && cat.trim()) ? cat.trim() : null;
+        })
+        .filter(Boolean);
+      updateAvailableCategories(shiftCats);
       renderShifts(currentShiftsDocs);
     }, err => {
       console.error("Error listening to shifts:", err);
@@ -1603,11 +1614,18 @@ function openCreateShiftModal() {
 
   capInput.value = "4";
   customCatInput.value = "";
-  customCatInput.classList.add("hidden");
 
   catSelect.innerHTML = availableCategories.map(cat => `
     <option value="${escapeHtml(cat)}">${escapeHtml(cat)}</option>
   `).join("") + `<option value="__custom__">➕ Other / Custom Area...</option>`;
+
+  if (availableCategories.length === 0) {
+    catSelect.value = "__custom__";
+    customCatInput.classList.remove("hidden");
+  } else {
+    catSelect.value = availableCategories[0];
+    customCatInput.classList.add("hidden");
+  }
 
   populateManagerDropdowns();
   mgrSelect.value = "";

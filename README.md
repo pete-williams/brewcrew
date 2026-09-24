@@ -17,7 +17,7 @@ The **BrewCrew Platform** streamlines volunteer coordination for beer and cider 
 ## 🚀 Key Features
 
 ### 1. Volunteer Portal
-* **Interactive 7-Day Schedule Grid:** Filter shifts across 7 festival days and specific area categories (Cider Bar, Cask Bar, Keg Bar, Token & Merch, Gate, or custom areas).
+* **Interactive 7-Day Schedule Grid:** Filter shifts across 7 festival days and specific area categories (dynamically derived from active shifts, supporting arbitrary custom areas).
 * **Atomic Shift Booking:** Powered by Firestore transactions in Cloud Functions (`claimShift`) to eliminate race conditions and overbooking during registration bursts.
 * **My Shifts Dashboard:** Real-time personal schedule with built-in cancellation enforcement.
 * **7-Day Lockout Rule:** Prevents volunteers from cancelling shifts within 7 days of the shift start time, ensuring reliable staffing levels.
@@ -90,9 +90,8 @@ The **BrewCrew Platform** streamlines volunteer coordination for beer and cider 
 | Collection | Document ID | Key Fields | Description |
 | :--- | :--- | :--- | :--- |
 | `users` | `{userId}` | `fullName`, `email`, `role`, `createdAt`, `updatedAt` | User profile and RBAC permissions (`volunteer`, `manager`, `admin`). |
-| `shifts` | `{shiftId}` | `sessionId`, `categoryName`, `capacity`, `assignedCount`, `startTime`, `endTime`, `managerId`, `managerName`, `managerEmail` | Shift inventory, timestamps, and assigned area manager. |
+| `shifts` | `{shiftId}` | `sessionId`, `categoryName`, `capacity`, `assignedCount`, `startTime`, `endTime`, `managerId`, `managerName`, `managerEmail` | Shift inventory, timestamps, categoryName area, and assigned area manager. |
 | `registrations` | `{shiftId}_{userId}` | `shiftId`, `userId`, `status`, `registeredAt` | Composite-key join mapping volunteer bookings to shifts. |
-| `categories` | `{categoryId}` | `name`, `description` | Functional festival areas and bar zones. |
 | `incentives` | `{incentiveId}` | `hoursRequired`, `rewardName` | Reward tier threshold definitions. |
 
 ---

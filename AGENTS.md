@@ -29,8 +29,7 @@ Whenever you:
 - **Do NOT automatically create git commits**: Never run `git commit` or commit changes automatically after completing a task, making changes, or resolving issues.
 - **Explicit user request only**: Only commit changes if the user explicitly asks to commit.
 
-## 4. Deployment Prompt Policy
+## 4. Deployment Policy
 
-- **Prompt for deployment after code changes**: Whenever modifications or additions are made to project code (such as files in `functions/`, `public/app.js`, `public/index.html`, `firestore.rules`, etc.), you must prompt the user asking if they would like to run `firebase deploy`.
-- **Exclusion for documentation-only edits**: If the changes are strictly limited to documentation or markdown files (such as `docs/`, `README.md`, `AGENTS.md`, `GEMINI.md`), do NOT prompt for deployment.
-- **Explicit user confirmation required**: Never run `firebase deploy` automatically; only run it upon explicit user confirmation or request.
+- **Do NOT prompt for deployment**: Do NOT ask or prompt the user if they want to run `firebase deploy` after tasks or code changes.
+- **Explicit user request only**: Never run `firebase deploy` automatically; only deploy when explicitly instructed to do so by the user.

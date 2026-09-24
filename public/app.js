@@ -25,6 +25,8 @@ let currentUserRole = "volunteer";
 let userProfileUnsubscribe = null;
 
 let selectedSessionId = "sess_1";
+let selectedDayDate = "";
+let filterOpenOnly = false;
 let selectedCategory = "ALL";
 let currentView = "schedule";
 
@@ -119,6 +121,9 @@ window.logout = logout;
 window.filterCategory = filterCategory;
 window.claimShift = claimShift;
 window.cancelShift = cancelShift;
+window.stepSession = stepSession;
+window.toggleOpenSpotsOnly = toggleOpenSpotsOnly;
+window.updateFilterOpenOnlyButton = updateFilterOpenOnlyButton;
 
 // Manager Window Exports (Guarded by manager/admin role internally)
 window.managerClaimShift = managerClaimShift;
@@ -919,17 +924,22 @@ function renderCategoryFilters() {
   if (!container) return;
 
   container.innerHTML = `
-    <button onclick="filterCategory('ALL')" class="px-3 py-1 rounded-full text-xs font-semibold transition ${
-      selectedCategory === 'ALL' ? 'bg-slate-800 text-white' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+    <button onclick="filterCategory('ALL')" class="px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition border shrink-0 ${
+      selectedCategory === 'ALL'
+        ? 'bg-slate-900 text-white border-slate-950 shadow-xs'
+        : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-100'
     }">
       All Areas
     </button>
   `;
 
   availableCategories.forEach(cat => {
+    const isSelected = selectedCategory === cat;
     const btn = document.createElement("button");
-    btn.className = `px-3 py-1 rounded-full text-xs font-semibold transition ${
-      selectedCategory === cat ? 'bg-slate-800 text-white' : 'bg-slate-200 text-slate-700 hover:bg-slate-300'
+    btn.className = `px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition border shrink-0 ${
+      isSelected
+        ? 'bg-slate-900 text-white border-slate-950 shadow-xs'
+        : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-100'
     }`;
     btn.innerText = cat;
     btn.onclick = () => filterCategory(cat);
@@ -1122,44 +1132,219 @@ function applyFestivalBranding() {
   }
 }
 
-// Day / Session Navigation Tabs
+// Helper to extract day details from YYYY-MM-DD cleanly without timezone offset shift
+function getDayInfoFromDateStr(dateStr) {
+  if (!dateStr || typeof dateStr !== "string") {
+    return { dateStr: "", label: "Day", dayNum: "-", month: "", displayDate: "Date TBD", fullName: "Festival Day" };
+  }
+  const parts = dateStr.split("-");
+  if (parts.length === 3) {
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+    if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
+      const d = new Date(year, month, day);
+      if (!isNaN(d.getTime())) {
+        const label = d.toLocaleDateString([], { weekday: "short" });
+        const dayNum = d.toLocaleDateString([], { day: "numeric" });
+        const monthStr = d.toLocaleDateString([], { month: "short" });
+        const fullName = d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+        return {
+          dateStr,
+          label,
+          dayNum,
+          month: monthStr,
+          displayDate: `${dayNum} ${monthStr}`,
+          fullName
+        };
+      }
+    }
+  }
+  return { dateStr, label: dateStr, dayNum: dateStr, month: "", displayDate: dateStr, fullName: dateStr };
+}
+
+function updateFilterOpenOnlyButton() {
+  const btn = document.getElementById("toggle-open-only");
+  if (!btn) return;
+  if (filterOpenOnly) {
+    btn.className = "shrink-0 text-xs font-bold px-3 py-1.5 rounded-xl border transition flex items-center gap-1.5 bg-emerald-600 text-white border-emerald-700 shadow-xs";
+    btn.innerHTML = `<span>⚡</span> Open Only ✓`;
+  } else {
+    btn.className = "shrink-0 text-xs font-bold px-3 py-1.5 rounded-xl border transition flex items-center gap-1.5 bg-white border-amber-300 text-amber-950 hover:bg-amber-50 shadow-xs";
+    btn.innerHTML = `<span>⚡</span> Open Only`;
+  }
+}
+
+function toggleOpenSpotsOnly() {
+  filterOpenOnly = !filterOpenOnly;
+  updateFilterOpenOnlyButton();
+  renderShifts(currentShiftsDocs);
+}
+
+function stepSession(direction) {
+  const sessionsList = sortSessionsChronologically(currentFestivalConfig.sessions || defaultFestivalConfig.sessions);
+  if (sessionsList.length === 0) return;
+  const idx = sessionsList.findIndex(s => s.id === selectedSessionId);
+  let nextIdx = idx + direction;
+  if (nextIdx < 0) nextIdx = sessionsList.length - 1;
+  if (nextIdx >= sessionsList.length) nextIdx = 0;
+
+  const nextSession = sessionsList[nextIdx];
+  selectedSessionId = nextSession.id;
+  selectedDayDate = nextSession.date || selectedDayDate;
+  renderDayTabs();
+  renderShifts(currentShiftsDocs);
+}
+
+// Day / Session Navigation: Two-Tier Day + Session Strip
 function renderDayTabs() {
-  const container = document.getElementById("day-tabs");
-  if (!container) return;
+  const dayPillsContainer = document.getElementById("day-pills");
+  const sessionChipsContainer = document.getElementById("session-chips");
+  const legacyContainer = document.getElementById("day-tabs");
 
   const sessionsList = sortSessionsChronologically(currentFestivalConfig.sessions || defaultFestivalConfig.sessions);
-
-  // Validate selectedSessionId
-  const sessionExists = sessionsList.some(s => s.id === selectedSessionId);
-  if (!sessionExists && sessionsList.length > 0) {
-    selectedSessionId = sessionsList[0].id;
+  if (sessionsList.length === 0) {
+    if (dayPillsContainer) dayPillsContainer.innerHTML = "<p class='text-xs text-slate-400 italic py-1'>No sessions configured.</p>";
+    if (sessionChipsContainer) sessionChipsContainer.innerHTML = "";
+    return;
   }
 
-  container.innerHTML = "";
-  sessionsList.forEach(session => {
-    const isSelected = selectedSessionId === session.id;
-    const btn = document.createElement("button");
-    btn.className = `px-3.5 py-2 rounded-t-lg text-xs font-bold whitespace-nowrap transition flex flex-col items-start ${
-      isSelected
-        ? "bg-amber-800 text-white shadow-sm"
-        : "bg-white text-amber-900 border border-amber-200 hover:bg-amber-100"
-    }`;
-
-    const formattedDate = session.date ? formatDate(session.date) : "";
-    const timeRange = session.startTime && session.endTime ? `${session.startTime} – ${session.endTime}` : "";
-    const subText = [formattedDate, timeRange].filter(Boolean).join(" • ");
-
-    btn.innerHTML = `
-      <span class="font-bold">${escapeHtml(session.name || "Session")}</span>
-      ${subText ? `<span class="text-[10px] ${isSelected ? 'text-amber-200' : 'text-slate-400'} font-normal">${escapeHtml(subText)}</span>` : ''}
-    `;
-    btn.onclick = () => {
-      selectedSessionId = session.id;
-      renderDayTabs();
-      renderShifts(currentShiftsDocs);
-    };
-    container.appendChild(btn);
+  // Group unique festival days in chronological order
+  const uniqueDates = [];
+  sessionsList.forEach(s => {
+    const dStr = s.date || "undated";
+    if (!uniqueDates.includes(dStr)) {
+      uniqueDates.push(dStr);
+    }
   });
+
+  // Validate or assign selectedSessionId
+  const sessionExists = sessionsList.some(s => s.id === selectedSessionId);
+  if (!sessionExists) {
+    selectedSessionId = sessionsList[0].id;
+  }
+  const currentSession = sessionsList.find(s => s.id === selectedSessionId) || sessionsList[0];
+
+  // Ensure selectedDayDate matches current festival sessions
+  if (!selectedDayDate || !uniqueDates.includes(selectedDayDate)) {
+    selectedDayDate = currentSession.date || uniqueDates[0];
+  }
+
+  // Ensure selectedSession belongs to active selectedDayDate
+  const daySessions = sessionsList.filter(s => (s.date || "undated") === selectedDayDate);
+  if (daySessions.length > 0 && !daySessions.some(s => s.id === selectedSessionId)) {
+    selectedSessionId = daySessions[0].id;
+  }
+
+  // Update festival date range in Tier 1 header
+  const rangeEl = document.getElementById("festival-day-range");
+  if (rangeEl && uniqueDates.length > 0) {
+    const firstDay = getDayInfoFromDateStr(uniqueDates[0]);
+    const lastDay = getDayInfoFromDateStr(uniqueDates[uniqueDates.length - 1]);
+    rangeEl.textContent = uniqueDates.length === 1 
+      ? firstDay.fullName 
+      : `${firstDay.displayDate} – ${lastDay.displayDate}`;
+  }
+
+  // Update Tier 2 active day title
+  const dayLabelEl = document.getElementById("selected-day-label");
+  if (dayLabelEl) {
+    const activeDayInfo = getDayInfoFromDateStr(selectedDayDate);
+    dayLabelEl.textContent = `${activeDayInfo.fullName} Sessions:`;
+  }
+
+  // 1. Render Tier 1: Day Pills
+  if (dayPillsContainer) {
+    dayPillsContainer.innerHTML = "";
+    uniqueDates.forEach(dateStr => {
+      const isSelected = dateStr === selectedDayDate;
+      const dayInfo = getDayInfoFromDateStr(dateStr);
+      const sessionCount = sessionsList.filter(s => (s.date || "undated") === dateStr).length;
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = `py-2 px-2.5 rounded-xl text-center flex flex-col items-center justify-center transition border shrink-0 min-w-[62px] sm:min-w-0 ${
+        isSelected
+          ? "bg-amber-800 text-white border-amber-950 shadow-sm"
+          : "bg-amber-50/70 text-amber-950 border-amber-200 hover:bg-amber-100"
+      }`;
+      btn.innerHTML = `
+        <span class="text-[10px] font-bold uppercase tracking-wider ${isSelected ? 'text-amber-300' : 'text-slate-500'}">${escapeHtml(dayInfo.label)}</span>
+        <span class="text-sm font-black leading-tight">${escapeHtml(dayInfo.dayNum || dateStr)}</span>
+        <span class="text-[9px] ${isSelected ? 'text-amber-200' : 'text-slate-400'}">${sessionCount} sess</span>
+      `;
+      btn.onclick = () => {
+        selectedDayDate = dateStr;
+        const firstSessionOfDay = sessionsList.find(s => (s.date || "undated") === dateStr);
+        if (firstSessionOfDay) {
+          selectedSessionId = firstSessionOfDay.id;
+        }
+        renderDayTabs();
+        renderShifts(currentShiftsDocs);
+      };
+      dayPillsContainer.appendChild(btn);
+    });
+  }
+
+  // 2. Render Tier 2: Session Chips for Selected Day
+  if (sessionChipsContainer) {
+    sessionChipsContainer.innerHTML = "";
+    const activeDaySessions = sessionsList.filter(s => (s.date || "undated") === selectedDayDate);
+
+    activeDaySessions.forEach(session => {
+      const isSelected = session.id === selectedSessionId;
+      const chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = `p-2.5 rounded-xl text-left transition flex items-center justify-between border ${
+        isSelected
+          ? "bg-amber-700 text-white border-amber-800 shadow-sm ring-2 ring-amber-400/50"
+          : "bg-white text-slate-800 border-amber-200 hover:bg-amber-50 shadow-xs"
+      }`;
+
+      const timeRange = session.startTime && session.endTime ? `${session.startTime} – ${session.endTime}` : "";
+      chip.innerHTML = `
+        <div class="truncate mr-2">
+          <span class="text-xs font-bold block truncate">${escapeHtml(session.name || "Session")}</span>
+          ${timeRange ? `<span class="text-[11px] ${isSelected ? 'text-amber-100' : 'text-slate-500'} block">${escapeHtml(timeRange)}</span>` : ''}
+          ${session.description ? `<span class="text-[10px] ${isSelected ? 'text-amber-200/90' : 'text-slate-400'} block truncate">${escapeHtml(session.description)}</span>` : ''}
+        </div>
+        <span class="text-[11px] font-extrabold shrink-0 px-2 py-0.5 rounded-md ${
+          isSelected ? 'bg-amber-900/60 text-amber-200' : 'bg-amber-50 text-amber-900 border border-amber-200'
+        }">
+          ${isSelected ? '● Active' : 'Select'}
+        </span>
+      `;
+      chip.onclick = () => {
+        selectedSessionId = session.id;
+        selectedDayDate = session.date || selectedDayDate;
+        renderDayTabs();
+        renderShifts(currentShiftsDocs);
+      };
+      sessionChipsContainer.appendChild(chip);
+    });
+  }
+
+  // Backward compatibility fallback if legacy container still present
+  if (legacyContainer && !dayPillsContainer) {
+    legacyContainer.innerHTML = "";
+    sessionsList.forEach(session => {
+      const isSelected = selectedSessionId === session.id;
+      const btn = document.createElement("button");
+      btn.className = `px-3.5 py-2 rounded-t-lg text-xs font-bold whitespace-nowrap transition flex flex-col items-start ${
+        isSelected ? "bg-amber-800 text-white shadow-sm" : "bg-white text-amber-900 border border-amber-200 hover:bg-amber-100"
+      }`;
+      const formattedDate = session.date ? formatDate(session.date) : "";
+      const timeRange = session.startTime && session.endTime ? `${session.startTime} – ${session.endTime}` : "";
+      const subText = [formattedDate, timeRange].filter(Boolean).join(" • ");
+      btn.innerHTML = `<span class="font-bold">${escapeHtml(session.name || "Session")}</span>${subText ? `<span class="text-[10px] font-normal">${escapeHtml(subText)}</span>` : ''}`;
+      btn.onclick = () => {
+        selectedSessionId = session.id;
+        renderDayTabs();
+        renderShifts(currentShiftsDocs);
+      };
+      legacyContainer.appendChild(btn);
+    });
+  }
 }
 
 // Real-Time Shifts Listener
@@ -1221,7 +1406,13 @@ function renderShifts(docs) {
 
   const filteredDocs = sessionShifts.filter(doc => {
     const shift = doc.data();
-    return selectedCategory === "ALL" || shift.categoryName === selectedCategory;
+    const matchCategory = selectedCategory === "ALL" || shift.categoryName === selectedCategory;
+    if (!matchCategory) return false;
+    if (filterOpenOnly) {
+      const isFull = (shift.assignedCount || 0) >= (shift.capacity || 0);
+      if (isFull) return false;
+    }
+    return true;
   });
 
   // Sort shifts chronologically ascending by startTime, then endTime, then category
@@ -1236,7 +1427,21 @@ function renderShifts(docs) {
   });
 
   if (filteredDocs.length === 0) {
-    grid.innerHTML = `<p class='text-slate-500 italic col-span-full'>No shifts found for ${escapeHtml(sessionName)}${selectedCategory !== 'ALL' ? ` under "${escapeHtml(selectedCategory)}"` : ''}.</p>`;
+    let emptyMsg = `No shifts scheduled for ${escapeHtml(sessionName)}`;
+    if (selectedCategory !== 'ALL') emptyMsg += ` under "${escapeHtml(selectedCategory)}"`;
+    if (filterOpenOnly) emptyMsg += ` with open spots`;
+    grid.innerHTML = `
+      <div class="col-span-full bg-white p-6 rounded-2xl border border-amber-200 text-center space-y-2">
+        <span class="text-3xl">🔍</span>
+        <h4 class="text-sm font-bold text-slate-800">${emptyMsg}.</h4>
+        <p class="text-xs text-slate-500">Try changing categories or toggling off the "Open Only" filter.</p>
+        ${filterOpenOnly || selectedCategory !== 'ALL' ? `
+          <button onclick="selectedCategory='ALL'; filterOpenOnly=false; updateFilterOpenOnlyButton(); renderCategoryFilters(); renderShifts(currentShiftsDocs);" class="text-xs text-amber-800 font-bold underline mt-1">
+            Reset Filters
+          </button>
+        ` : ''}
+      </div>
+    `;
     return;
   }
 
@@ -1367,16 +1572,25 @@ function renderShifts(docs) {
       `;
     }
 
+    const spotsLeft = (shift.capacity || 0) - (shift.assignedCount || 0);
+    let availabilityBadgeHtml = "";
+    if (isRegistered) {
+      availabilityBadgeHtml = `<span class="bg-emerald-600 text-white text-xs font-extrabold px-2.5 py-0.5 rounded-full shadow-xs flex items-center gap-1">✓ Registered</span>`;
+    } else if (isFull) {
+      availabilityBadgeHtml = `<span class="bg-slate-200 text-slate-600 text-xs font-bold px-2 py-0.5 rounded-full">Full (${shift.assignedCount || 0}/${shift.capacity || 0})</span>`;
+    } else {
+      availabilityBadgeHtml = `<span class="bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-0.5 rounded-full">🟢 ${spotsLeft} spot${spotsLeft === 1 ? '' : 's'} left</span>`;
+    }
+
     card.innerHTML = `
       <div>
-        <div class="flex justify-between items-start mb-2.5">
+        <div class="flex justify-between items-start mb-2.5 gap-2">
           <div class="flex flex-wrap items-center gap-1.5">
-            <span class="bg-amber-100 text-amber-900 text-xs font-bold px-2 py-0.5 rounded">${escapeHtml(shift.categoryName || 'Bar Area')}</span>
-            ${isRegistered ? '<span class="bg-emerald-100 text-emerald-800 text-xs font-bold px-2 py-0.5 rounded flex items-center gap-1">✓ Booked</span>' : ''}
+            <span class="bg-amber-100 text-amber-900 text-xs font-bold px-2.5 py-0.5 rounded-md border border-amber-200">${escapeHtml(shift.categoryName || 'Bar Area')}</span>
           </div>
-          <span class="text-xs font-semibold ${isFull && !isRegistered ? 'text-rose-600' : 'text-slate-500'}">
-            ${shift.assignedCount || 0} / ${shift.capacity || 0} Filled
-          </span>
+          <div>
+            ${availabilityBadgeHtml}
+          </div>
         </div>
         <h3 class="font-bold text-lg text-slate-800">${startTime} &ndash; ${endTime}</h3>
         ${shiftDate ? `<p class="text-xs text-slate-500 mb-1">${shiftDate}</p>` : ''}

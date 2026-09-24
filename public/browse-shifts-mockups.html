@@ -1,0 +1,1082 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BrewCrew - Browse Shifts UI Mockups (Mobile Prototype)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    }
+    /* Hide scrollbars but allow scrolling */
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+    /* Mobile device mockup frame */
+    .mobile-frame {
+      width: 100%;
+      max-width: 412px;
+      margin-left: auto;
+      margin-right: auto;
+      border-radius: 40px;
+      box-shadow: 0 25px 60px -15px rgba(120, 53, 15, 0.25), 0 0 0 10px #1e293b, 0 0 0 12px #334155;
+      overflow: hidden;
+      background: #fffbeb;
+      min-height: 840px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+    .phone-notch {
+      width: 120px;
+      height: 18px;
+      background: #1e293b;
+      margin: 0 auto;
+      border-bottom-left-radius: 12px;
+      border-bottom-right-radius: 12px;
+    }
+    .sheet-transition {
+      transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.25s ease;
+    }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-800 min-h-screen py-6 px-3 sm:px-6">
+
+  <!-- Top Controller & Concept Switcher Bar -->
+  <header class="max-w-4xl mx-auto mb-6 bg-slate-800/90 backdrop-blur border border-slate-700 p-4 rounded-2xl text-white shadow-xl">
+    <div class="flex flex-wrap items-center justify-between gap-4 pb-3 border-b border-slate-700/80">
+      <div>
+        <div class="flex items-center gap-2">
+          <span class="text-2xl">🍺</span>
+          <h1 class="text-lg font-bold text-amber-400">BrewCrew Mobile UI Mockups</h1>
+          <span class="text-xs bg-amber-500/20 text-amber-300 font-semibold px-2 py-0.5 rounded-full border border-amber-500/30">Interactive Prototype</span>
+        </div>
+        <p class="text-xs text-slate-400 mt-1">10 Sessions &bull; 6 Categories &bull; Optimized for Mobile Browsers</p>
+      </div>
+
+      <!-- Viewport Toggle -->
+      <div class="flex items-center gap-2 bg-slate-900/80 p-1 rounded-xl border border-slate-700 text-xs">
+        <span class="text-slate-400 pl-2">Display:</span>
+        <button id="btn-device-mobile" onclick="setDeviceView('mobile')" class="px-3 py-1.5 rounded-lg font-bold transition bg-amber-600 text-white shadow-sm flex items-center gap-1.5">
+          <span>📱</span> Phone Frame
+        </button>
+        <button id="btn-device-full" onclick="setDeviceView('full')" class="px-3 py-1.5 rounded-lg font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5">
+          <span>💻</span> Full Width
+        </button>
+      </div>
+    </div>
+
+    <!-- Concept Tabs Switcher -->
+    <div class="mt-3 flex flex-wrap items-center gap-2">
+      <span class="text-xs font-semibold text-slate-400 mr-1">Choose Mockup:</span>
+      <button id="tab-c1" onclick="switchConcept(1)" class="px-3.5 py-2 rounded-xl text-xs font-bold transition bg-amber-500 text-slate-950 shadow-md">
+        1. Two-Tier Day + Session Strip
+      </button>
+      <button id="tab-c2" onclick="switchConcept(2)" class="px-3.5 py-2 rounded-xl text-xs font-bold transition text-slate-300 bg-slate-700/60 hover:bg-slate-700">
+        2. Sticky Filter Bar &amp; Bottom Sheet
+      </button>
+      <button id="tab-c3" onclick="switchConcept(3)" class="px-3.5 py-2 rounded-xl text-xs font-bold transition text-slate-300 bg-slate-700/60 hover:bg-slate-700">
+        3. Collapsible Category Accordions
+      </button>
+    </div>
+
+    <!-- Active Concept Description Banner -->
+    <div id="concept-desc" class="mt-3 text-xs bg-slate-900/60 p-3 rounded-xl border border-slate-700/70 text-slate-300 flex items-start gap-2.5">
+      <span class="text-base text-amber-400">💡</span>
+      <div id="concept-desc-text">
+        <strong>Concept 1 (Two-Tier Strip):</strong> Breaks 10+ sessions into <strong>Day (Thu, Fri, Sat, Sun, Mon)</strong> on top, followed by only that day's 2–3 session chips. Completely eliminates horizontal scrolling past 5 items and keeps screen compact.
+      </div>
+    </div>
+  </header>
+
+  <!-- Prototype Container (Wraps either in Phone Frame or Responsive Page) -->
+  <main id="prototype-wrapper" class="mobile-frame transition-all duration-300">
+
+    <!-- Phone Hardware Notch (Visible in mobile mode) -->
+    <div id="phone-notch-bar" class="bg-amber-950 text-white pt-2 pb-1 px-5 flex justify-between items-center text-[11px] font-semibold select-none">
+      <span>11:42</span>
+      <div class="phone-notch"></div>
+      <div class="flex items-center gap-1.5 text-xs">
+        <span>5G</span>
+        <span>🔋 94%</span>
+      </div>
+    </div>
+
+    <!-- App Top Navigation -->
+    <nav class="bg-amber-900 text-white px-4 py-3 sticky top-0 z-30 shadow-md flex items-center justify-between">
+      <div class="flex items-center gap-2">
+        <span class="text-xl">🍺</span>
+        <div>
+          <h2 class="text-sm font-extrabold tracking-tight leading-tight">BrewCrew Festival</h2>
+          <p class="text-[10px] text-amber-200">London Craft Beer 2027</p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <span class="text-[11px] font-bold bg-amber-950/60 px-2 py-1 rounded-md text-amber-200 border border-amber-700/50">
+          🏆 4 / 8 hrs
+        </span>
+        <div class="w-7 h-7 rounded-full bg-amber-400 text-amber-950 font-extrabold text-xs flex items-center justify-center border border-amber-200">
+          JD
+        </div>
+      </div>
+    </nav>
+
+    <!-- Sub Navigation Tabs (Browse Shifts / My Shifts) -->
+    <div class="bg-amber-950/90 px-4 py-2 flex items-center gap-2 border-b border-amber-800">
+      <button class="bg-amber-600 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm flex items-center gap-1">
+        <span>📅</span> Browse Shifts
+      </button>
+      <button class="text-amber-200 hover:text-white text-xs font-semibold px-3 py-1.5 rounded-lg flex items-center gap-1">
+        <span>📋</span> My Shifts (1)
+      </button>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- CONCEPT 1: TWO-TIER DAY STRIP + SESSION SELECTOR                         -->
+    <!-- ========================================================================= -->
+    <div id="view-concept-1" class="p-3 sm:p-4 space-y-3 flex-grow flex flex-col">
+
+      <!-- Tier 1: Day Strip (5 Days, Fits Width cleanly) -->
+      <div class="bg-white p-2.5 rounded-2xl shadow-xs border border-amber-200">
+        <div class="flex items-center justify-between text-[11px] font-bold text-amber-950 mb-1.5 px-1">
+          <span>SELECT FESTIVAL DAY</span>
+          <span class="text-slate-400 font-normal">May 13 - 17, 2027</span>
+        </div>
+        <div class="grid grid-cols-5 gap-1.5" id="c1-day-pills">
+          <!-- Rendered via JS -->
+        </div>
+      </div>
+
+      <!-- Tier 2: Sessions for Selected Day -->
+      <div class="bg-amber-100/60 p-2.5 rounded-2xl border border-amber-300/80">
+        <div class="flex items-center justify-between mb-2 px-1">
+          <span class="text-xs font-extrabold text-amber-950" id="c1-selected-day-label">Saturday 15 May Sessions:</span>
+          <!-- Next/Prev quick stepper -->
+          <div class="flex items-center gap-1">
+            <button onclick="c1StepSession(-1)" class="w-6 h-6 rounded-md bg-white border border-amber-300 text-amber-900 font-bold text-xs flex items-center justify-center hover:bg-amber-50">‹</button>
+            <button onclick="c1StepSession(1)" class="w-6 h-6 rounded-md bg-white border border-amber-300 text-amber-900 font-bold text-xs flex items-center justify-center hover:bg-amber-50">›</button>
+          </div>
+        </div>
+        <div class="flex flex-col gap-1.5" id="c1-session-chips">
+          <!-- Rendered via JS -->
+        </div>
+      </div>
+
+      <!-- Category Filter Pills (Horizontal Scroll or Compact Dropdown) -->
+      <div class="flex items-center justify-between gap-2 pt-1">
+        <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-1" id="c1-cat-filters">
+          <!-- Rendered via JS -->
+        </div>
+        <!-- Toggle: Open Spots Only -->
+        <button id="c1-toggle-open" onclick="toggleOpenOnly(1)" class="shrink-0 text-[11px] font-bold px-2.5 py-1.5 rounded-xl border transition flex items-center gap-1 bg-white border-amber-300 text-amber-950">
+          <span>⚡</span> Open Only
+        </button>
+      </div>
+
+      <!-- Shift Cards Grid/List -->
+      <div class="space-y-2.5 flex-grow" id="c1-shifts-container">
+        <!-- Rendered via JS -->
+      </div>
+    </div>
+
+
+    <!-- ========================================================================= -->
+    <!-- CONCEPT 2: STICKY FILTER BAR & BOTTOM SHEET DRAWER                       -->
+    <!-- ========================================================================= -->
+    <div id="view-concept-2" class="hidden p-3 sm:p-4 space-y-3 flex-grow flex flex-col">
+
+      <!-- Sticky Filter Bar (Airbnb / Eventbrite Style) -->
+      <div class="sticky top-[108px] z-20 bg-white/95 backdrop-blur p-2.5 rounded-2xl shadow-sm border border-amber-300 flex flex-wrap items-center justify-between gap-2">
+        <button onclick="openBottomSheet('sessions')" class="flex-1 min-w-[140px] bg-amber-50 hover:bg-amber-100 border border-amber-300/80 px-3 py-2 rounded-xl text-left transition flex items-center justify-between">
+          <div class="truncate">
+            <span class="block text-[10px] uppercase font-bold text-amber-800">Session</span>
+            <span class="block text-xs font-extrabold text-slate-800 truncate" id="c2-session-btn-text">Sat 15 &bull; Grand Tasting</span>
+          </div>
+          <span class="text-amber-800 text-xs ml-1">▾</span>
+        </button>
+
+        <button onclick="openBottomSheet('categories')" class="flex-1 min-w-[120px] bg-amber-50 hover:bg-amber-100 border border-amber-300/80 px-3 py-2 rounded-xl text-left transition flex items-center justify-between">
+          <div class="truncate">
+            <span class="block text-[10px] uppercase font-bold text-amber-800">Area</span>
+            <span class="block text-xs font-extrabold text-slate-800 truncate" id="c2-category-btn-text">All Areas</span>
+          </div>
+          <span class="text-amber-800 text-xs ml-1">▾</span>
+        </button>
+
+        <button id="c2-toggle-open" onclick="toggleOpenOnly(2)" class="shrink-0 p-2 rounded-xl border border-amber-300 text-amber-900 bg-white hover:bg-amber-50 text-xs font-bold flex items-center gap-1" title="Open spots only">
+          <span>⚡</span>
+        </button>
+      </div>
+
+      <!-- Quick Session Indicator Banner -->
+      <div class="bg-gradient-to-r from-amber-900 to-amber-800 text-white p-3 rounded-2xl shadow-xs flex items-center justify-between">
+        <div>
+          <span class="text-[10px] uppercase tracking-wider text-amber-200 font-bold" id="c2-banner-day">Saturday 15 May 2027</span>
+          <h3 class="text-sm font-bold text-white leading-tight" id="c2-banner-title">Saturday Grand Tasting</h3>
+          <p class="text-[11px] text-amber-100" id="c2-banner-time">12:00 – 17:00 &bull; Main tasting session</p>
+        </div>
+        <button onclick="openBottomSheet('sessions')" class="text-xs bg-amber-700/80 hover:bg-amber-600 px-2.5 py-1.5 rounded-lg font-bold border border-amber-500/40 text-amber-100">
+          Change ▾
+        </button>
+      </div>
+
+      <!-- Shift Count Header -->
+      <div class="flex items-center justify-between px-1 text-xs text-slate-600">
+        <span id="c2-results-count" class="font-bold text-amber-950">Showing 4 shifts</span>
+        <span class="text-[11px] text-slate-500">Tap card for role &amp; manager</span>
+      </div>
+
+      <!-- Shift Cards Container -->
+      <div class="space-y-2.5 flex-grow" id="c2-shifts-container">
+        <!-- Rendered via JS -->
+      </div>
+    </div>
+
+
+    <!-- ========================================================================= -->
+    <!-- CONCEPT 3: COLLAPSIBLE CATEGORY ACCORDIONS                                -->
+    <!-- ========================================================================= -->
+    <div id="view-concept-3" class="hidden p-3 sm:p-4 space-y-3 flex-grow flex flex-col">
+
+      <!-- Fast Session Stepper & Quick Select -->
+      <div class="bg-white p-2.5 rounded-2xl shadow-xs border border-amber-200 flex items-center justify-between gap-2">
+        <button onclick="c3StepSession(-1)" class="w-8 h-8 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 font-bold text-sm flex items-center justify-center hover:bg-amber-100">‹</button>
+        <div class="text-center flex-1">
+          <select id="c3-session-select" onchange="c3SelectSession(this.value)" class="w-full text-center text-xs font-bold text-amber-950 bg-amber-50/70 border border-amber-300 rounded-lg py-1 px-2 focus:ring-2 focus:ring-amber-500 focus:outline-none">
+            <!-- Populated via JS -->
+          </select>
+          <span class="text-[10px] text-slate-500 mt-0.5 block" id="c3-session-subtitle">10 Sessions Available</span>
+        </div>
+        <button onclick="c3StepSession(1)" class="w-8 h-8 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 font-bold text-sm flex items-center justify-center hover:bg-amber-100">›</button>
+      </div>
+
+      <!-- Category Filter Pills (Quick Jump or Filter) -->
+      <div class="flex items-center justify-between gap-2">
+        <span class="text-[11px] font-bold text-amber-950">Role Categories:</span>
+        <button onclick="c3ExpandAll()" class="text-[11px] text-amber-800 font-bold underline">Expand All</button>
+      </div>
+
+      <!-- Accordion Groups Container -->
+      <div class="space-y-2.5 flex-grow" id="c3-accordions-container">
+        <!-- Rendered via JS -->
+      </div>
+    </div>
+
+
+    <!-- ========================================================================= -->
+    <!-- SHARED BOTTOM SHEET MODAL (FOR CONCEPT 2)                                 -->
+    <!-- ========================================================================= -->
+    <div id="bottom-sheet-backdrop" onclick="closeBottomSheet()" class="hidden fixed inset-0 bg-slate-950/60 backdrop-blur-xs z-50 opacity-0 transition-opacity duration-200">
+      <div id="bottom-sheet-content" onclick="event.stopPropagation()" class="absolute bottom-0 inset-x-0 bg-white rounded-t-3xl max-h-[85vh] flex flex-col p-4 shadow-2xl transform translate-y-full sheet-transition border-t border-amber-200">
+        
+        <!-- Sheet Handle -->
+        <div class="w-12 h-1.5 bg-slate-300 rounded-full mx-auto mb-3"></div>
+
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+          <h3 class="text-sm font-bold text-slate-800" id="sheet-title">Select Festival Session</h3>
+          <button onclick="closeBottomSheet()" class="w-7 h-7 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 font-bold flex items-center justify-center text-xs">✕</button>
+        </div>
+
+        <div class="overflow-y-auto py-2 space-y-3 flex-grow max-h-[60vh]" id="sheet-body">
+          <!-- Dynamic Content -->
+        </div>
+
+        <div class="pt-3 border-t border-slate-100">
+          <button onclick="closeBottomSheet()" class="w-full py-2.5 bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold rounded-xl transition shadow-sm">
+            Done
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Phone Bottom Navigation Bar Placeholder -->
+    <footer class="bg-white border-t border-amber-200/80 px-4 py-2 flex items-center justify-around text-[10px] font-semibold text-slate-500 mt-auto">
+      <div class="flex flex-col items-center text-amber-800">
+        <span class="text-base">📅</span>
+        <span>Schedule</span>
+      </div>
+      <div class="flex flex-col items-center hover:text-amber-900 cursor-pointer">
+        <span class="text-base">📋</span>
+        <span>My Shifts</span>
+      </div>
+      <div class="flex flex-col items-center hover:text-amber-900 cursor-pointer">
+        <span class="text-base">🏆</span>
+        <span>Rewards</span>
+      </div>
+      <div class="flex flex-col items-center hover:text-amber-900 cursor-pointer">
+        <span class="text-base">👤</span>
+        <span>Profile</span>
+      </div>
+    </footer>
+  </main>
+
+  <script>
+    // -------------------------------------------------------------
+    // DATA MODEL: 10 Realistic Sessions across 5 Festival Days
+    // -------------------------------------------------------------
+    const mockDays = [
+      { id: "day_thu", label: "Thu", date: "2027-05-13", displayDate: "13 May", name: "Thursday" },
+      { id: "day_fri", label: "Fri", date: "2027-05-14", displayDate: "14 May", name: "Friday" },
+      { id: "day_sat", label: "Sat", date: "2027-05-15", displayDate: "15 May", name: "Saturday" },
+      { id: "day_sun", label: "Sun", date: "2027-05-16", displayDate: "16 May", name: "Sunday" },
+      { id: "day_mon", label: "Mon", date: "2027-05-17", displayDate: "17 May", name: "Monday" }
+    ];
+
+    const mockSessions = [
+      // Thursday (2 Sessions)
+      { id: "sess_thu_setup", dayId: "day_thu", name: "Thursday Setup & Cask Racking", date: "2027-05-13", startTime: "09:00", endTime: "16:00", desc: "Setting up bars, cellar cooling and casking" },
+      { id: "sess_thu_preview", dayId: "day_thu", name: "VIP & Brewer Preview", date: "2027-05-13", startTime: "18:00", endTime: "22:00", desc: "Exclusive industry trade & sponsor evening" },
+      
+      // Friday (2 Sessions)
+      { id: "sess_fri_aft", dayId: "day_fri", name: "Friday Opening & Tasting", date: "2027-05-14", startTime: "12:00", endTime: "17:00", desc: "Afternoon public opening and judging" },
+      { id: "sess_fri_eve", dayId: "day_fri", name: "Friday Evening Party", date: "2027-05-14", startTime: "17:30", endTime: "23:00", desc: "High volume evening with live acoustic acts" },
+      
+      // Saturday (3 Sessions)
+      { id: "sess_sat_restock", dayId: "day_sat", name: "Saturday Morning Restock", date: "2027-05-15", startTime: "09:30", endTime: "12:00", desc: "Cellar tap changes, glasses prep and replenishment" },
+      { id: "sess_sat_tasting", dayId: "day_sat", name: "Saturday Grand Tasting", date: "2027-05-15", startTime: "12:00", endTime: "17:00", desc: "Main festival session, awards announcements" },
+      { id: "sess_sat_eve", dayId: "day_sat", name: "Saturday Big Night", date: "2027-05-15", startTime: "17:30", endTime: "23:30", desc: "Peak weekend session with headliner bands" },
+      
+      // Sunday (2 Sessions)
+      { id: "sess_sun_aft", dayId: "day_sun", name: "Sunday Chilled Session", date: "2027-05-16", startTime: "12:00", endTime: "16:30", desc: "Relaxed Sunday afternoon session" },
+      { id: "sess_sun_takedown", dayId: "day_sun", name: "Sunday Last Orders & Takedown", date: "2027-05-16", startTime: "16:30", endTime: "21:00", desc: "Final pours, cask venting and initial packing" },
+      
+      // Monday (1 Session)
+      { id: "sess_mon_packdown", dayId: "day_mon", name: "Monday Site Clearance", date: "2027-05-17", startTime: "09:00", endTime: "14:00", desc: "Equipment returns, marquee clearing, litter sweep" }
+    ];
+
+    const mockCategories = [
+      { id: "ALL", name: "All Areas", icon: "🌐" },
+      { id: "Bar Service", name: "Bar Service", icon: "🍺" },
+      { id: "Token Sales", name: "Token Sales", icon: "🎟️" },
+      { id: "Cellar & Logistics", name: "Cellar & Casks", icon: "🍷" },
+      { id: "Glassware", name: "Glassware", icon: "🥂" },
+      { id: "Stewarding & Entry", name: "Entry & Stewards", icon: "🛡️" },
+      { id: "Green Team", name: "Green Team", icon: "🧹" }
+    ];
+
+    // Mock shifts across sessions
+    const mockShifts = [
+      // Sat Grand Tasting shifts
+      {
+        id: "shift_1",
+        sessionId: "sess_sat_tasting",
+        title: "Main IPA & Craft Bar Pourer",
+        category: "Bar Service",
+        startTime: "12:00",
+        endTime: "17:00",
+        hours: 5.0,
+        capacity: 8,
+        assigned: 6,
+        managerName: "Dave Miller",
+        notes: "Fast paced bar. Knowledge of cask ales appreciated but not required."
+      },
+      {
+        id: "shift_2",
+        sessionId: "sess_sat_tasting",
+        title: "Token Cashier & Program Seller",
+        category: "Token Sales",
+        startTime: "11:45",
+        endTime: "16:45",
+        hours: 5.0,
+        capacity: 4,
+        assigned: 4, // FULL
+        managerName: "Sarah Jenkins",
+        notes: "Card terminal operation and greeting visitors."
+      },
+      {
+        id: "shift_3",
+        sessionId: "sess_sat_tasting",
+        title: "Cellar Assistant & Temperature Monitor",
+        category: "Cellar & Logistics",
+        startTime: "11:30",
+        endTime: "17:00",
+        hours: 5.5,
+        capacity: 3,
+        assigned: 2,
+        managerName: "Tom Vance",
+        notes: "Heavy lifting involved. Steel toe caps advised."
+      },
+      {
+        id: "shift_4",
+        sessionId: "sess_sat_tasting",
+        title: "Main Entrance Ticket Scanner",
+        category: "Stewarding & Entry",
+        startTime: "11:30",
+        endTime: "15:30",
+        hours: 4.0,
+        capacity: 6,
+        assigned: 3,
+        managerName: "Sarah Jenkins",
+        notes: "Scan wristbands and manage initial entry queue."
+      },
+      {
+        id: "shift_5",
+        sessionId: "sess_sat_tasting",
+        title: "Glassware Distribution & Washing",
+        category: "Glassware",
+        startTime: "12:30",
+        endTime: "17:00",
+        hours: 4.5,
+        capacity: 5,
+        assigned: 4,
+        managerName: "Unassigned",
+        notes: "Operating glass wash machines and stocking entry desks."
+      },
+
+      // Saturday Night shifts
+      {
+        id: "shift_6",
+        sessionId: "sess_sat_eve",
+        title: "Main Cask Hall Pourer",
+        category: "Bar Service",
+        startTime: "17:30",
+        endTime: "23:30",
+        hours: 6.0,
+        capacity: 10,
+        assigned: 7,
+        managerName: "Dave Miller",
+        notes: "Peak volume night. Free meal token included."
+      },
+      {
+        id: "shift_7",
+        sessionId: "sess_sat_eve",
+        title: "Evening Token Sales",
+        category: "Token Sales",
+        startTime: "17:30",
+        endTime: "22:30",
+        hours: 5.0,
+        capacity: 4,
+        assigned: 4, // Full
+        managerName: "Sarah Jenkins",
+        notes: "Busy evening sales desk."
+      },
+      {
+        id: "shift_8",
+        sessionId: "sess_sat_eve",
+        title: "Night Hall Steward & Safety Monitor",
+        category: "Stewarding & Entry",
+        startTime: "18:00",
+        endTime: "23:30",
+        hours: 5.5,
+        capacity: 6,
+        assigned: 4,
+        managerName: "Tom Vance",
+        notes: "Assist security and help patrons locate amenities."
+      },
+      {
+        id: "shift_9",
+        sessionId: "sess_sat_eve",
+        title: "Recycling & Table Clearing",
+        category: "Green Team",
+        startTime: "18:30",
+        endTime: "23:00",
+        hours: 4.5,
+        capacity: 4,
+        assigned: 1,
+        managerName: "Unassigned",
+        notes: "Collect eco-cups and keep aisles clear."
+      },
+
+      // Friday Evening shifts
+      {
+        id: "shift_10",
+        sessionId: "sess_fri_eve",
+        title: "Friday Evening Cider & Perry Bar",
+        category: "Bar Service",
+        startTime: "17:30",
+        endTime: "23:00",
+        hours: 5.5,
+        capacity: 6,
+        assigned: 5,
+        managerName: "Dave Miller",
+        notes: "Pouring boxed craft ciders and perries."
+      },
+      {
+        id: "shift_11",
+        sessionId: "sess_fri_eve",
+        title: "Friday Token Sales Team",
+        category: "Token Sales",
+        startTime: "17:15",
+        endTime: "22:30",
+        hours: 5.25,
+        capacity: 4,
+        assigned: 2,
+        managerName: "Sarah Jenkins",
+        notes: "Manage evening card queue."
+      }
+    ];
+
+    // Prototype State
+    let currentConcept = 1;
+    let selectedDayId = "day_sat";
+    let selectedSessionId = "sess_sat_tasting";
+    let selectedCategory = "ALL";
+    let filterOpenOnly = false;
+    let registeredShiftIds = new Set(["shift_1"]); // example user registered for shift_1
+    let expandedAccordionCategories = new Set(["Bar Service"]); // for Concept 3
+
+    // -------------------------------------------------------------
+    // INIT & SWITCHERS
+    // -------------------------------------------------------------
+    function switchConcept(conceptId) {
+      currentConcept = conceptId;
+      [1, 2, 3].forEach(id => {
+        const view = document.getElementById(`view-concept-${id}`);
+        const tab = document.getElementById(`tab-c${id}`);
+        if (id === conceptId) {
+          view.classList.remove("hidden");
+          tab.className = "px-3.5 py-2 rounded-xl text-xs font-bold transition bg-amber-500 text-slate-950 shadow-md";
+        } else {
+          view.classList.add("hidden");
+          tab.className = "px-3.5 py-2 rounded-xl text-xs font-bold transition text-slate-300 bg-slate-700/60 hover:bg-slate-700";
+        }
+      });
+
+      const descMap = {
+        1: "<strong>Concept 1 (Two-Tier Strip):</strong> Breaks 10+ sessions into <strong>Day (Thu, Fri, Sat, Sun, Mon)</strong> on top, followed by that day's 2–3 session chips. Completely eliminates horizontal scrolling past 5 items and keeps screen compact.",
+        2: "<strong>Concept 2 (Sticky Filter Bar + Bottom Sheet):</strong> Minimalist header bar (Airbnb/Eventbrite pattern). Tapping Session or Area triggers an animated native-like bottom sheet. Leaves 90% of screen height for shift cards.",
+        3: "<strong>Concept 3 (Collapsible Category Accordions):</strong> Fast session stepper at top, with shifts grouped under collapsible category cards. Volunteers can scan areas of interest immediately without infinite card scrolling."
+      };
+      document.getElementById("concept-desc-text").innerHTML = descMap[conceptId];
+
+      renderAll();
+    }
+
+    function setDeviceView(mode) {
+      const wrapper = document.getElementById("prototype-wrapper");
+      const notch = document.getElementById("phone-notch-bar");
+      const btnMobile = document.getElementById("btn-device-mobile");
+      const btnFull = document.getElementById("btn-device-full");
+
+      if (mode === 'mobile') {
+        wrapper.className = "mobile-frame transition-all duration-300";
+        notch.classList.remove("hidden");
+        btnMobile.className = "px-3 py-1.5 rounded-lg font-bold transition bg-amber-600 text-white shadow-sm flex items-center gap-1.5";
+        btnFull.className = "px-3 py-1.5 rounded-lg font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5";
+      } else {
+        wrapper.className = "max-w-4xl mx-auto rounded-3xl bg-amber-50 shadow-2xl overflow-hidden min-h-[700px] border border-slate-700 transition-all duration-300";
+        notch.classList.add("hidden");
+        btnFull.className = "px-3 py-1.5 rounded-lg font-bold transition bg-amber-600 text-white shadow-sm flex items-center gap-1.5";
+        btnMobile.className = "px-3 py-1.5 rounded-lg font-bold transition text-slate-400 hover:text-white flex items-center gap-1.5";
+      }
+    }
+
+    function toggleOpenOnly(conceptId) {
+      filterOpenOnly = !filterOpenOnly;
+      const btn1 = document.getElementById("c1-toggle-open");
+      const btn2 = document.getElementById("c2-toggle-open");
+
+      const updateStyle = (btn) => {
+        if (!btn) return;
+        if (filterOpenOnly) {
+          btn.className = "shrink-0 text-[11px] font-bold px-2.5 py-1.5 rounded-xl border transition flex items-center gap-1 bg-emerald-600 text-white border-emerald-700 shadow-xs";
+          btn.innerHTML = `<span>⚡</span> Open Only ✓`;
+        } else {
+          btn.className = "shrink-0 text-[11px] font-bold px-2.5 py-1.5 rounded-xl border transition flex items-center gap-1 bg-white border-amber-300 text-amber-950 hover:bg-amber-50";
+          btn.innerHTML = `<span>⚡</span> Open Only`;
+        }
+      };
+
+      updateStyle(btn1);
+      updateStyle(btn2);
+      renderAll();
+    }
+
+    function toggleRegister(shiftId) {
+      if (registeredShiftIds.has(shiftId)) {
+        registeredShiftIds.delete(shiftId);
+      } else {
+        registeredShiftIds.add(shiftId);
+      }
+      renderAll();
+    }
+
+    // -------------------------------------------------------------
+    // CONCEPT 1 RENDERING (Two-Tier Strip)
+    // -------------------------------------------------------------
+    function renderConcept1() {
+      // Day Pills
+      const dayContainer = document.getElementById("c1-day-pills");
+      dayContainer.innerHTML = "";
+      mockDays.forEach(day => {
+        const isSelected = day.id === selectedDayId;
+        const btn = document.createElement("button");
+        btn.onclick = () => {
+          selectedDayId = day.id;
+          const daySessions = mockSessions.filter(s => s.dayId === day.id);
+          if (daySessions.length > 0) {
+            selectedSessionId = daySessions[0].id;
+          }
+          renderConcept1();
+        };
+        btn.className = `py-1.5 px-1 rounded-xl text-center flex flex-col items-center justify-center transition border ${
+          isSelected
+            ? "bg-amber-800 text-white border-amber-900 shadow-sm"
+            : "bg-amber-50/70 text-amber-950 border-amber-200 hover:bg-amber-100"
+        }`;
+        btn.innerHTML = `
+          <span class="text-[10px] font-bold uppercase ${isSelected ? 'text-amber-300' : 'text-slate-500'}">${day.label}</span>
+          <span class="text-xs font-black">${day.displayDate.split(" ")[0]}</span>
+        `;
+        dayContainer.appendChild(btn);
+      });
+
+      // Session Chips for Selected Day
+      const currentDay = mockDays.find(d => d.id === selectedDayId);
+      document.getElementById("c1-selected-day-label").innerText = `${currentDay.name} ${currentDay.displayDate} Sessions:`;
+
+      const sessionChipsContainer = document.getElementById("c1-session-chips");
+      sessionChipsContainer.innerHTML = "";
+      const daySessions = mockSessions.filter(s => s.dayId === selectedDayId);
+
+      daySessions.forEach(session => {
+        const isSelected = session.id === selectedSessionId;
+        const chip = document.createElement("button");
+        chip.onclick = () => {
+          selectedSessionId = session.id;
+          renderConcept1();
+        };
+        chip.className = `p-2 rounded-xl text-left transition flex items-center justify-between border ${
+          isSelected
+            ? "bg-amber-700 text-white border-amber-800 shadow-sm"
+            : "bg-white text-slate-800 border-amber-200 hover:bg-amber-50"
+        }`;
+        chip.innerHTML = `
+          <div>
+            <span class="text-xs font-bold block">${escapeHtml(session.name)}</span>
+            <span class="text-[10px] ${isSelected ? 'text-amber-200' : 'text-slate-500'}">${session.startTime} – ${session.endTime}</span>
+          </div>
+          <span class="text-xs ${isSelected ? 'text-amber-200 font-bold' : 'text-slate-400'}">
+            ${isSelected ? '● Active' : 'Select'}
+          </span>
+        `;
+        sessionChipsContainer.appendChild(chip);
+      });
+
+      // Category filters
+      const catContainer = document.getElementById("c1-cat-filters");
+      catContainer.innerHTML = "";
+      mockCategories.forEach(cat => {
+        const isSelected = selectedCategory === cat.name || (selectedCategory === "ALL" && cat.id === "ALL");
+        const btn = document.createElement("button");
+        btn.onclick = () => {
+          selectedCategory = cat.id === "ALL" ? "ALL" : cat.name;
+          renderConcept1();
+        };
+        btn.className = `px-2.5 py-1 rounded-full text-[11px] font-semibold whitespace-nowrap transition border ${
+          isSelected
+            ? "bg-slate-900 text-white border-slate-950 shadow-xs"
+            : "bg-white text-slate-700 border-amber-200 hover:bg-amber-100"
+        }`;
+        btn.innerHTML = `${cat.icon} ${cat.name}`;
+        catContainer.appendChild(btn);
+      });
+
+      // Shift Cards
+      renderShiftCardsList("c1-shifts-container");
+    }
+
+    function c1StepSession(direction) {
+      const allSessions = mockSessions;
+      const idx = allSessions.findIndex(s => s.id === selectedSessionId);
+      let nextIdx = idx + direction;
+      if (nextIdx < 0) nextIdx = allSessions.length - 1;
+      if (nextIdx >= allSessions.length) nextIdx = 0;
+
+      selectedSessionId = allSessions[nextIdx].id;
+      selectedDayId = allSessions[nextIdx].dayId;
+      renderAll();
+    }
+
+    // -------------------------------------------------------------
+    // CONCEPT 2 RENDERING (Sticky Filter Bar + Bottom Sheet)
+    // -------------------------------------------------------------
+    function renderConcept2() {
+      const currentSession = mockSessions.find(s => s.id === selectedSessionId) || mockSessions[0];
+      const currentDay = mockDays.find(d => d.id === currentSession.dayId);
+
+      document.getElementById("c2-session-btn-text").innerText = `${currentDay.label} ${currentDay.displayDate} • ${currentSession.name}`;
+      document.getElementById("c2-category-btn-text").innerText = selectedCategory === "ALL" ? "All Areas" : selectedCategory;
+
+      document.getElementById("c2-banner-day").innerText = `${currentDay.name} ${currentDay.displayDate} 2027`;
+      document.getElementById("c2-banner-title").innerText = currentSession.name;
+      document.getElementById("c2-banner-time").innerText = `${currentSession.startTime} – ${currentSession.endTime} • ${currentSession.desc}`;
+
+      // Render Shifts
+      const renderedCount = renderShiftCardsList("c2-shifts-container");
+      document.getElementById("c2-results-count").innerText = `Showing ${renderedCount} shifts`;
+    }
+
+    // Bottom Sheet Logic for Concept 2
+    let activeSheetType = null;
+    function openBottomSheet(type) {
+      activeSheetType = type;
+      const backdrop = document.getElementById("bottom-sheet-backdrop");
+      const content = document.getElementById("bottom-sheet-content");
+      const title = document.getElementById("sheet-title");
+      const body = document.getElementById("sheet-body");
+
+      backdrop.classList.remove("hidden");
+      setTimeout(() => {
+        backdrop.classList.remove("opacity-0");
+        content.classList.remove("translate-y-full");
+      }, 10);
+
+      if (type === 'sessions') {
+        title.innerText = "Select Festival Session (10 Total)";
+        body.innerHTML = "";
+
+        mockDays.forEach(day => {
+          const dayWrap = document.createElement("div");
+          dayWrap.className = "space-y-1.5";
+          dayWrap.innerHTML = `
+            <div class="text-[11px] font-extrabold text-amber-900 uppercase tracking-wide px-1 pt-1 flex items-center justify-between">
+              <span>📅 ${day.name} (${day.displayDate})</span>
+            </div>
+          `;
+
+          const daySessions = mockSessions.filter(s => s.dayId === day.id);
+          daySessions.forEach(session => {
+            const isSelected = session.id === selectedSessionId;
+            const item = document.createElement("button");
+            item.onclick = () => {
+              selectedSessionId = session.id;
+              selectedDayId = session.dayId;
+              closeBottomSheet();
+              renderAll();
+            };
+            item.className = `w-full p-2.5 rounded-xl text-left transition flex items-center justify-between border ${
+              isSelected
+                ? "bg-amber-800 text-white border-amber-900 shadow-sm"
+                : "bg-slate-50 hover:bg-amber-50 text-slate-800 border-slate-200"
+            }`;
+            item.innerHTML = `
+              <div>
+                <span class="text-xs font-bold block">${escapeHtml(session.name)}</span>
+                <span class="text-[11px] ${isSelected ? 'text-amber-200' : 'text-slate-500'}">${session.startTime} – ${session.endTime}</span>
+              </div>
+              <span class="text-xs ${isSelected ? 'text-amber-300 font-bold' : 'text-slate-400'}">
+                ${isSelected ? '✓ Selected' : 'Choose'}
+              </span>
+            `;
+            dayWrap.appendChild(item);
+          });
+          body.appendChild(dayWrap);
+        });
+
+      } else if (type === 'categories') {
+        title.innerText = "Filter by Role / Category";
+        body.innerHTML = "";
+
+        mockCategories.forEach(cat => {
+          const isSelected = selectedCategory === cat.name || (selectedCategory === "ALL" && cat.id === "ALL");
+          const item = document.createElement("button");
+          item.onclick = () => {
+            selectedCategory = cat.id === "ALL" ? "ALL" : cat.name;
+            closeBottomSheet();
+            renderAll();
+          };
+          item.className = `w-full p-3 rounded-xl text-left transition flex items-center justify-between border ${
+            isSelected
+              ? "bg-slate-900 text-white border-slate-950 shadow-sm"
+              : "bg-slate-50 hover:bg-amber-50 text-slate-800 border-slate-200"
+          }`;
+          item.innerHTML = `
+            <div class="flex items-center gap-2.5">
+              <span class="text-lg">${cat.icon}</span>
+              <span class="text-xs font-bold">${cat.name}</span>
+            </div>
+            <span class="text-xs ${isSelected ? 'text-amber-400 font-bold' : 'text-slate-400'}">
+              ${isSelected ? '✓ Active' : ''}
+            </span>
+          `;
+          body.appendChild(item);
+        });
+      }
+    }
+
+    function closeBottomSheet() {
+      const backdrop = document.getElementById("bottom-sheet-backdrop");
+      const content = document.getElementById("bottom-sheet-content");
+      backdrop.classList.add("opacity-0");
+      content.classList.add("translate-y-full");
+      setTimeout(() => {
+        backdrop.classList.add("hidden");
+      }, 250);
+    }
+
+    // -------------------------------------------------------------
+    // CONCEPT 3 RENDERING (Category Accordions)
+    // -------------------------------------------------------------
+    function renderConcept3() {
+      // Session Select Dropdown
+      const select = document.getElementById("c3-session-select");
+      select.innerHTML = "";
+      mockSessions.forEach((session, idx) => {
+        const day = mockDays.find(d => d.id === session.dayId);
+        const opt = document.createElement("option");
+        opt.value = session.id;
+        opt.innerText = `${day.label} ${day.displayDate}: ${session.name} (${session.startTime} - ${session.endTime})`;
+        if (session.id === selectedSessionId) opt.selected = true;
+        select.appendChild(opt);
+      });
+
+      const currentSession = mockSessions.find(s => s.id === selectedSessionId) || mockSessions[0];
+      const currentDay = mockDays.find(d => d.id === currentSession.dayId);
+      document.getElementById("c3-session-subtitle").innerText = `${currentDay.name} &bull; ${currentSession.startTime} – ${currentSession.endTime}`;
+
+      // Group shifts for this session by Category
+      const sessionShifts = mockShifts.filter(s => s.sessionId === selectedSessionId);
+      const accordionContainer = document.getElementById("c3-accordions-container");
+      accordionContainer.innerHTML = "";
+
+      // Get categories that exist in this session
+      const categoriesPresent = Array.from(new Set(sessionShifts.map(s => s.category)));
+
+      if (categoriesPresent.length === 0) {
+        accordionContainer.innerHTML = `<p class="text-xs italic text-slate-500 p-4 text-center">No shifts scheduled for this session yet.</p>`;
+        return;
+      }
+
+      categoriesPresent.forEach(catName => {
+        const catInfo = mockCategories.find(c => c.name === catName) || { name: catName, icon: "🏷️" };
+        let shiftsInCat = sessionShifts.filter(s => s.category === catName);
+        if (filterOpenOnly) {
+          shiftsInCat = shiftsInCat.filter(s => s.assigned < s.capacity);
+        }
+
+        if (shiftsInCat.length === 0 && filterOpenOnly) return;
+
+        const isExpanded = expandedAccordionCategories.has(catName);
+        const openCount = shiftsInCat.filter(s => s.assigned < s.capacity).length;
+
+        const card = document.createElement("div");
+        card.className = "bg-white rounded-2xl border border-amber-200/90 shadow-xs overflow-hidden";
+
+        // Accordion Header
+        card.innerHTML = `
+          <button onclick="c3ToggleCategory('${escapeHtml(catName)}')" class="w-full p-3.5 flex items-center justify-between text-left transition hover:bg-amber-50/50 ${isExpanded ? 'bg-amber-50/80 border-b border-amber-200' : ''}">
+            <div class="flex items-center gap-2.5">
+              <span class="text-xl">${catInfo.icon}</span>
+              <div>
+                <h4 class="text-xs font-bold text-slate-900">${escapeHtml(catName)}</h4>
+                <p class="text-[10px] text-slate-500">${shiftsInCat.length} shifts &bull; ${openCount > 0 ? `<span class="text-emerald-700 font-bold">${openCount} open</span>` : '<span class="text-rose-600 font-semibold">All full</span>'}</p>
+              </div>
+            </div>
+            <span class="w-6 h-6 rounded-full bg-slate-100 flex items-center justify-center text-xs font-bold text-slate-600 transform transition ${isExpanded ? 'rotate-180 bg-amber-200 text-amber-900' : ''}">
+              ▾
+            </span>
+          </button>
+          <div class="${isExpanded ? 'p-2.5 space-y-2' : 'hidden'}">
+            <!-- Shifts inserted here -->
+          </div>
+        `;
+
+        if (isExpanded) {
+          const shiftContentDiv = card.querySelector("div:last-child");
+          shiftsInCat.forEach(shift => {
+            const isReg = registeredShiftIds.has(shift.id);
+            const isFull = shift.assigned >= shift.capacity;
+            const spotsLeft = shift.capacity - shift.assigned;
+
+            const shiftRow = document.createElement("div");
+            shiftRow.className = `p-3 rounded-xl border text-xs transition ${
+              isReg ? 'bg-emerald-50 border-emerald-300 ring-2 ring-emerald-200' : 'bg-slate-50/80 border-slate-200'
+            }`;
+            shiftRow.innerHTML = `
+              <div class="flex items-start justify-between gap-2">
+                <div>
+                  <h5 class="font-bold text-slate-800 text-xs">${escapeHtml(shift.title)}</h5>
+                  <p class="text-[11px] text-slate-500 mt-0.5">${shift.startTime} – ${shift.endTime} (${shift.hours} hrs)</p>
+                </div>
+                <div>
+                  ${
+                    isReg
+                      ? `<span class="bg-emerald-600 text-white font-extrabold text-[10px] px-2 py-0.5 rounded-full">✓ BOOKED</span>`
+                      : isFull
+                      ? `<span class="bg-slate-200 text-slate-600 font-bold text-[10px] px-2 py-0.5 rounded-full">FULL</span>`
+                      : `<span class="bg-emerald-100 text-emerald-800 font-bold text-[10px] px-2 py-0.5 rounded-full">🟢 ${spotsLeft} left</span>`
+                  }
+                </div>
+              </div>
+              <p class="text-[11px] text-slate-600 mt-2 bg-white/70 p-2 rounded-lg border border-slate-200/50">${escapeHtml(shift.notes)}</p>
+              <div class="mt-2.5 pt-2 border-t border-slate-200/70 flex items-center justify-between text-[11px]">
+                <span class="text-slate-500">👔 Manager: <strong>${escapeHtml(shift.managerName)}</strong></span>
+                <button onclick="toggleRegister('${shift.id}')" class="px-3 py-1.5 rounded-lg font-bold text-xs transition ${
+                  isReg
+                    ? 'bg-rose-100 text-rose-800 hover:bg-rose-200 border border-rose-300'
+                    : isFull
+                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                    : 'bg-amber-700 hover:bg-amber-800 text-white shadow-xs'
+                }">
+                  ${isReg ? 'Cancel Booking' : (isFull ? 'Shift Full' : 'Book Shift')}
+                </button>
+              </div>
+            `;
+            shiftContentDiv.appendChild(shiftRow);
+          });
+        }
+
+        accordionContainer.appendChild(card);
+      });
+    }
+
+    function c3ToggleCategory(catName) {
+      if (expandedAccordionCategories.has(catName)) {
+        expandedAccordionCategories.delete(catName);
+      } else {
+        expandedAccordionCategories.add(catName);
+      }
+      renderConcept3();
+    }
+
+    function c3ExpandAll() {
+      mockCategories.forEach(c => expandedAccordionCategories.add(c.name));
+      renderConcept3();
+    }
+
+    function c3SelectSession(sessionId) {
+      selectedSessionId = sessionId;
+      const sess = mockSessions.find(s => s.id === sessionId);
+      if (sess) selectedDayId = sess.dayId;
+      renderAll();
+    }
+
+    function c3StepSession(direction) {
+      const idx = mockSessions.findIndex(s => s.id === selectedSessionId);
+      let nextIdx = idx + direction;
+      if (nextIdx < 0) nextIdx = mockSessions.length - 1;
+      if (nextIdx >= mockSessions.length) nextIdx = 0;
+      selectedSessionId = mockSessions[nextIdx].id;
+      selectedDayId = mockSessions[nextIdx].dayId;
+      renderAll();
+    }
+
+    // -------------------------------------------------------------
+    // SHARED SHIFT CARD LIST RENDERER (Concepts 1 & 2)
+    // -------------------------------------------------------------
+    function renderShiftCardsList(containerId) {
+      const container = document.getElementById(containerId);
+      if (!container) return 0;
+      container.innerHTML = "";
+
+      let shifts = mockShifts.filter(s => s.sessionId === selectedSessionId);
+
+      if (selectedCategory !== "ALL") {
+        shifts = shifts.filter(s => s.category === selectedCategory);
+      }
+
+      if (filterOpenOnly) {
+        shifts = shifts.filter(s => s.assigned < s.capacity);
+      }
+
+      if (shifts.length === 0) {
+        container.innerHTML = `
+          <div class="bg-white p-6 rounded-2xl border border-amber-200 text-center space-y-2">
+            <span class="text-3xl">🔍</span>
+            <h4 class="text-xs font-bold text-slate-800">No shifts matching your filter</h4>
+            <p class="text-[11px] text-slate-500">Try switching categories or selecting another session.</p>
+            <button onclick="selectedCategory='ALL'; filterOpenOnly=false; renderAll();" class="text-xs text-amber-800 font-bold underline">
+              Reset Filters
+            </button>
+          </div>
+        `;
+        return 0;
+      }
+
+      shifts.forEach(shift => {
+        const isReg = registeredShiftIds.has(shift.id);
+        const isFull = shift.assigned >= shift.capacity;
+        const spotsLeft = shift.capacity - shift.assigned;
+
+        const card = document.createElement("div");
+        card.className = `bg-white p-4 rounded-2xl shadow-xs border transition flex flex-col justify-between ${
+          isReg ? 'border-emerald-400 ring-2 ring-emerald-200 bg-emerald-50/20' : 'border-amber-200/90'
+        }`;
+
+        card.innerHTML = `
+          <!-- Header: Time Badge + Availability Pill -->
+          <div class="flex items-start justify-between gap-2 mb-2">
+            <div class="flex items-center gap-2">
+              <span class="bg-amber-100 text-amber-950 font-black text-xs px-2.5 py-1 rounded-lg">
+                ${shift.startTime} – ${shift.endTime}
+              </span>
+              <span class="text-[10px] text-slate-500 font-bold">${shift.hours} hrs</span>
+            </div>
+
+            ${
+              isReg
+                ? `<span class="bg-emerald-600 text-white text-[10px] font-extrabold px-2.5 py-0.5 rounded-full shadow-xs">✓ REGISTERED</span>`
+                : isFull
+                ? `<span class="bg-slate-200 text-slate-600 text-[10px] font-bold px-2 py-0.5 rounded-full">FULL</span>`
+                : `<span class="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2.5 py-0.5 rounded-full">🟢 ${spotsLeft} spots left</span>`
+            }
+          </div>
+
+          <!-- Title & Role Info -->
+          <div>
+            <h4 class="text-sm font-extrabold text-slate-900 leading-snug">${escapeHtml(shift.title)}</h4>
+            <div class="flex items-center gap-2 mt-1">
+              <span class="text-[11px] font-semibold text-amber-800 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                ${escapeHtml(shift.category)}
+              </span>
+              <span class="text-[10px] text-slate-400">&bull;</span>
+              <span class="text-[11px] text-slate-500">👔 ${escapeHtml(shift.managerName)}</span>
+            </div>
+            <p class="text-[11px] text-slate-600 mt-2 bg-amber-50/50 p-2 rounded-xl border border-amber-100/80 leading-relaxed">
+              ${escapeHtml(shift.notes)}
+            </p>
+          </div>
+
+          <!-- Bottom Action Row -->
+          <div class="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between gap-2">
+            <div class="text-[11px] text-slate-500">
+              Capacity: <strong>${shift.assigned} / ${shift.capacity}</strong>
+            </div>
+
+            <button onclick="toggleRegister('${shift.id}')" class="px-4 py-2 rounded-xl text-xs font-extrabold transition shadow-xs ${
+              isReg
+                ? 'bg-rose-100 hover:bg-rose-200 text-rose-800 border border-rose-300'
+                : isFull
+                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                : 'bg-amber-700 hover:bg-amber-800 text-white'
+            }">
+              ${isReg ? 'Cancel Shift' : (isFull ? 'Shift Full' : 'Book Shift')}
+            </button>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+
+      return shifts.length;
+    }
+
+    function renderAll() {
+      if (currentConcept === 1) renderConcept1();
+      else if (currentConcept === 2) renderConcept2();
+      else if (currentConcept === 3) renderConcept3();
+    }
+
+    function escapeHtml(str) {
+      if (!str) return "";
+      return String(str)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    // Initialize default view
+    renderConcept1();
+  </script>
+</body>
+</html>

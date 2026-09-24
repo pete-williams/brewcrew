@@ -13,11 +13,17 @@ This document provides a comprehensive technical reference for all backend Cloud
   - [1. `claimShift`](#1-claimshift)
   - [2. `cancelShift`](#2-cancelshift)
   - [3. `createShift`](#3-createshift)
-  - [4. `assignShiftManager`](#4-assignshiftmanager)
-  - [5. `updateUserRole`](#5-updateuserrole)
-  - [6. `sendAdminBroadcast`](#6-sendadminbroadcast)
+  - [4. `updateShift`](#4-updateshift)
+  - [5. `assignShiftManager`](#5-assignshiftmanager)
+  - [6. `updateUserRole`](#6-updateuserrole)
+  - [7. `sendAdminBroadcast`](#7-sendadminbroadcast)
+  - [8. `deleteFestivalSession`](#8-deletefestivalsession)
 - [Firestore Background Triggers](#firestore-background-triggers)
-  - [1. `onRegistrationCreated`](#1-onregistrationcreated)
+  - [1. `onRegistrationCreated` (Retired)](#1-onregistrationcreated-retired)
+- [Firestore Data Models & Schemas](#firestore-data-models--schemas)
+  - [1. `/config/festival`](#1-configfestival)
+  - [2. `/shifts/{shiftId}`](#2-shiftsshiftid)
+  - [3. `/users/{userId}`](#3-usersuserid)
 - [Firestore Security Rules Overview](#firestore-security-rules-overview)
 - [Maintenance & Documentation Maintenance Policy](#maintenance--documentation-maintenance-policy)
 
@@ -47,7 +53,7 @@ All callable functions (except background triggers) require user authentication.
 | :--- | :--- | :--- |
 | `volunteer` | Standard User | Register for open shifts (`claimShift`), cancel own shift with 7-day lockout (`cancelShift`), browse shifts. |
 | `manager` | Elevated Staff | All volunteer actions + self-claim unassigned shift as manager (`assignShiftManager`), relinquish shift manager role, inspect volunteer roster. |
-| `admin` | Festival Administrator | Full system access: create shifts (`createShift`), assign/reassign any manager (`assignShiftManager`), cancel any volunteer's shift bypassing lockout (`cancelShift`), update crew roles (`updateUserRole`), dispatch email announcements (`sendAdminBroadcast`). |
+| `admin` | Festival Administrator | Full system access: create shifts (`createShift`), update shifts (`updateShift`), delete empty sessions (`deleteFestivalSession`), assign/reassign any manager (`assignShiftManager`), cancel any volunteer's shift bypassing lockout (`cancelShift`), update crew roles (`updateUserRole`), dispatch email announcements (`sendAdminBroadcast`). |
 
 ---
 
@@ -59,9 +65,9 @@ All callable Cloud Functions throw `HttpsError` from `firebase-functions/v2/http
 | :--- | :--- | :--- |
 | `unauthenticated` | 401 Unauthorized | Caller is not signed in with a valid Firebase Auth token. |
 | `permission-denied` | 403 Forbidden | Caller does not possess the requisite role (`admin` or `manager`). |
-| `invalid-argument` | 400 Bad Request | Missing or malformed parameters in `request.data`. |
-| `not-found` | 404 Not Found | Referenced entity (shift, user, registration) does not exist. |
-| `failed-precondition`| 412 Precondition Failed | Operation rejected due to state conflict (e.g. shift full, lockout window active, self-lockout). |
+| `invalid-argument` | 400 Bad Request | Missing or malformed parameters in `request.data` (e.g. non-existent `sessionId`). |
+| `not-found` | 404 Not Found | Referenced entity (shift, session, user, registration) does not exist. |
+| `failed-precondition`| 412 Precondition Failed | Operation rejected due to state conflict (e.g. shift full, lockout window active, session has assigned shifts, self-lockout). |
 | `already-exists` | 409 Conflict | Duplicate booking or manager slot already filled. |
 | `internal` | 500 Internal Server Error | Unexpected downstream error (e.g. SMTP transport failure). |
 
@@ -111,11 +117,11 @@ Registers an authenticated volunteer for an open festival shift atomically, ensu
 
 ### 2. `cancelShift`
 
-Cancels a shift registration. Enforces a strict 7-day lockout prior to the shift start time for standard volunteers, while allowing festival administrators to cancel any volunteer's shift at any time.
+Cancels a shift registration. Enforces a 7-day lockout prior to the date of the shift for standard volunteers, while allowing festival administrators to cancel any volunteer's shift at any time.
 
 - **Trigger**: `onCall`
 - **Permissions**:
-  - **Self-cancellation**: Caller can cancel their own shift if `>= 7 days` remain before shift start.
+  - **Self-cancellation**: Caller can cancel their own shift at any point until 7 days before the shift date (e.g. if the shift is on 14-May-2027, cancellation is permitted through 23:59:59 on 7-May-2027).
   - **Admin cancellation**: Users with `role: "admin"` can cancel any volunteer's shift at any time.
 
 #### Request Parameters (`data`)
@@ -138,7 +144,7 @@ Cancels a shift registration. Enforces a strict 7-day lockout prior to the shift
    - If `targetUserId` is specified and `targetUserId !== callerUid` and caller is **not** an admin, throws `permission-denied` (`"Only admins can cancel shifts for other volunteers."`).
 2. Executes within a Firestore transaction:
    - Reads `/shifts/{shiftId}` and `/registrations/{shiftId}_{targetUid}`. Throws `not-found` if either is missing.
-   - **7-Day Lockout Check**: If caller is **not** an admin, checks `(shift.startTime - Date.now()) < 7 days (604,800,000 ms)`. If within 7 days, throws `failed-precondition` (`"Cannot cancel shifts within 7 days of shift start time."`).
+   - **7-Day Before Shift Date Lockout Check**: If caller is **not** an admin, computes the calendar cutoff date as 23:59:59.999 on the 7th calendar day prior to the shift date (`shiftDate.getDate() - 7`). If `Date.now() > cutoffDate.getTime()`, throws `failed-precondition` (`"Cannot cancel shifts within 7 days of shift date."`).
    - Decrements `/shifts/{shiftId}.assignedCount` by `1` (clamped to minimum `0`).
    - Deletes `/registrations/{shiftId}_{targetUid}`.
 
@@ -146,7 +152,7 @@ Cancels a shift registration. Enforces a strict 7-day lockout prior to the shift
 
 ### 3. `createShift`
 
-Creates a new festival shift in the schedule database.
+Creates a new festival shift in the schedule database. Strictly enforces foreign key validation ensuring the referenced `sessionId` exists in `/config/festival`.
 
 - **Trigger**: `onCall`
 - **Permissions**: Administrator only (`role === "admin"`).
@@ -155,7 +161,7 @@ Creates a new festival shift in the schedule database.
 
 | Field | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
-| `dayIndex` | `number` / `string` | **Yes** | Integer between `1` and `7` indicating festival day. |
+| `sessionId` | `string` | **Yes** | ID of an active festival session in `/config/festival` (e.g. `"sess_1"`). Must exist. |
 | `categoryName` | `string` | **Yes** | Area name (e.g. `"Cider Bar"`, `"Cask Bar"`, `"Gate"`, etc.). |
 | `capacity` | `number` / `string` | **Yes** | Positive integer specifying volunteer capacity. |
 | `startTime` | `string` / `number` | **Yes** | ISO-8601 string or timestamp representing shift start. |
@@ -173,7 +179,7 @@ Creates a new festival shift in the schedule database.
 
 #### Business Logic & Validation
 1. Validates caller profile: throws `permission-denied` if `caller.role !== "admin"`.
-2. Validates `dayIndex` (`1 <= dayIndex <= 7`).
+2. Validates `sessionId` is provided and exists in `/config/festival.sessions`. Throws `invalid-argument` if missing or not found.
 3. Validates `categoryName` (non-empty string).
 4. Validates `capacity` (integer `>= 1`).
 5. Validates `endTime > startTime`.
@@ -184,7 +190,7 @@ Creates a new festival shift in the schedule database.
 7. Adds document to `/shifts`:
    ```javascript
    {
-     dayIndex: Number(dayIndex),
+     sessionId: sessionId.trim(),
      categoryName: categoryName.trim(),
      capacity: Number(capacity),
      assignedCount: 0,
@@ -200,7 +206,45 @@ Creates a new festival shift in the schedule database.
 
 ---
 
-### 4. `assignShiftManager`
+### 4. `updateShift`
+
+Updates an existing festival shift's details (times, area category, session assignment, capacity).
+
+- **Trigger**: `onCall`
+- **Permissions**: Administrator only (`role === "admin"`).
+
+#### Request Parameters (`data`)
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `shiftId` | `string` | **Yes** | Firestore document ID of the shift in `/shifts`. |
+| `categoryName` | `string` | No | Updated area / bar category name. |
+| `capacity` | `number` / `string` | No | New volunteer capacity (must be `>=` number of currently assigned volunteers). |
+| `startTime` | `string` / `number` | No | Updated shift start datetime ISO string. |
+| `endTime` | `string` / `number` | No | Updated shift end datetime ISO string (must be after `startTime`). |
+| `sessionId` | `string` | No | Updated festival session template ID. Must exist in `/config/festival.sessions`. |
+
+#### Response (`result`)
+
+```json
+{
+  "success": true,
+  "shiftId": "shiftDocId"
+}
+```
+
+#### Business Logic & Safeguards
+1. Validates caller is authenticated and has `role === "admin"`.
+2. Verifies `/shifts/{shiftId}` exists. Throws `not-found` if missing.
+3. If `categoryName` is supplied, validates that it is a non-empty string.
+4. If `sessionId` is supplied, validates that it exists in `/config/festival.sessions`. Throws `invalid-argument` if not found.
+5. If `capacity` is modified, validates that `capacity >= 1` and `capacity >= shift.assignedCount`. Throws `failed-precondition` if capacity would be reduced below confirmed bookings.
+6. If timestamps are modified, validates `endTime > startTime`.
+7. Updates `/shifts/{shiftId}` with modified fields, `updatedAt: serverTimestamp()`, and `updatedBy: callerUid`.
+
+---
+
+### 5. `assignShiftManager`
 
 Assigns or unassigns a designated Shift Manager for a specific shift. Strictly enforces a **1 manager per shift** rule.
 
@@ -251,7 +295,7 @@ Assigns or unassigns a designated Shift Manager for a specific shift. Strictly e
 
 ---
 
-### 5. `updateUserRole`
+### 6. `updateUserRole`
 
 Promotes or demotes crew members across `volunteer`, `manager`, and `admin` roles.
 
@@ -284,9 +328,9 @@ Promotes or demotes crew members across `volunteer`, `manager`, and `admin` role
 
 ---
 
-### 6. `sendAdminBroadcast`
+### 7. `sendAdminBroadcast`
 
-Dispatches mass announcement emails to all registered volunteers and crew members via Nodemailer.
+Dispatches mass announcement emails to volunteers or crew members via Nodemailer. Accessible directly from the **Admin Panel** or via backend callable API.
 
 - **Trigger**: `onCall`
 - **Permissions**: Administrator only (`role === "admin"`).
@@ -296,7 +340,8 @@ Dispatches mass announcement emails to all registered volunteers and crew member
 | Field | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
 | `subject` | `string` | **Yes** | Email subject line. |
-| `body` | `string` | **Yes** | HTML or text content of the announcement. |
+| `body` | `string` | **Yes** | HTML or text content of the announcement (paragraphs and line breaks formatted automatically). |
+| `targetRole` | `string` | No | Target recipient filter: `"volunteer"` (all volunteers), `"manager"`, or `"all"` (all crew members). Defaults to all users if omitted. |
 
 #### Response (`result`)
 
@@ -309,33 +354,53 @@ Dispatches mass announcement emails to all registered volunteers and crew member
 
 #### Business Logic
 1. Verifies caller role is `admin`.
-2. Queries all documents in `/users`. Extracts distinct non-empty email addresses.
-3. Retrieves `/config/festival` document to obtain dynamic `festivalName` (defaults to `"BrewCrew Volunteer Platform"`).
+2. Queries documents in `/users`, applying `role == targetRole` filter when `targetRole && targetRole !== "all"`. Extracts distinct non-empty email addresses.
+3. Retrieves `/config/festival` document to obtain dynamic `festivalName` (defaults to `"BrewCrew Updates"`).
 4. Uses Nodemailer with Gmail SMTP credentials (`GMAIL_EMAIL`, `GMAIL_PASS` from `functions/.env`), with sender formatted as `"${festivalName} <${gmailEmail}>"`.
 5. Sends emails concurrently via `Promise.all` and returns the dispatched count.
 
 ---
 
+### 8. `deleteFestivalSession`
+
+Safely removes a festival session from `/config/festival`. Strictly prevents deletion if any shifts are currently assigned to the session.
+
+- **Trigger**: `onCall`
+- **Permissions**: Administrator only (`role === "admin"`).
+
+#### Request Parameters (`data`)
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `sessionId` | `string` | **Yes** | ID of the session to delete (e.g. `"sess_1"`). |
+
+#### Response (`result`)
+
+```json
+{
+  "success": true,
+  "sessionId": "sess_1"
+}
+```
+
+#### Business Logic & Safeguards
+1. Validates caller is authenticated and has `role === "admin"`. Throws `permission-denied` if not.
+2. Validates `sessionId` is provided. Throws `invalid-argument` if missing.
+3. Queries `/shifts` where `sessionId == sessionId`:
+   - If any shifts are found, throws `failed-precondition` (`"Cannot delete session because X shift(s) are currently assigned to it. Please reassign or delete the associated shifts first."`).
+4. Reads `/config/festival`. Throws `not-found` if the session does not exist in `config.sessions`.
+5. Ensures at least one session remains in configuration: throws `failed-precondition` if `sessions.length <= 1`.
+6. Removes the session from `sessions` array, updates `/config/festival` with `updatedAt: serverTimestamp()` and `updatedBy: callerUid`.
+
+---
+
 ## Firestore Background Triggers
 
-### 1. `onRegistrationCreated`
+### 1. `onRegistrationCreated` (Retired)
 
-Event-driven Cloud Function triggered whenever a volunteer registration is confirmed.
-
-- **Trigger**: `onDocumentCreated("registrations/{registrationId}")`
-- **Region**: `europe-west2`
-- **Behavior**:
-  1. Triggered automatically on document creation in `/registrations`.
-  2. Retrieves corresponding `/users/{regData.userId}` and `/shifts/{regData.shiftId}` documents.
-  3. Queries the `/config/festival` document to retrieve dynamic branding:
-     - `festivalName` (default: `"BrewCrew Volunteer Portal"`)
-     - `festivalWebsite` (default: `""`)
-     - `festivalLogoUrl` (default: `""`)
-     - `volunteerManager`: `{ name, email, phone }`
-  4. Formats festival day, start time, end time, and shift duration.
-  5. Injects dynamic branding, festival logo, portal link, and volunteer manager contact details into a personalized HTML confirmation email.
-  6. Dispatches transactional email to `user.email` via Nodemailer.
-  7. Catches and logs errors without obstructing database operations.
+> [!NOTE]
+> **Status: Retired / Disabled**
+> The automatic transactional email confirmation upon shift registration has been retired as shift registration confirmation emails are no longer required. The Nodemailer email transport infrastructure and administrative broadcast capability ([`sendAdminBroadcast`](#7-sendadminbroadcast)) remain active for volunteer announcements from the Admin Panel.
 
 ---
 
@@ -351,11 +416,31 @@ Global festival settings document storing brand identity, manager contacts, and 
 | `festivalWebsite` | `string` | Official website URL of the festival. |
 | `festivalLogoUrl` | `string` | Public URL to festival logo image, displayed in navbars and emails. |
 | `volunteerManager` | `map` | Coordinator contact info: `{ name: string, email: string, phone: string }`. |
-| `days` | `array` | List of configured session objects: `[{ dayIndex: number, date: string, name: string, description: string }]`. Supports multiple sessions per calendar day. |
+| `sessions` | `array` | List of configured session objects: `[{ id: string, name: string, date: string, startTime: string, endTime: string, description: string }]`. |
 | `updatedAt` | `timestamp` | Server timestamp when settings were last modified. |
 | `updatedBy` | `string` | UID of administrator who committed the update. |
 
-### 2. `/users/{userId}`
+### 2. `/shifts/{shiftId}`
+
+Festival shift documents defining individual working slots.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `sessionId` | `string` \| `null` | Associated festival session template ID (e.g. `"sess_1"`). |
+| `categoryName` | `string` | Bar or working area name (e.g. `"Cider Bar"`, `"Gate"`). |
+| `capacity` | `number` | Total volunteer slots available. |
+| `assignedCount` | `number` | Currently confirmed volunteer bookings. |
+| `startTime` | `timestamp` | Start date and time of the shift. |
+| `endTime` | `timestamp` | End date and time of the shift. |
+| `managerId` | `string` \| `null` | UID of assigned Shift Manager. |
+| `managerName` | `string` \| `null` | Display name of assigned Shift Manager. |
+| `managerEmail` | `string` \| `null` | Email of assigned Shift Manager. |
+| `createdAt` | `timestamp` | Server timestamp when shift was created. |
+| `createdBy` | `string` | UID of administrator who created the shift. |
+| `updatedAt` | `timestamp` | Server timestamp when shift was last edited. |
+| `updatedBy` | `string` | UID of administrator who last edited the shift. |
+
+### 3. `/users/{userId}`
 
 User profile document created upon initial registration or OAuth sign-in.
 

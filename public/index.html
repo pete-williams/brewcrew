@@ -298,7 +298,7 @@
           <div class="flex flex-wrap justify-between items-center gap-2 mb-4">
             <div>
               <h2 class="text-lg font-bold text-slate-800">My Registered Shifts</h2>
-              <p class="text-xs text-slate-500">Manage your festival shifts. Cancellations are locked within 7 days of shift start time.</p>
+              <p class="text-xs text-slate-500">Manage your festival shifts. Cancellations are permitted until 7 days before the shift date.</p>
             </div>
             <button onclick="switchView('schedule')" class="text-xs bg-amber-100 hover:bg-amber-200 text-amber-900 font-semibold px-3 py-1.5 rounded-lg transition">
               + Browse Available Shifts
@@ -408,8 +408,8 @@
           <div class="pt-3 border-t border-slate-100 space-y-3">
             <div class="flex items-center justify-between">
               <div>
-                <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider">Festival Days &amp; Sessions</h4>
-                <p class="text-[11px] text-slate-500">Days and sessions shifts can be scheduled on. Multiple sessions per calendar day are supported.</p>
+                <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider">Festival Sessions &amp; Schedule</h4>
+                <p class="text-[11px] text-slate-500">Configure sessions by date, start time, and end time. Admins can edit existing sessions directly or add new ones.</p>
               </div>
             </div>
 
@@ -418,11 +418,12 @@
               <table class="w-full text-left text-xs">
                 <thead class="bg-slate-50 text-slate-700 font-bold border-b border-slate-200">
                   <tr>
-                    <th class="p-2.5 w-16">Day #</th>
-                    <th class="p-2.5 w-32">Date</th>
-                    <th class="p-2.5 w-48">Session / Day Name</th>
+                    <th class="p-2.5 w-44">Session Name</th>
+                    <th class="p-2.5 w-28">Date</th>
+                    <th class="p-2.5 w-32">Times</th>
                     <th class="p-2.5">Description</th>
-                    <th class="p-2.5 text-right w-20">Action</th>
+                    <th class="p-2.5 w-32">Shifts</th>
+                    <th class="p-2.5 text-right w-28">Actions</th>
                   </tr>
                 </thead>
                 <tbody id="admin-sessions-table-body" class="divide-y divide-slate-100">
@@ -433,25 +434,33 @@
 
             <!-- Add Session Row Form -->
             <div class="bg-amber-50/50 p-3 rounded-lg border border-amber-200">
-              <p class="text-xs font-bold text-amber-900 mb-2">+ Add Festival Day or Session</p>
-              <div class="grid grid-cols-1 sm:grid-cols-4 gap-2.5 items-end">
+              <p class="text-xs font-bold text-amber-900 mb-2">+ Add Festival Session</p>
+              <div class="grid grid-cols-1 sm:grid-cols-5 gap-2.5 items-end">
                 <div>
-                  <label class="block text-[11px] font-medium text-slate-600 mb-1" for="admin-new-session-date">Session Date</label>
+                  <label class="block text-[11px] font-medium text-slate-600 mb-1" for="admin-new-session-name">Session Name</label>
+                  <input type="text" id="admin-new-session-name" placeholder="e.g. Afternoon Tasting" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                </div>
+                <div>
+                  <label class="block text-[11px] font-medium text-slate-600 mb-1" for="admin-new-session-date">Date</label>
                   <input type="date" id="admin-new-session-date" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
                 </div>
                 <div>
-                  <label class="block text-[11px] font-medium text-slate-600 mb-1" for="admin-new-session-name">Session Name</label>
-                  <input type="text" id="admin-new-session-name" placeholder="e.g. Saturday Morning" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                  <label class="block text-[11px] font-medium text-slate-600 mb-1" for="admin-new-session-start">Start Time</label>
+                  <input type="time" id="admin-new-session-start" value="12:00" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
                 </div>
                 <div>
-                  <label class="block text-[11px] font-medium text-slate-600 mb-1" for="admin-new-session-desc">Description</label>
-                  <input type="text" id="admin-new-session-desc" placeholder="e.g. Equipment prep / tasting" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                  <label class="block text-[11px] font-medium text-slate-600 mb-1" for="admin-new-session-end">End Time</label>
+                  <input type="time" id="admin-new-session-end" value="17:00" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
                 </div>
                 <div>
                   <button type="button" onclick="handleAddFestivalSession()" class="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition shadow-xs">
                     + Add Session
                   </button>
                 </div>
+              </div>
+              <div class="mt-2">
+                <label class="block text-[11px] font-medium text-slate-600 mb-1" for="admin-new-session-desc">Session Description (Optional)</label>
+                <input type="text" id="admin-new-session-desc" placeholder="e.g. Opening ceremony, brewery tasting, and trade session" class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
               </div>
             </div>
           </div>
@@ -493,6 +502,58 @@
             </table>
           </div>
         </div>
+
+        <!-- Admin Communication: Send Email to Volunteers -->
+        <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200 space-y-4">
+          <div class="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
+                <span>✉️</span> Email Volunteers
+              </h3>
+              <p class="text-xs text-slate-500">Dispatch an email announcement or update directly to festival volunteers from the Admin Panel.</p>
+            </div>
+            <span class="text-xs font-semibold px-2.5 py-1 bg-amber-100 text-amber-900 rounded-full flex items-center gap-1">
+              <span>👥</span> <span id="admin-broadcast-recipient-preview">Target: All Volunteers</span>
+            </span>
+          </div>
+
+          <div id="admin-broadcast-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+          <form id="admin-broadcast-form" onsubmit="handleSendAdminBroadcast(event)" class="space-y-4">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div class="sm:col-span-2">
+                <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-broadcast-subject">
+                  Email Subject <span class="text-rose-500">*</span>
+                </label>
+                <input type="text" id="admin-broadcast-subject" required placeholder="e.g. Festival Shift Briefing &amp; Arrival Instructions" class="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+              <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-broadcast-target">
+                  Recipients
+                </label>
+                <select id="admin-broadcast-target" onchange="updateBroadcastTargetLabel(this.value)" class="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+                  <option value="volunteer">All Volunteers</option>
+                  <option value="all">All Crew (Volunteers, Managers &amp; Admins)</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-broadcast-body">
+                Message Body <span class="text-rose-500">*</span>
+              </label>
+              <textarea id="admin-broadcast-body" required rows="5" placeholder="Write your message to volunteers here. Line breaks are converted into paragraphs automatically." class="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500"></textarea>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <p class="text-xs text-slate-500 italic">Dispatched via festival email via backend Cloud Functions.</p>
+              <button type="submit" id="btn-submit-broadcast" class="bg-amber-700 hover:bg-amber-800 text-white text-xs sm:text-sm font-bold px-5 py-2.5 rounded-xl transition shadow-sm flex items-center gap-2">
+                <span id="btn-broadcast-icon">📨</span>
+                <span id="btn-broadcast-text">Send Email to Volunteers</span>
+              </button>
+            </div>
+          </form>
+        </div>
       </div>
 
     </main>
@@ -509,17 +570,13 @@
 
         <form id="create-shift-form" onsubmit="handleCreateShiftSubmit(event)" class="space-y-4">
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <!-- Day Index -->
+            <!-- Session Template -->
             <div>
-              <label class="block text-xs font-bold text-slate-700 mb-1">Festival Day</label>
-              <select id="new-shift-day" class="w-full text-sm p-2.5 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
-                <option value="1">Day 1</option>
-                <option value="2">Day 2</option>
-                <option value="3">Day 3</option>
-                <option value="4">Day 4</option>
-                <option value="5">Day 5</option>
-                <option value="6">Day 6</option>
-                <option value="7">Day 7</option>
+              <label class="block text-xs font-bold text-slate-700 mb-1">
+                Festival Session <span class="text-slate-400 font-normal">(Template)</span>
+              </label>
+              <select id="new-shift-session-select" onchange="handleShiftSessionSelect(this.value)" class="w-full text-sm p-2.5 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+                <option value="">-- Custom Dates &amp; Times --</option>
               </select>
             </div>
 
@@ -568,6 +625,69 @@
             </button>
             <button type="submit" id="btn-submit-create-shift" class="px-4 py-2 rounded-lg text-sm font-bold text-white bg-amber-700 hover:bg-amber-600 transition shadow-sm">
               Create Shift
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal: Edit Shift Modal (Admin Only) -->
+    <div id="edit-shift-modal" class="hidden fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+      <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4 my-8 max-h-[90vh] overflow-y-auto border border-amber-200">
+        <div class="flex justify-between items-center border-b border-slate-100 pb-3">
+          <h3 class="font-bold text-lg text-slate-900 flex items-center gap-2">
+            <span>✏️</span> Edit Shift Details
+          </h3>
+          <button onclick="closeEditShiftModal()" class="text-slate-400 hover:text-slate-600 text-xl font-bold p-1">&times;</button>
+        </div>
+
+        <form id="edit-shift-form" onsubmit="handleUpdateShiftSubmit(event)" class="space-y-4">
+          <input type="hidden" id="edit-shift-id" />
+
+          <!-- Session Template -->
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">
+              Festival Session <span class="text-slate-400 font-normal">(Template)</span>
+            </label>
+            <select id="edit-shift-session-select" class="w-full text-sm p-2.5 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+              <!-- Dynamic Sessions -->
+            </select>
+          </div>
+
+          <!-- Category Area -->
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Area / Bar Category</label>
+            <select id="edit-shift-category" onchange="handleEditCategorySelectChange(this.value)" class="w-full text-sm p-2.5 rounded-lg border border-slate-300 bg-white focus:ring-2 focus:ring-amber-500 focus:outline-none">
+              <!-- Dynamic Categories -->
+            </select>
+            <input type="text" id="edit-shift-custom-category" placeholder="Enter custom area name..." class="hidden mt-2 w-full text-sm p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none" />
+          </div>
+
+          <!-- Date & Times (Directly controls start, end, and duration) -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">Start Date &amp; Time</label>
+              <input type="datetime-local" id="edit-shift-start" required class="w-full text-sm p-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none" />
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1">End Date &amp; Time</label>
+              <input type="datetime-local" id="edit-shift-end" required class="w-full text-sm p-2 rounded-lg border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none" />
+            </div>
+          </div>
+
+          <!-- Capacity -->
+          <div>
+            <label class="block text-xs font-bold text-slate-700 mb-1">Volunteer Capacity</label>
+            <input type="number" id="edit-shift-capacity" min="1" max="100" required class="w-full text-sm p-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-amber-500 focus:outline-none" />
+            <p class="text-[11px] text-slate-400 mt-1">Cannot be set lower than the number of volunteers already confirmed for this shift.</p>
+          </div>
+
+          <div class="flex justify-end space-x-2 pt-3 border-t border-slate-100">
+            <button type="button" onclick="closeEditShiftModal()" class="px-4 py-2 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100 transition">
+              Cancel
+            </button>
+            <button type="submit" id="btn-submit-edit-shift" class="px-4 py-2 rounded-lg text-sm font-bold text-white bg-amber-700 hover:bg-amber-600 transition shadow-sm">
+              Save Changes
             </button>
           </div>
         </form>
@@ -679,6 +799,6 @@
 
   <!-- Project Configuration (Ignored by Git, loaded from firebase-config.js) -->
   <script src="firebase-config.js"></script>
-  <script src="app.js?v=2.4.0"></script>
+  <script src="app.js?v=2.6.0"></script>
 </body>
 </html>

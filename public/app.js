@@ -24,7 +24,7 @@ let currentUserProfile = null;
 let currentUserRole = "volunteer";
 let userProfileUnsubscribe = null;
 
-let selectedDay = 1;
+let selectedSessionId = "sess_1";
 let selectedCategory = "ALL";
 let currentView = "schedule";
 
@@ -38,20 +38,55 @@ const defaultFestivalConfig = {
     email: "volunteer@festival.org",
     phone: ""
   },
-  days: [
-    { dayIndex: 1, date: "2027-02-01", name: "Prep Day", description: "Equipment setup and venue preparation" },
-    { dayIndex: 2, date: "2027-02-02", name: "Opening Session", description: "Festival opening and tasting" },
-    { dayIndex: 3, date: "2027-02-03", name: "Main Session", description: "Main festival session" },
-    { dayIndex: 4, date: "2027-02-04", name: "Evening Session", description: "Evening festival session" },
-    { dayIndex: 5, date: "2027-02-05", name: "Weekend Kickoff", description: "Weekend festival kickoff" },
-    { dayIndex: 6, date: "2027-02-06", name: "Grand Tasting", description: "Grand tasting day" },
-    { dayIndex: 7, date: "2027-02-07", name: "Takedown & Wrap", description: "Closing session and takedown" }
+  sessions: [
+    {
+      id: "sess_1",
+      name: "Opening Session",
+      date: "2027-05-14",
+      startTime: "12:00",
+      endTime: "17:00",
+      description: "Afternoon opening session & tasting"
+    },
+    {
+      id: "sess_2",
+      name: "Evening Session",
+      date: "2027-05-14",
+      startTime: "17:30",
+      endTime: "22:30",
+      description: "Evening session & entertainment"
+    },
+    {
+      id: "sess_3",
+      name: "Saturday Tasting",
+      date: "2027-05-15",
+      startTime: "12:00",
+      endTime: "17:00",
+      description: "Main tasting session"
+    },
+    {
+      id: "sess_4",
+      name: "Saturday Night",
+      date: "2027-05-15",
+      startTime: "17:30",
+      endTime: "23:00",
+      description: "Saturday evening session"
+    },
+    {
+      id: "sess_5",
+      name: "Sunday Session & Takedown",
+      date: "2027-05-16",
+      startTime: "12:00",
+      endTime: "18:00",
+      description: "Final session and equipment wrap"
+    }
   ]
 };
 
 let currentFestivalConfig = { ...defaultFestivalConfig };
 let festivalConfigUnsubscribe = null;
 let adminEditingSessions = [];
+let adminInlineEditingSessionId = null;
+const adminExpandedSessionIds = new Set();
 
 // Categories State (Default fallback + dynamic Firestore)
 const defaultCategories = ["Cider Bar", "Cask Bar", "Keg Bar", "Token and Merch", "Gate"];
@@ -101,6 +136,11 @@ function updateAdminExports(isAdmin) {
     "closeCreateShiftModal",
     "handleCategorySelectChange",
     "handleCreateShiftSubmit",
+    "handleShiftSessionSelect",
+    "openEditShiftModal",
+    "closeEditShiftModal",
+    "handleEditCategorySelectChange",
+    "handleUpdateShiftSubmit",
     "openAssignManagerModal",
     "closeAssignManagerModal",
     "handleSaveManagerAssignment",
@@ -113,7 +153,13 @@ function updateAdminExports(isAdmin) {
     "handleSaveFestivalConfig",
     "handleAddFestivalSession",
     "handleRemoveFestivalSession",
+    "startEditFestivalSession",
+    "saveEditFestivalSession",
+    "cancelEditFestivalSession",
     "previewFestivalLogo",
+    "handleSendAdminBroadcast",
+    "updateBroadcastTargetLabel",
+    "toggleSessionShiftsAccordion",
   ];
 
   if (isAdmin) {
@@ -121,6 +167,11 @@ function updateAdminExports(isAdmin) {
     window.closeCreateShiftModal = closeCreateShiftModal;
     window.handleCategorySelectChange = handleCategorySelectChange;
     window.handleCreateShiftSubmit = handleCreateShiftSubmit;
+    window.handleShiftSessionSelect = handleShiftSessionSelect;
+    window.openEditShiftModal = openEditShiftModal;
+    window.closeEditShiftModal = closeEditShiftModal;
+    window.handleEditCategorySelectChange = handleEditCategorySelectChange;
+    window.handleUpdateShiftSubmit = handleUpdateShiftSubmit;
     window.openAssignManagerModal = openAssignManagerModal;
     window.closeAssignManagerModal = closeAssignManagerModal;
     window.handleSaveManagerAssignment = handleSaveManagerAssignment;
@@ -133,7 +184,13 @@ function updateAdminExports(isAdmin) {
     window.handleSaveFestivalConfig = handleSaveFestivalConfig;
     window.handleAddFestivalSession = handleAddFestivalSession;
     window.handleRemoveFestivalSession = handleRemoveFestivalSession;
+    window.startEditFestivalSession = startEditFestivalSession;
+    window.saveEditFestivalSession = saveEditFestivalSession;
+    window.cancelEditFestivalSession = cancelEditFestivalSession;
     window.previewFestivalLogo = previewFestivalLogo;
+    window.handleSendAdminBroadcast = handleSendAdminBroadcast;
+    window.updateBroadcastTargetLabel = updateBroadcastTargetLabel;
+    window.toggleSessionShiftsAccordion = toggleSessionShiftsAccordion;
   } else {
     adminFunctionNames.forEach(fnName => {
       delete window[fnName];
@@ -889,6 +946,10 @@ function subscribeToFestivalConfig() {
   festivalConfigUnsubscribe = db.collection("config").doc("festival").onSnapshot(doc => {
     if (doc.exists) {
       const data = doc.data();
+      const rawSessions = (data.sessions && Array.isArray(data.sessions) && data.sessions.length > 0)
+        ? data.sessions
+        : defaultFestivalConfig.sessions;
+
       currentFestivalConfig = {
         festivalName: data.festivalName || defaultFestivalConfig.festivalName,
         festivalWebsite: data.festivalWebsite || "",
@@ -898,12 +959,13 @@ function subscribeToFestivalConfig() {
           email: data.volunteerManager?.email || "",
           phone: data.volunteerManager?.phone || ""
         },
-        days: (data.days && Array.isArray(data.days) && data.days.length > 0)
-          ? data.days
-          : defaultFestivalConfig.days
+        sessions: sortSessionsChronologically(rawSessions)
       };
     } else {
-      currentFestivalConfig = { ...defaultFestivalConfig };
+      currentFestivalConfig = {
+        ...defaultFestivalConfig,
+        sessions: sortSessionsChronologically(defaultFestivalConfig.sessions)
+      };
     }
 
     applyFestivalBranding();
@@ -913,7 +975,10 @@ function subscribeToFestivalConfig() {
     }
   }, err => {
     console.warn("Festival config listener error (using fallback defaults):", err);
-    currentFestivalConfig = { ...defaultFestivalConfig };
+    currentFestivalConfig = {
+      ...defaultFestivalConfig,
+      sessions: sortSessionsChronologically(defaultFestivalConfig.sessions)
+    };
     applyFestivalBranding();
     renderDayTabs();
   });
@@ -1058,17 +1123,17 @@ function renderDayTabs() {
   const container = document.getElementById("day-tabs");
   if (!container) return;
 
-  const daysList = currentFestivalConfig.days || defaultFestivalConfig.days;
+  const sessionsList = sortSessionsChronologically(currentFestivalConfig.sessions || defaultFestivalConfig.sessions);
 
-  // Validate selectedDay
-  const dayExists = daysList.some(d => d.dayIndex === selectedDay);
-  if (!dayExists && daysList.length > 0) {
-    selectedDay = daysList[0].dayIndex;
+  // Validate selectedSessionId
+  const sessionExists = sessionsList.some(s => s.id === selectedSessionId);
+  if (!sessionExists && sessionsList.length > 0) {
+    selectedSessionId = sessionsList[0].id;
   }
 
   container.innerHTML = "";
-  daysList.forEach(session => {
-    const isSelected = selectedDay === session.dayIndex;
+  sessionsList.forEach(session => {
+    const isSelected = selectedSessionId === session.id;
     const btn = document.createElement("button");
     btn.className = `px-3.5 py-2 rounded-t-lg text-xs font-bold whitespace-nowrap transition flex flex-col items-start ${
       isSelected
@@ -1076,14 +1141,18 @@ function renderDayTabs() {
         : "bg-white text-amber-900 border border-amber-200 hover:bg-amber-100"
     }`;
 
+    const formattedDate = session.date ? formatDate(session.date) : "";
+    const timeRange = session.startTime && session.endTime ? `${session.startTime} – ${session.endTime}` : "";
+    const subText = [formattedDate, timeRange].filter(Boolean).join(" • ");
+
     btn.innerHTML = `
-      <span class="font-bold">${escapeHtml(session.name || `Day ${session.dayIndex}`)}</span>
-      ${session.date ? `<span class="text-[10px] ${isSelected ? 'text-amber-200' : 'text-slate-400'} font-normal">${escapeHtml(session.date)}</span>` : ''}
+      <span class="font-bold">${escapeHtml(session.name || "Session")}</span>
+      ${subText ? `<span class="text-[10px] ${isSelected ? 'text-amber-200' : 'text-slate-400'} font-normal">${escapeHtml(subText)}</span>` : ''}
     `;
     btn.onclick = () => {
-      selectedDay = session.dayIndex;
+      selectedSessionId = session.id;
       renderDayTabs();
-      subscribeToShifts();
+      renderShifts(currentShiftsDocs);
     };
     container.appendChild(btn);
   });
@@ -1097,11 +1166,10 @@ function subscribeToShifts() {
 
   const grid = document.getElementById("shifts-grid");
   if (grid) {
-    grid.innerHTML = "<p class='text-slate-500 italic col-span-full'>Loading shifts for Day " + selectedDay + "...</p>";
+    grid.innerHTML = "<p class='text-slate-500 italic col-span-full'>Loading festival shifts...</p>";
   }
 
   shiftsUnsubscribe = db.collection("shifts")
-    .where("dayIndex", "==", selectedDay)
     .onSnapshot(snapshot => {
       currentShiftsDocs = snapshot.docs;
       renderShifts(currentShiftsDocs);
@@ -1118,18 +1186,46 @@ function renderShifts(docs) {
   const grid = document.getElementById("shifts-grid");
   if (!grid) return;
 
+  const currentSession = (currentFestivalConfig.sessions || defaultFestivalConfig.sessions).find(s => s.id === selectedSessionId);
+  const sessionName = currentSession ? currentSession.name : "this session";
+
   if (!docs || docs.length === 0) {
-    grid.innerHTML = "<p class='text-slate-500 italic col-span-full'>No shifts scheduled for Day " + selectedDay + ".</p>";
+    grid.innerHTML = `<p class='text-slate-500 italic col-span-full'>No shifts scheduled for ${escapeHtml(sessionName)}.</p>`;
     return;
   }
 
-  const filteredDocs = docs.filter(doc => {
+  // Filter shifts for the selected session
+  const sessionShifts = docs.filter(doc => {
+    const shift = doc.data();
+    if (shift.sessionId) {
+      return shift.sessionId === selectedSessionId;
+    }
+    // Fallback: match by session date if available
+    if (currentSession && currentSession.date && shift.startTime) {
+      const shiftDateStr = formatForDateTimeLocal(new Date(getShiftStartTimeMs(shift.startTime))).split("T")[0];
+      return shiftDateStr === currentSession.date;
+    }
+    return false;
+  });
+
+  const filteredDocs = sessionShifts.filter(doc => {
     const shift = doc.data();
     return selectedCategory === "ALL" || shift.categoryName === selectedCategory;
   });
 
+  // Sort shifts chronologically ascending by startTime, then endTime, then category
+  filteredDocs.sort((a, b) => {
+    const startA = getShiftStartTimeMs(a.data().startTime);
+    const startB = getShiftStartTimeMs(b.data().startTime);
+    if (startA !== startB) return startA - startB;
+    const endA = getShiftStartTimeMs(a.data().endTime);
+    const endB = getShiftStartTimeMs(b.data().endTime);
+    if (endA !== endB) return endA - endB;
+    return (a.data().categoryName || "").localeCompare(b.data().categoryName || "");
+  });
+
   if (filteredDocs.length === 0) {
-    grid.innerHTML = `<p class='text-slate-500 italic col-span-full'>No shifts found under "${selectedCategory}" for Day ${selectedDay}.</p>`;
+    grid.innerHTML = `<p class='text-slate-500 italic col-span-full'>No shifts found for ${escapeHtml(sessionName)}${selectedCategory !== 'ALL' ? ` under "${escapeHtml(selectedCategory)}"` : ''}.</p>`;
     return;
   }
 
@@ -1143,11 +1239,22 @@ function renderShifts(docs) {
 
     const startTime = formatTime(shift.startTime);
     const endTime = formatTime(shift.endTime);
+    const shiftDate = formatDate(shift.startTime);
 
     const card = document.createElement("div");
     card.className = `bg-white p-5 rounded-xl shadow-sm border transition flex flex-col justify-between ${
       isRegistered ? 'border-emerald-400 ring-2 ring-emerald-200' : 'border-amber-200'
     }`;
+
+    // Admin Edit Button
+    let adminEditBtnHtml = "";
+    if (currentUserRole === "admin") {
+      adminEditBtnHtml = `
+        <button onclick="openEditShiftModal('${doc.id}')" class="text-xs font-semibold px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition shadow-xs flex items-center gap-1">
+          ✏️ Edit Shift
+        </button>
+      `;
+    }
 
     // Manager Section & Actions
     const hasManager = Boolean(shift.managerId);
@@ -1163,14 +1270,12 @@ function renderShifts(docs) {
 
     let managerActionHtml = "";
     if (currentUserRole === "admin") {
-      // Requirement E: Admins can assign manager users to shifts
       managerActionHtml = `
         <button onclick="openAssignManagerModal('${doc.id}')" class="text-[11px] font-semibold text-amber-800 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 border border-amber-300 px-2.5 py-1 rounded-md transition shadow-xs flex items-center gap-1">
           ⚙️ ${hasManager ? 'Change Manager' : 'Assign Manager'}
         </button>
       `;
     } else if (currentUserRole === "manager") {
-      // Requirement D: Managers can assign themselves (only one manager can be assigned per shift)
       if (!hasManager) {
         managerActionHtml = `
           <button onclick="managerClaimShift('${doc.id}')" class="text-[11px] font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-300 px-2.5 py-1 rounded-md transition shadow-xs flex items-center gap-1">
@@ -1263,6 +1368,8 @@ function renderShifts(docs) {
           </span>
         </div>
         <h3 class="font-bold text-lg text-slate-800">${startTime} &ndash; ${endTime}</h3>
+        ${shiftDate ? `<p class="text-xs text-slate-500 mb-1">${shiftDate}</p>` : ''}
+        ${adminEditBtnHtml ? `<div class="my-2">${adminEditBtnHtml}</div>` : ''}
         ${managerSectionHtml}
         ${rosterSectionHtml}
       </div>
@@ -1366,10 +1473,15 @@ async function updateIncentiveAndMyShifts() {
     }
   });
 
-  // Sort shifts chronologically by dayIndex, then startTime
+  // Sort shifts chronologically by startTime, then endTime, then category
   userShifts.sort((a, b) => {
-    if (a.dayIndex !== b.dayIndex) return (a.dayIndex || 0) - (b.dayIndex || 0);
-    return getShiftStartTimeMs(a.startTime) - getShiftStartTimeMs(b.startTime);
+    const startA = getShiftStartTimeMs(a.startTime);
+    const startB = getShiftStartTimeMs(b.startTime);
+    if (startA !== startB) return startA - startB;
+    const endA = getShiftStartTimeMs(a.endTime);
+    const endB = getShiftStartTimeMs(b.endTime);
+    if (endA !== endB) return endA - endB;
+    return (a.categoryName || "").localeCompare(b.categoryName || "");
   });
 
   // Update Progress Bar
@@ -1397,7 +1509,6 @@ async function updateIncentiveAndMyShifts() {
       card.innerHTML = `
         <div>
           <div class="flex items-center gap-2 mb-1">
-            <span class="bg-amber-800 text-white text-xs font-bold px-2 py-0.5 rounded">Day ${shift.dayIndex || 1}</span>
             <span class="bg-amber-100 text-amber-900 text-xs font-semibold px-2 py-0.5 rounded">${escapeHtml(shift.categoryName || 'Bar Area')}</span>
             <span class="text-xs text-slate-500 font-medium">${shift.durationHours} hrs</span>
           </div>
@@ -1410,7 +1521,7 @@ async function updateIncentiveAndMyShifts() {
         </div>
         <div class="flex sm:flex-col items-end gap-1.5">
           ${isLocked ? `
-            <span class="inline-flex items-center text-xs font-semibold px-3 py-1.5 rounded bg-slate-200 text-slate-600 cursor-not-allowed" title="Shifts cannot be cancelled within 7 days of start time">
+            <span class="inline-flex items-center text-xs font-semibold px-3 py-1.5 rounded bg-slate-200 text-slate-600 cursor-not-allowed" title="Shifts cannot be cancelled within 7 days of shift date">
               🔒 Locked (&lt; 7 Days)
             </span>
           ` : `
@@ -1434,7 +1545,6 @@ async function claimShift(shiftId) {
   try {
     const claimFn = functions.httpsCallable("claimShift");
     await claimFn({ shiftId: shiftId });
-    alert("Successfully registered for shift!");
   } catch (err) {
     alert("Registration failed: " + err.message);
   }
@@ -1464,13 +1574,12 @@ async function cancelShift(shiftId) {
 // ============================================================================
 function openCreateShiftModal() {
   if (currentUserRole !== "admin") {
-    console.error("Permission denied: Only administrators can create shifts.");
     alert("Permission denied: Only administrators can create shifts.");
     return;
   }
 
   const modal = document.getElementById("create-shift-modal");
-  const daySelect = document.getElementById("new-shift-day");
+  const sessionSelect = document.getElementById("new-shift-session-select");
   const catSelect = document.getElementById("new-shift-category");
   const customCatInput = document.getElementById("new-shift-custom-category");
   const capInput = document.getElementById("new-shift-capacity");
@@ -1478,33 +1587,24 @@ function openCreateShiftModal() {
   const endInput = document.getElementById("new-shift-end");
   const mgrSelect = document.getElementById("new-shift-manager");
 
-  // Populate Festival Days & Sessions dynamically
-  const daysList = currentFestivalConfig.days || defaultFestivalConfig.days;
-  if (daySelect) {
-    daySelect.innerHTML = daysList.map(session => `
-      <option value="${session.dayIndex}" data-date="${session.date || ''}">
-        Day ${session.dayIndex}: ${escapeHtml(session.name || `Day ${session.dayIndex}`)}${session.date ? ` (${session.date})` : ''}
-      </option>
-    `).join("");
-    daySelect.value = selectedDay;
-
-    daySelect.onchange = () => {
-      const opt = daySelect.options[daySelect.selectedIndex];
-      const dateStr = opt?.getAttribute("data-date");
-      if (dateStr) {
-        const s = new Date(dateStr + "T12:00:00");
-        const e = new Date(dateStr + "T16:00:00");
-        if (!isNaN(s.getTime())) startInput.value = formatForDateTimeLocal(s);
-        if (!isNaN(e.getTime())) endInput.value = formatForDateTimeLocal(e);
-      }
-    };
+  const sessionsList = sortSessionsChronologically(currentFestivalConfig.sessions || defaultFestivalConfig.sessions);
+  if (sessionSelect) {
+    sessionSelect.innerHTML = `
+      <option value="">-- Custom Dates &amp; Times --</option>
+      ${sessionsList.map(s => `
+        <option value="${s.id}">
+          ${escapeHtml(s.name)}${s.date ? ` (${formatDate(s.date)}${s.startTime && s.endTime ? ` • ${s.startTime} – ${s.endTime}` : ''})` : ''}
+        </option>
+      `).join("")}
+    `;
+    sessionSelect.value = selectedSessionId || (sessionsList[0]?.id || "");
+    handleShiftSessionSelect(sessionSelect.value);
   }
 
   capInput.value = "4";
   customCatInput.value = "";
   customCatInput.classList.add("hidden");
 
-  // Populate Categories
   catSelect.innerHTML = availableCategories.map(cat => `
     <option value="${escapeHtml(cat)}">${escapeHtml(cat)}</option>
   `).join("") + `<option value="__custom__">➕ Other / Custom Area...</option>`;
@@ -1512,34 +1612,29 @@ function openCreateShiftModal() {
   populateManagerDropdowns();
   mgrSelect.value = "";
 
-  // Set default datetime: try inheriting from session date or existing shift
-  let baseDate = new Date();
-  const currentSession = daysList.find(s => s.dayIndex === selectedDay);
-  if (currentSession && currentSession.date) {
-    const parsedDate = new Date(currentSession.date + "T12:00:00");
-    if (!isNaN(parsedDate.getTime())) baseDate = parsedDate;
-  } else {
-    const dayShifts = currentShiftsDocs.filter(d => (d.data().dayIndex || 1) === selectedDay);
-    if (dayShifts.length > 0 && dayShifts[0].data().startTime) {
-      const sampleMs = getShiftStartTimeMs(dayShifts[0].data().startTime);
-      if (sampleMs) baseDate = new Date(sampleMs);
-    }
-  }
-
-  const startDate = new Date(baseDate);
-  startDate.setHours(12, 0, 0, 0);
-  const endDate = new Date(baseDate);
-  endDate.setHours(16, 0, 0, 0);
-
-  startInput.value = formatForDateTimeLocal(startDate);
-  endInput.value = formatForDateTimeLocal(endDate);
-
   modal.classList.remove("hidden");
 }
 
 function closeCreateShiftModal() {
   const modal = document.getElementById("create-shift-modal");
   if (modal) modal.classList.add("hidden");
+}
+
+function handleShiftSessionSelect(sessionId) {
+  const startInput = document.getElementById("new-shift-start");
+  const endInput = document.getElementById("new-shift-end");
+  if (!startInput || !endInput) return;
+
+  if (!sessionId) return;
+
+  const sessionsList = currentFestivalConfig.sessions || defaultFestivalConfig.sessions;
+  const session = sessionsList.find(s => s.id === sessionId);
+  if (session && session.date) {
+    const sTime = session.startTime || "12:00";
+    const eTime = session.endTime || "17:00";
+    startInput.value = `${session.date}T${sTime}`;
+    endInput.value = `${session.date}T${eTime}`;
+  }
 }
 
 function handleCategorySelectChange(val) {
@@ -1555,20 +1650,19 @@ function handleCategorySelectChange(val) {
 async function handleCreateShiftSubmit(event) {
   event.preventDefault();
   if (currentUserRole !== "admin") {
-    console.error("Permission denied: Only administrators can create shifts.");
     alert("Permission denied: Only administrators can create shifts.");
     return;
   }
 
-  const dayIndex = parseInt(document.getElementById("new-shift-day").value, 10);
-  let categoryName = document.getElementById("new-shift-category").value;
+  const sessionId = document.getElementById("new-shift-session-select")?.value || null;
+  let categoryName = document.getElementById("new-shift-category")?.value;
   if (categoryName === "__custom__") {
-    categoryName = document.getElementById("new-shift-custom-category").value.trim();
+    categoryName = document.getElementById("new-shift-custom-category")?.value.trim();
   }
-  const capacity = parseInt(document.getElementById("new-shift-capacity").value, 10);
-  const startVal = document.getElementById("new-shift-start").value;
-  const endVal = document.getElementById("new-shift-end").value;
-  const managerUserId = document.getElementById("new-shift-manager").value || null;
+  const capacity = parseInt(document.getElementById("new-shift-capacity")?.value, 10);
+  const startVal = document.getElementById("new-shift-start")?.value;
+  const endVal = document.getElementById("new-shift-end")?.value;
+  const managerUserId = document.getElementById("new-shift-manager")?.value || null;
   const submitBtn = document.getElementById("btn-submit-create-shift");
 
   if (!categoryName) {
@@ -1600,7 +1694,7 @@ async function handleCreateShiftSubmit(event) {
   try {
     const createShiftFn = functions.httpsCallable("createShift");
     await createShiftFn({
-      dayIndex: dayIndex,
+      sessionId: sessionId,
       categoryName: categoryName,
       capacity: capacity,
       startTime: startDate.toISOString(),
@@ -1610,17 +1704,163 @@ async function handleCreateShiftSubmit(event) {
 
     closeCreateShiftModal();
     alert("Shift created successfully!");
-
-    if (selectedDay !== dayIndex) {
-      selectedDay = dayIndex;
-      renderDayTabs();
-      subscribeToShifts();
-    }
   } catch (err) {
     alert("Failed to create shift: " + err.message);
   } finally {
     submitBtn.disabled = false;
     submitBtn.innerText = "Create Shift";
+  }
+}
+
+// ============================================================================
+// REQUIREMENT: Edit Existing Shifts (Admin)
+// ============================================================================
+function openEditShiftModal(shiftId) {
+  if (currentUserRole !== "admin") {
+    alert("Permission denied: Only administrators can edit shifts.");
+    return;
+  }
+
+  const doc = currentShiftsDocs.find(d => d.id === shiftId);
+  if (!doc) {
+    alert("Shift not found.");
+    return;
+  }
+  const shift = doc.data();
+
+  const modal = document.getElementById("edit-shift-modal");
+  const idInput = document.getElementById("edit-shift-id");
+  const sessionSelect = document.getElementById("edit-shift-session-select");
+  const catSelect = document.getElementById("edit-shift-category");
+  const customCatInput = document.getElementById("edit-shift-custom-category");
+  const capInput = document.getElementById("edit-shift-capacity");
+  const startInput = document.getElementById("edit-shift-start");
+  const endInput = document.getElementById("edit-shift-end");
+
+  idInput.value = shiftId;
+  capInput.value = shift.capacity || 4;
+
+  const sessionsList = sortSessionsChronologically(currentFestivalConfig.sessions || defaultFestivalConfig.sessions);
+  if (sessionSelect) {
+    sessionSelect.innerHTML = sessionsList.map(s => `
+      <option value="${s.id}" ${shift.sessionId === s.id ? 'selected' : ''}>
+        ${escapeHtml(s.name)}${s.date ? ` (${formatDate(s.date)}${s.startTime && s.endTime ? ` • ${s.startTime} – ${s.endTime}` : ''})` : ''}
+      </option>
+    `).join("");
+    if (shift.sessionId) {
+      sessionSelect.value = shift.sessionId;
+    } else if (sessionsList.length > 0) {
+      sessionSelect.value = sessionsList[0].id;
+    }
+  }
+
+  const isCustomCategory = !availableCategories.includes(shift.categoryName);
+  catSelect.innerHTML = availableCategories.map(cat => `
+    <option value="${escapeHtml(cat)}" ${shift.categoryName === cat ? 'selected' : ''}>${escapeHtml(cat)}</option>
+  `).join("") + `<option value="__custom__" ${isCustomCategory ? 'selected' : ''}>➕ Other / Custom Area...</option>`;
+
+  if (isCustomCategory) {
+    customCatInput.value = shift.categoryName || "";
+    customCatInput.classList.remove("hidden");
+  } else {
+    customCatInput.value = "";
+    customCatInput.classList.add("hidden");
+  }
+
+  if (shift.startTime) {
+    const s = new Date(getShiftStartTimeMs(shift.startTime));
+    startInput.value = formatForDateTimeLocal(s);
+  }
+  if (shift.endTime) {
+    const e = new Date(getShiftStartTimeMs(shift.endTime));
+    endInput.value = formatForDateTimeLocal(e);
+  }
+
+  modal.classList.remove("hidden");
+}
+
+function closeEditShiftModal() {
+  const modal = document.getElementById("edit-shift-modal");
+  if (modal) modal.classList.add("hidden");
+}
+
+function handleEditCategorySelectChange(val) {
+  const customInput = document.getElementById("edit-shift-custom-category");
+  if (val === "__custom__") {
+    customInput.classList.remove("hidden");
+    customInput.focus();
+  } else {
+    customInput.classList.add("hidden");
+  }
+}
+
+async function handleUpdateShiftSubmit(event) {
+  event.preventDefault();
+  if (currentUserRole !== "admin") {
+    alert("Permission denied: Only administrators can update shifts.");
+    return;
+  }
+
+  const shiftId = document.getElementById("edit-shift-id")?.value;
+  const sessionId = document.getElementById("edit-shift-session-select")?.value || null;
+  let categoryName = document.getElementById("edit-shift-category")?.value;
+  if (categoryName === "__custom__") {
+    categoryName = document.getElementById("edit-shift-custom-category")?.value.trim();
+  }
+  const capacity = parseInt(document.getElementById("edit-shift-capacity")?.value, 10);
+  const startVal = document.getElementById("edit-shift-start")?.value;
+  const endVal = document.getElementById("edit-shift-end")?.value;
+  const submitBtn = document.getElementById("btn-submit-edit-shift");
+
+  if (!shiftId) {
+    alert("Missing shift ID.");
+    return;
+  }
+
+  if (!categoryName) {
+    alert("Please provide a bar/area category name.");
+    return;
+  }
+
+  if (!startVal || !endVal) {
+    alert("Please specify start and end dates and times.");
+    return;
+  }
+
+  const startDate = new Date(startVal);
+  const endDate = new Date(endVal);
+
+  if (endDate <= startDate) {
+    alert("Shift end time must be after the start time.");
+    return;
+  }
+
+  if (isNaN(capacity) || capacity < 1) {
+    alert("Capacity must be at least 1 volunteer.");
+    return;
+  }
+
+  submitBtn.disabled = true;
+  submitBtn.innerText = "Saving Changes...";
+
+  try {
+    const updateShiftFn = functions.httpsCallable("updateShift");
+    await updateShiftFn({
+      shiftId: shiftId,
+      categoryName: categoryName,
+      capacity: capacity,
+      startTime: startDate.toISOString(),
+      endTime: endDate.toISOString(),
+      sessionId: sessionId,
+    });
+
+    closeEditShiftModal();
+    alert("Shift updated successfully!");
+  } catch (err) {
+    alert("Failed to update shift: " + err.message);
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.innerText = "Save Changes";
   }
 }
 
@@ -1650,7 +1890,8 @@ async function openShiftRosterModal(shiftId) {
       const shift = shiftDoc.data();
       const sTime = formatTime(shift.startTime);
       const eTime = formatTime(shift.endTime);
-      shiftInfo = `Day ${shift.dayIndex} &bull; ${escapeHtml(shift.categoryName)} (${sTime} &ndash; ${eTime})`;
+      const sDate = formatDate(shift.startTime);
+      shiftInfo = `${sDate ? `${sDate} &bull; ` : ''}${escapeHtml(shift.categoryName)} (${sTime} &ndash; ${eTime})`;
     }
   } catch (e) {
     console.error("Error loading shift for roster:", e);
@@ -1941,8 +2182,17 @@ function renderAdminFestivalConfig() {
   if (mgrEmailInput) mgrEmailInput.value = mgr.email || "";
   if (mgrPhoneInput) mgrPhoneInput.value = mgr.phone || "";
 
-  // Clone days for admin session builder
-  adminEditingSessions = JSON.parse(JSON.stringify(currentFestivalConfig.days || defaultFestivalConfig.days));
+  adminEditingSessions = sortSessionsChronologically(currentFestivalConfig.sessions || defaultFestivalConfig.sessions);
+  adminInlineEditingSessionId = null;
+  renderAdminSessionsTable();
+}
+
+function toggleSessionShiftsAccordion(sessionId) {
+  if (adminExpandedSessionIds.has(sessionId)) {
+    adminExpandedSessionIds.delete(sessionId);
+  } else {
+    adminExpandedSessionIds.add(sessionId);
+  }
   renderAdminSessionsTable();
 }
 
@@ -1951,74 +2201,295 @@ function renderAdminSessionsTable() {
   if (!tbody) return;
 
   if (!adminEditingSessions || adminEditingSessions.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-500 italic">No festival days/sessions configured. Add at least one day or session below.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-slate-500 italic">No festival sessions configured. Add at least one session below.</td></tr>`;
     return;
   }
 
   tbody.innerHTML = "";
-  adminEditingSessions.forEach((session, index) => {
+  adminEditingSessions.forEach(session => {
+    const isEditing = adminInlineEditingSessionId === session.id;
+    const isExpanded = adminExpandedSessionIds.has(session.id);
+
+    // Find all shifts assigned to this session
+    const sessionShifts = (currentShiftsDocs || []).filter(doc => {
+      const shift = doc.data();
+      if (shift.sessionId) {
+        return shift.sessionId === session.id;
+      }
+      if (session.date && shift.startTime) {
+        const shiftDateStr = formatForDateTimeLocal(new Date(getShiftStartTimeMs(shift.startTime))).split("T")[0];
+        return shiftDateStr === session.date;
+      }
+      return false;
+    });
+
+    // Sort session shifts chronologically ascending
+    sessionShifts.sort((a, b) => {
+      const startA = getShiftStartTimeMs(a.data().startTime);
+      const startB = getShiftStartTimeMs(b.data().startTime);
+      if (startA !== startB) return startA - startB;
+      const endA = getShiftStartTimeMs(a.data().endTime);
+      const endB = getShiftStartTimeMs(b.data().endTime);
+      if (endA !== endB) return endA - endB;
+      return (a.data().categoryName || "").localeCompare(b.data().categoryName || "");
+    });
+
+    const shiftCount = sessionShifts.length;
+
     const tr = document.createElement("tr");
     tr.className = "hover:bg-slate-50 transition";
-    tr.innerHTML = `
-      <td class="p-2.5 font-bold text-amber-950">#${session.dayIndex}</td>
-      <td class="p-2.5 font-mono text-[11px] text-slate-600">${escapeHtml(session.date || "Any")}</td>
-      <td class="p-2.5 font-semibold text-slate-800">${escapeHtml(session.name || "")}</td>
-      <td class="p-2.5 text-slate-500 text-[11px]">${escapeHtml(session.description || "")}</td>
-      <td class="p-2.5 text-right">
-        <button type="button" onclick="handleRemoveFestivalSession(${index})" class="text-rose-600 hover:text-rose-800 font-bold text-xs p-1" title="Remove this session">
-          ✕ Remove
-        </button>
-      </td>
-    `;
-    tbody.appendChild(tr);
+
+    if (isEditing) {
+      tr.innerHTML = `
+        <td class="p-2">
+          <input type="text" id="inline-session-name-${session.id}" value="${escapeHtml(session.name || '')}" class="w-full text-xs p-1 rounded border border-slate-300 focus:ring-1 focus:ring-amber-500 focus:outline-none" />
+        </td>
+        <td class="p-2">
+          <input type="date" id="inline-session-date-${session.id}" value="${escapeHtml(session.date || '')}" class="w-full text-xs p-1 rounded border border-slate-300 focus:ring-1 focus:ring-amber-500 focus:outline-none" />
+        </td>
+        <td class="p-2">
+          <div class="flex items-center gap-1">
+            <input type="time" id="inline-session-start-${session.id}" value="${escapeHtml(session.startTime || '12:00')}" class="w-20 text-xs p-1 rounded border border-slate-300 focus:ring-1 focus:ring-amber-500 focus:outline-none" />
+            <span class="text-slate-400">&ndash;</span>
+            <input type="time" id="inline-session-end-${session.id}" value="${escapeHtml(session.endTime || '17:00')}" class="w-20 text-xs p-1 rounded border border-slate-300 focus:ring-1 focus:ring-amber-500 focus:outline-none" />
+          </div>
+        </td>
+        <td class="p-2">
+          <input type="text" id="inline-session-desc-${session.id}" value="${escapeHtml(session.description || '')}" placeholder="Description" class="w-full text-xs p-1 rounded border border-slate-300 focus:ring-1 focus:ring-amber-500 focus:outline-none" />
+        </td>
+        <td class="p-2">
+          <span class="text-slate-500 font-mono text-[11px]">${shiftCount} shift${shiftCount === 1 ? '' : 's'}</span>
+        </td>
+        <td class="p-2 text-right whitespace-nowrap">
+          <button type="button" onclick="saveEditFestivalSession('${session.id}')" class="text-emerald-700 hover:text-emerald-900 font-bold text-xs mr-2" title="Save changes">
+            ✓ Save
+          </button>
+          <button type="button" onclick="cancelEditFestivalSession()" class="text-slate-500 hover:text-slate-700 text-xs" title="Cancel editing">
+            Cancel
+          </button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    } else {
+      const timesStr = session.startTime && session.endTime ? `${session.startTime} – ${session.endTime}` : (session.startTime || "—");
+
+      let shiftsBadgeHtml = "";
+      if (shiftCount === 0) {
+        shiftsBadgeHtml = `<span class="text-slate-400 font-mono text-[11px]">0 shifts</span>`;
+      } else {
+        shiftsBadgeHtml = `
+          <button type="button" onclick="toggleSessionShiftsAccordion('${session.id}')" class="inline-flex items-center gap-1.5 font-semibold text-[11px] px-2.5 py-1 rounded-md transition shadow-2xs ${
+            isExpanded ? 'bg-amber-800 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900'
+          }" title="${isExpanded ? 'Hide shifts' : 'Show shifts'}">
+            <span>${shiftCount} shift${shiftCount === 1 ? '' : 's'}</span>
+            <span class="text-[9px]">${isExpanded ? '▲' : '▼'}</span>
+          </button>
+        `;
+      }
+
+      tr.innerHTML = `
+        <td class="p-2.5 font-bold text-amber-950">${escapeHtml(session.name || "Unnamed Session")}</td>
+        <td class="p-2.5 font-mono text-[11px] text-slate-600">${escapeHtml(session.date || "—")}</td>
+        <td class="p-2.5 font-semibold text-slate-800">${escapeHtml(timesStr)}</td>
+        <td class="p-2.5 text-slate-500 text-[11px]">${escapeHtml(session.description || "—")}</td>
+        <td class="p-2.5">${shiftsBadgeHtml}</td>
+        <td class="p-2.5 text-right whitespace-nowrap">
+          <button type="button" onclick="startEditFestivalSession('${session.id}')" class="text-amber-800 hover:text-amber-950 font-bold text-xs p-1 mr-2" title="Edit this session">
+            ✏️ Edit
+          </button>
+          <button type="button" onclick="handleRemoveFestivalSession('${session.id}')" class="text-rose-600 hover:text-rose-800 font-bold text-xs p-1" title="Remove this session">
+            ✕ Remove
+          </button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+
+      // Accordion dropdown of shifts if expanded
+      if (isExpanded && shiftCount > 0) {
+        const accordionTr = document.createElement("tr");
+        accordionTr.className = "bg-amber-50/50 border-b border-amber-200/70";
+        accordionTr.innerHTML = `
+          <td colspan="6" class="p-3">
+            <div class="pl-2 border-l-2 border-amber-600 space-y-2">
+              <div class="flex items-center justify-between">
+                <span class="text-[11px] font-bold text-amber-950 uppercase tracking-wide">
+                  Shifts in "${escapeHtml(session.name)}" (${shiftCount}):
+                </span>
+                <span class="text-[10px] text-slate-500 italic">Sorted chronologically ascending</span>
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                ${sessionShifts.map(doc => {
+                  const shift = doc.data();
+                  const assigned = shift.assignedCount || 0;
+                  const cap = shift.capacity || 0;
+                  const isFull = assigned >= cap;
+                  const sTime = formatTime(shift.startTime);
+                  const eTime = formatTime(shift.endTime);
+                  const sDate = formatDate(shift.startTime);
+                  return `
+                    <div class="bg-white p-2.5 rounded-lg border border-amber-200/80 shadow-2xs flex flex-col justify-between">
+                      <div>
+                        <div class="flex items-center justify-between gap-1 mb-1">
+                          <span class="font-bold text-xs text-slate-800 truncate">${escapeHtml(shift.categoryName || 'Shift')}</span>
+                          <span class="text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${isFull ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'}">
+                            ${assigned} / ${cap} ${cap === 1 ? 'Vol' : 'Vols'}
+                          </span>
+                        </div>
+                        <div class="text-[11px] font-medium text-slate-700">
+                          🕒 ${sTime} &ndash; ${eTime}
+                        </div>
+                        ${sDate ? `<div class="text-[10px] text-slate-500 mt-0.5">📅 ${sDate}</div>` : ''}
+                      </div>
+                      ${shift.managerName ? `<div class="text-[10px] text-slate-400 mt-1.5 pt-1 border-t border-slate-100">👔 Manager: ${escapeHtml(shift.managerName)}</div>` : ''}
+                    </div>
+                  `;
+                }).join("")}
+              </div>
+            </div>
+          </td>
+        `;
+        tbody.appendChild(accordionTr);
+      }
+    }
   });
 }
 
-function handleAddFestivalSession() {
+async function persistAdminSessionsToFirestore() {
+  if (currentUserRole !== "admin") return;
+  try {
+    adminEditingSessions = sortSessionsChronologically(adminEditingSessions);
+    await db.collection("config").doc("festival").set({
+      sessions: adminEditingSessions,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy: currentUser.uid
+    }, { merge: true });
+
+    currentFestivalConfig.sessions = JSON.parse(JSON.stringify(adminEditingSessions));
+    renderDayTabs();
+  } catch (err) {
+    console.error("Failed to save sessions to Firestore:", err);
+    alert("Failed to save session update to Firestore: " + err.message);
+  }
+}
+
+function startEditFestivalSession(sessionId) {
+  if (currentUserRole !== "admin") return;
+  adminInlineEditingSessionId = sessionId;
+  renderAdminSessionsTable();
+}
+
+async function saveEditFestivalSession(sessionId) {
   if (currentUserRole !== "admin") return;
 
-  const dateInput = document.getElementById("admin-new-session-date");
-  const nameInput = document.getElementById("admin-new-session-name");
-  const descInput = document.getElementById("admin-new-session-desc");
+  const session = adminEditingSessions.find(s => s.id === sessionId);
+  if (!session) return;
 
-  const date = dateInput?.value?.trim() || "";
-  const name = nameInput?.value?.trim() || "";
-  const desc = descInput?.value?.trim() || "";
+  const name = document.getElementById(`inline-session-name-${sessionId}`)?.value?.trim() || "";
+  const date = document.getElementById(`inline-session-date-${sessionId}`)?.value?.trim() || "";
+  const startTime = document.getElementById(`inline-session-start-${sessionId}`)?.value?.trim() || "12:00";
+  const endTime = document.getElementById(`inline-session-end-${sessionId}`)?.value?.trim() || "17:00";
+  const desc = document.getElementById(`inline-session-desc-${sessionId}`)?.value?.trim() || "";
 
   if (!name) {
-    alert("Please provide a name for the festival day or session (e.g. 'Saturday Afternoon').");
+    alert("Session name cannot be empty.");
     return;
   }
 
-  // Calculate next dayIndex
-  const maxDayIndex = adminEditingSessions.reduce((max, s) => Math.max(max, s.dayIndex || 0), 0);
-  const nextDayIndex = maxDayIndex + 1;
+  session.name = name;
+  session.date = date;
+  session.startTime = startTime;
+  session.endTime = endTime;
+  session.description = desc;
+
+  adminEditingSessions = sortSessionsChronologically(adminEditingSessions);
+  adminInlineEditingSessionId = null;
+  renderAdminSessionsTable();
+  await persistAdminSessionsToFirestore();
+}
+
+function cancelEditFestivalSession() {
+  adminInlineEditingSessionId = null;
+  renderAdminSessionsTable();
+}
+
+async function handleAddFestivalSession() {
+  if (currentUserRole !== "admin") return;
+
+  const nameInput = document.getElementById("admin-new-session-name");
+  const dateInput = document.getElementById("admin-new-session-date");
+  const startInput = document.getElementById("admin-new-session-start");
+  const endInput = document.getElementById("admin-new-session-end");
+  const descInput = document.getElementById("admin-new-session-desc");
+
+  const name = nameInput?.value?.trim() || "";
+  const date = dateInput?.value?.trim() || "";
+  const startTime = startInput?.value?.trim() || "12:00";
+  const endTime = endInput?.value?.trim() || "17:00";
+  const desc = descInput?.value?.trim() || "";
+
+  if (!name) {
+    alert("Please provide a name for the festival session (e.g. 'Opening Session').");
+    return;
+  }
+
+  const newId = "sess_" + Date.now();
 
   adminEditingSessions.push({
-    dayIndex: nextDayIndex,
-    date: date,
+    id: newId,
     name: name,
+    date: date,
+    startTime: startTime,
+    endTime: endTime,
     description: desc
   });
+  adminEditingSessions = sortSessionsChronologically(adminEditingSessions);
 
   if (nameInput) nameInput.value = "";
   if (descInput) descInput.value = "";
 
   renderAdminSessionsTable();
+  await persistAdminSessionsToFirestore();
 }
 
-function handleRemoveFestivalSession(index) {
+async function handleRemoveFestivalSession(sessionId) {
   if (currentUserRole !== "admin") return;
+
   if (adminEditingSessions.length <= 1) {
-    alert("The festival must have at least one day or session configured.");
+    alert("The festival must have at least one session configured.");
     return;
   }
-  adminEditingSessions.splice(index, 1);
-  // Re-number dayIndex sequentially
-  adminEditingSessions.forEach((s, idx) => {
-    s.dayIndex = idx + 1;
-  });
-  renderAdminSessionsTable();
+
+  // Pre-check for assigned shifts
+  const assignedShifts = (currentShiftsDocs || []).filter(doc => doc.data().sessionId === sessionId);
+  if (assignedShifts.length > 0) {
+    const session = adminEditingSessions.find(s => s.id === sessionId);
+    const sName = session ? session.name : "this session";
+    alert(`Cannot remove "${sName}":\n\nThere are currently ${assignedShifts.length} shift(s) assigned to this session. Please reassign or delete all associated shifts before removing this session.`);
+    return;
+  }
+
+  if (!confirm("Are you sure you want to remove this session?")) {
+    return;
+  }
+
+  try {
+    const deleteSessionFn = functions.httpsCallable("deleteFestivalSession");
+    await deleteSessionFn({ sessionId: sessionId });
+
+    adminExpandedSessionIds.delete(sessionId);
+    if (adminInlineEditingSessionId === sessionId) {
+      adminInlineEditingSessionId = null;
+    }
+    const index = adminEditingSessions.findIndex(s => s.id === sessionId);
+    if (index !== -1) {
+      adminEditingSessions.splice(index, 1);
+    }
+    renderAdminSessionsTable();
+    alert("Session successfully removed.");
+  } catch (err) {
+    console.error("Failed to delete session:", err);
+    alert("Failed to remove session: " + err.message);
+  }
 }
 
 async function handleSaveFestivalConfig() {
@@ -2042,7 +2513,7 @@ async function handleSaveFestivalConfig() {
   }
 
   if (adminEditingSessions.length === 0) {
-    alert("Please configure at least one festival day or session.");
+    alert("Please configure at least one festival session.");
     return;
   }
 
@@ -2050,6 +2521,8 @@ async function handleSaveFestivalConfig() {
     saveBtn.disabled = true;
     saveBtn.innerText = "Saving...";
   }
+
+  adminEditingSessions = sortSessionsChronologically(adminEditingSessions);
 
   try {
     const configData = {
@@ -2061,7 +2534,7 @@ async function handleSaveFestivalConfig() {
         email: mgrEmail,
         phone: mgrPhone
       },
-      days: adminEditingSessions,
+      sessions: adminEditingSessions,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       updatedBy: currentUser.uid
     };
@@ -2086,6 +2559,84 @@ async function handleSaveFestivalConfig() {
       saveBtn.disabled = false;
       saveBtn.innerHTML = "<span>💾</span> Save Festival Configuration";
     }
+  }
+}
+
+// ============================================================================
+// REQUIREMENT: Admin Broadcast Email to Volunteers
+// ============================================================================
+function updateBroadcastTargetLabel(target) {
+  const preview = document.getElementById("admin-broadcast-recipient-preview");
+  const btnText = document.getElementById("btn-broadcast-text");
+  if (target === "all") {
+    if (preview) preview.textContent = "Target: All Crew";
+    if (btnText) btnText.textContent = "Send Email to All Crew";
+  } else {
+    if (preview) preview.textContent = "Target: All Volunteers";
+    if (btnText) btnText.textContent = "Send Email to Volunteers";
+  }
+}
+
+function showBroadcastAlert(msg, isSuccess) {
+  const el = document.getElementById("admin-broadcast-alert");
+  if (!el) return;
+  el.className = isSuccess
+    ? "p-3 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-300"
+    : "p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-800 border border-rose-300";
+  el.textContent = msg;
+  el.classList.remove("hidden");
+  if (isSuccess) {
+    setTimeout(() => el.classList.add("hidden"), 6000);
+  }
+}
+
+async function handleSendAdminBroadcast(event) {
+  event.preventDefault();
+  if (currentUserRole !== "admin") {
+    alert("Permission denied: Only administrators can dispatch broadcast emails.");
+    return;
+  }
+
+  const subjectInput = document.getElementById("admin-broadcast-subject");
+  const bodyInput = document.getElementById("admin-broadcast-body");
+  const targetSelect = document.getElementById("admin-broadcast-target");
+  const btn = document.getElementById("btn-submit-broadcast");
+  const btnText = document.getElementById("btn-broadcast-text");
+
+  const subject = subjectInput ? subjectInput.value.trim() : "";
+  const body = bodyInput ? bodyInput.value.trim() : "";
+  const targetRole = targetSelect ? targetSelect.value : "volunteer";
+
+  if (!subject) {
+    showBroadcastAlert("Please enter an email subject.", false);
+    return;
+  }
+  if (!body) {
+    showBroadcastAlert("Please enter a message body.", false);
+    return;
+  }
+
+  const targetLabel = targetRole === "all" ? "all festival crew members" : "all festival volunteers";
+  if (!confirm(`Are you sure you want to dispatch this email to ${targetLabel}?`)) {
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+  if (btnText) btnText.textContent = "Dispatching emails...";
+
+  try {
+    const broadcastFn = functions.httpsCallable("sendAdminBroadcast");
+    const result = await broadcastFn({ subject, body, targetRole });
+    const count = result.data?.count || 0;
+    showBroadcastAlert(`Successfully dispatched email to ${count} recipient${count === 1 ? "" : "s"}.`, true);
+    if (subjectInput) subjectInput.value = "";
+    if (bodyInput) bodyInput.value = "";
+  } catch (err) {
+    console.error("Broadcast failure:", err);
+    showBroadcastAlert("Failed to send email: " + err.message, false);
+  } finally {
+    if (btn) btn.disabled = false;
+    updateBroadcastTargetLabel(targetSelect ? targetSelect.value : "volunteer");
   }
 }
 
@@ -2153,7 +2704,9 @@ async function openAssignManagerModal(shiftId) {
     const shiftDoc = await db.collection("shifts").doc(shiftId).get();
     if (shiftDoc.exists) {
       const shift = shiftDoc.data();
-      shiftInfoEl.innerText = `Day ${shift.dayIndex} • ${shift.categoryName}`;
+      const session = (currentFestivalConfig.sessions || defaultFestivalConfig.sessions).find(s => s.id === shift.sessionId);
+      const sessionPrefix = session ? `${session.name} • ` : (shift.dayIndex ? `Day ${shift.dayIndex} • ` : "");
+      shiftInfoEl.innerText = `${sessionPrefix}${shift.categoryName || "Shift"}`;
       timeInfoEl.innerText = `${formatTime(shift.startTime)} – ${formatTime(shift.endTime)} (${formatDate(shift.startTime)})`;
       curMgrEl.innerText = `Current Manager: ${shift.managerName || "None (Assigned On-Site)"}`;
       selectEl.value = shift.managerId || "";
@@ -2225,10 +2778,51 @@ function getShiftStartTimeMs(ts) {
   return new Date(ts).getTime();
 }
 
+function getSessionStartMs(s) {
+  if (!s) return 0;
+  const dateStr = s.date || "1970-01-01";
+  const timeStr = s.startTime || "00:00";
+  const d = new Date(`${dateStr}T${timeStr}:00`);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function getSessionEndMs(s) {
+  if (!s) return 0;
+  const dateStr = s.date || "1970-01-01";
+  const timeStr = s.endTime || "23:59";
+  const d = new Date(`${dateStr}T${timeStr}:00`);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+function sortSessionsChronologically(sessions) {
+  if (!Array.isArray(sessions)) return [];
+  return sessions.slice().sort((a, b) => {
+    const startA = getSessionStartMs(a);
+    const startB = getSessionStartMs(b);
+    if (startA !== startB) return startA - startB;
+    const endA = getSessionEndMs(a);
+    const endB = getSessionEndMs(b);
+    if (endA !== endB) return endA - endB;
+    return (a.name || "").localeCompare(b.name || "");
+  });
+}
+
 function isShiftLocked(startTime) {
   const startTimeMs = getShiftStartTimeMs(startTime);
-  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-  return (startTimeMs - Date.now()) < sevenDaysMs;
+  if (!startTimeMs) return false;
+  const shiftDate = new Date(startTimeMs);
+  // Volunteer can cancel at any point UNTIL 7 days before shift date.
+  // E.g. if shift is on 14-May-2027, user can cancel until 7-May-2027 23:59:59.
+  const cutoffDate = new Date(
+    shiftDate.getFullYear(),
+    shiftDate.getMonth(),
+    shiftDate.getDate() - 7,
+    23,
+    59,
+    59,
+    999
+  );
+  return Date.now() > cutoffDate.getTime();
 }
 
 function formatForDateTimeLocal(date) {

@@ -34,6 +34,15 @@ let selectedDayDate = "";
 let filterOpenOnly = false;
 let selectedCategory = "ALL";
 let currentView = "schedule";
+let scheduleGroupingMode = (() => {
+  try {
+    return localStorage.getItem("brewcrew_schedule_grouping_mode") || "time";
+  } catch (e) {
+    return "time";
+  }
+})();
+const sectionExpansionOverrides = new Map(); // sectionId -> boolean
+let allSectionsExpanded = null; // null = smart default, true = all expanded, false = all collapsed
 
 // Festival Configuration State (Default fallback + dynamic Firestore config/festival)
 const defaultFestivalConfig = {
@@ -97,6 +106,8 @@ const adminExpandedSessionIds = new Set();
 
 // Incentives Configuration State (Default fallback + dynamic Firestore config/incentives)
 const defaultIncentivesConfig = {
+  welcomeTitle: "Welcome to BrewCrew!",
+  welcomeText: "BrewCrew is the official volunteer platform for our festival. Join our friendly team, pour pints, guide visitors, and earn awesome rewards including free festival tickets and official volunteer t-shirts!",
   items: [
     {
       id: "inc_1",
@@ -174,6 +185,10 @@ window.toggleOpenSpotsOnly = toggleOpenSpotsOnly;
 window.updateFilterOpenOnlyButton = updateFilterOpenOnlyButton;
 window.toggleAdminMode = toggleAdminMode;
 window.isAdminMode = isAdminMode;
+window.toggleIncentivePopover = toggleIncentivePopover;
+window.openIncentivePopover = openIncentivePopover;
+window.closeIncentivePopover = closeIncentivePopover;
+window.handleGuestPopoverSignIn = handleGuestPopoverSignIn;
 
 // Manager Window Exports (Guarded by manager/admin role internally)
 window.managerClaimShift = managerClaimShift;
@@ -189,6 +204,10 @@ window.handleEditShiftClick = handleEditShiftClick;
 window.openUserProfileModal = openUserProfileModal;
 window.closeUserProfileModal = closeUserProfileModal;
 window.handleSaveUserProfile = handleSaveUserProfile;
+window.handleRegisterAvatarChange = handleRegisterAvatarChange;
+window.handleRemoveRegisterAvatar = handleRemoveRegisterAvatar;
+window.handleProfileAvatarChange = handleProfileAvatarChange;
+window.handleRemoveProfileAvatar = handleRemoveProfileAvatar;
 
 // Dynamic Admin Function Management:
 // Ensure NONE of the API functions used by admins are available to non-admin users.
@@ -447,6 +466,14 @@ document.addEventListener("DOMContentLoaded", () => {
       showAuthSubView("tabs");
       updateRoleUI();
       updateAdminExports(false);
+      updateIncentiveAndMyShifts();
+
+      // Automatically display the incentives pop-up for unauthenticated visitors when loading into the site
+      setTimeout(() => {
+        if (!currentUser) {
+          openIncentivePopover();
+        }
+      }, 350);
     }
   });
 });
@@ -613,6 +640,99 @@ async function handleEmailSignIn(event) {
   }
 }
 
+/**
+ * Process an uploaded image file into a square, center-cropped 128x128 JPEG Data URL.
+ * Enforces file format and size limits (< 5MB).
+ */
+function processImageToDataUrl(file, targetSize = 128, quality = 0.85) {
+  return new Promise((resolve, reject) => {
+    if (!file) {
+      return reject(new Error("No file selected."));
+    }
+    const validTypes = ["image/jpeg", "image/png", "image/webp", "image/gif"];
+    if (!validTypes.includes(file.type)) {
+      return reject(new Error("Invalid image format. Please select a JPEG, PNG, or WebP file."));
+    }
+    const maxBytes = 5 * 1024 * 1024; // 5 MB
+    if (file.size > maxBytes) {
+      return reject(new Error("Image file is too large (maximum 5MB)."));
+    }
+
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Failed to read image file."));
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("Failed to load image for compression."));
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = targetSize;
+          canvas.height = targetSize;
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            return reject(new Error("Canvas context is unavailable."));
+          }
+
+          // Center-crop to 1:1 aspect ratio
+          const minDim = Math.min(img.width, img.height);
+          const sx = (img.width - minDim) / 2;
+          const sy = (img.height - minDim) / 2;
+
+          ctx.drawImage(img, sx, sy, minDim, minDim, 0, 0, targetSize, targetSize);
+          const dataUrl = canvas.toDataURL("image/jpeg", quality);
+          resolve(dataUrl);
+        } catch (err) {
+          reject(err);
+        }
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+let pendingRegisterAvatarDataUrl = null;
+
+async function handleRegisterAvatarChange(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+
+  try {
+    const dataUrl = await processImageToDataUrl(file, 128, 0.85);
+    pendingRegisterAvatarDataUrl = dataUrl;
+
+    const imgEl = document.getElementById("register-avatar-img");
+    const iconEl = document.getElementById("register-avatar-icon");
+    const removeBtn = document.getElementById("btn-register-remove-avatar");
+
+    if (imgEl) {
+      imgEl.src = dataUrl;
+      imgEl.classList.remove("hidden");
+    }
+    if (iconEl) iconEl.classList.add("hidden");
+    if (removeBtn) removeBtn.classList.remove("hidden");
+  } catch (err) {
+    alert(err.message || "Failed to process photo.");
+    if (event.target) event.target.value = "";
+  }
+}
+
+function handleRemoveRegisterAvatar() {
+  pendingRegisterAvatarDataUrl = null;
+  const fileInput = document.getElementById("register-avatar-file");
+  const imgEl = document.getElementById("register-avatar-img");
+  const iconEl = document.getElementById("register-avatar-icon");
+  const removeBtn = document.getElementById("btn-register-remove-avatar");
+
+  if (fileInput) fileInput.value = "";
+  if (imgEl) {
+    imgEl.src = "";
+    imgEl.classList.add("hidden");
+  }
+  if (iconEl) iconEl.classList.remove("hidden");
+  if (removeBtn) removeBtn.classList.add("hidden");
+}
+
 async function handleEmailSignUp(event) {
   event.preventDefault();
   clearAuthAlerts();
@@ -632,6 +752,7 @@ async function handleEmailSignUp(event) {
   const phoneNumber = phoneInput?.value?.trim();
   const groupOrClub = groupInput?.value?.trim() || "";
   const profileVisibility = visibilityInput?.value === "private" ? "private" : "public";
+  const avatarPhotoUrl = pendingRegisterAvatarDataUrl || "";
   const password = passwordInput?.value;
   const confirmPassword = confirmPasswordInput?.value;
 
@@ -675,9 +796,12 @@ async function handleEmailSignUp(event) {
       phoneNumber: phoneNumber,
       groupOrClub: groupOrClub,
       profileVisibility: profileVisibility,
+      photoURL: avatarPhotoUrl,
       role: "volunteer",
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
+
+    handleRemoveRegisterAvatar();
   } catch (err) {
     console.error("Registration error:", err);
     showAuthAlert("register-alert", getFriendlyAuthErrorMessage(err));
@@ -891,6 +1015,7 @@ async function syncUserProfile(user) {
         phoneNumber: "",
         groupOrClub: "",
         profileVisibility: "public",
+        photoURL: user.photoURL || "",
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
     } else {
@@ -904,6 +1029,9 @@ async function syncUserProfile(user) {
       }
       if (data.groupOrClub === undefined) {
         updates.groupOrClub = "";
+      }
+      if (data.photoURL === undefined && user.photoURL) {
+        updates.photoURL = user.photoURL;
       }
       if (Object.keys(updates).length > 0) {
         await userRef.update(updates);
@@ -932,6 +1060,39 @@ function subscribeToCurrentUserProfile(uid) {
         if (menuInitialsEl) menuInitialsEl.innerText = initials;
         const userNameEl = document.getElementById("user-name");
         if (userNameEl) userNameEl.innerText = name;
+      }
+
+      // Update custom Avatar (or fallback initials) in Header and User Menu
+      const photoURL = currentUserProfile.photoURL || currentUser?.photoURL || "";
+      const userAvatarEl = document.getElementById("user-avatar");
+      const userInitialsEl = document.getElementById("user-initials");
+      const menuAvatarEl = document.getElementById("menu-user-avatar");
+      const menuInitialsEl = document.getElementById("menu-user-initials");
+
+      if (photoURL) {
+        if (userAvatarEl) {
+          userAvatarEl.src = photoURL;
+          userAvatarEl.classList.remove("hidden");
+        }
+        if (userInitialsEl) userInitialsEl.classList.add("hidden");
+
+        if (menuAvatarEl) {
+          menuAvatarEl.src = photoURL;
+          menuAvatarEl.classList.remove("hidden");
+        }
+        if (menuInitialsEl) menuInitialsEl.classList.add("hidden");
+      } else {
+        if (userAvatarEl) {
+          userAvatarEl.src = "";
+          userAvatarEl.classList.add("hidden");
+        }
+        if (userInitialsEl) userInitialsEl.classList.remove("hidden");
+
+        if (menuAvatarEl) {
+          menuAvatarEl.src = "";
+          menuAvatarEl.classList.add("hidden");
+        }
+        if (menuInitialsEl) menuInitialsEl.classList.remove("hidden");
       }
 
       // Update Group or Club in user dropdown menu
@@ -1051,6 +1212,48 @@ async function handleRequiredPhoneSubmit(event) {
 // ============================================================================
 // User Profile Management (Name, Phone, Group/Club, Public/Private Privacy)
 // ============================================================================
+let pendingProfileAvatarDataUrl = null;
+
+async function handleProfileAvatarChange(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+
+  try {
+    const dataUrl = await processImageToDataUrl(file, 128, 0.85);
+    pendingProfileAvatarDataUrl = dataUrl;
+
+    const imgEl = document.getElementById("profile-avatar-img");
+    const initialsEl = document.getElementById("profile-avatar-initials");
+    const removeBtn = document.getElementById("btn-profile-remove-avatar");
+
+    if (imgEl) {
+      imgEl.src = dataUrl;
+      imgEl.classList.remove("hidden");
+    }
+    if (initialsEl) initialsEl.classList.add("hidden");
+    if (removeBtn) removeBtn.classList.remove("hidden");
+  } catch (err) {
+    alert(err.message || "Failed to process profile photo.");
+    if (event.target) event.target.value = "";
+  }
+}
+
+function handleRemoveProfileAvatar() {
+  pendingProfileAvatarDataUrl = ""; // Explicitly mark as removed
+  const fileInput = document.getElementById("profile-avatar-file");
+  const imgEl = document.getElementById("profile-avatar-img");
+  const initialsEl = document.getElementById("profile-avatar-initials");
+  const removeBtn = document.getElementById("btn-profile-remove-avatar");
+
+  if (fileInput) fileInput.value = "";
+  if (imgEl) {
+    imgEl.src = "";
+    imgEl.classList.add("hidden");
+  }
+  if (initialsEl) initialsEl.classList.remove("hidden");
+  if (removeBtn) removeBtn.classList.add("hidden");
+}
+
 function openUserProfileModal() {
   if (!currentUser) {
     if (typeof showAuthModal === "function") {
@@ -1080,10 +1283,40 @@ function openUserProfileModal() {
   if (groupInput) groupInput.value = profile.groupOrClub || "";
   if (visibilitySelect) visibilitySelect.value = profile.profileVisibility === "private" ? "private" : "public";
 
+  // Load avatar preview
+  pendingProfileAvatarDataUrl = null;
+  const currentPhoto = profile.photoURL || currentUser.photoURL || "";
+  const profileImgEl = document.getElementById("profile-avatar-img");
+  const profileInitialsEl = document.getElementById("profile-avatar-initials");
+  const removeAvatarBtn = document.getElementById("btn-profile-remove-avatar");
+  const fileInput = document.getElementById("profile-avatar-file");
+  if (fileInput) fileInput.value = "";
+
+  const name = profile.fullName || currentUser.displayName || "Volunteer";
+  const initials = getUserInitials(name, currentUser.email || "");
+  if (profileInitialsEl) profileInitialsEl.innerText = initials;
+
+  if (currentPhoto) {
+    if (profileImgEl) {
+      profileImgEl.src = currentPhoto;
+      profileImgEl.classList.remove("hidden");
+    }
+    if (profileInitialsEl) profileInitialsEl.classList.add("hidden");
+    if (removeAvatarBtn) removeAvatarBtn.classList.remove("hidden");
+  } else {
+    if (profileImgEl) {
+      profileImgEl.src = "";
+      profileImgEl.classList.add("hidden");
+    }
+    if (profileInitialsEl) profileInitialsEl.classList.remove("hidden");
+    if (removeAvatarBtn) removeAvatarBtn.classList.add("hidden");
+  }
+
   if (modal) modal.classList.remove("hidden");
 }
 
 function closeUserProfileModal() {
+  pendingProfileAvatarDataUrl = null;
   const modal = document.getElementById("user-profile-modal");
   if (modal) modal.classList.add("hidden");
 }
@@ -1134,13 +1367,19 @@ async function handleSaveUserProfile(event) {
     }
 
     // 2. Update Firestore user profile
-    await db.collection("users").doc(currentUser.uid).set({
+    const updates = {
       fullName: fullName,
       phoneNumber: phoneNumber,
       groupOrClub: groupOrClub,
       profileVisibility: profileVisibility,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
+    };
+
+    if (pendingProfileAvatarDataUrl !== null) {
+      updates.photoURL = pendingProfileAvatarDataUrl;
+    }
+
+    await db.collection("users").doc(currentUser.uid).set(updates, { merge: true });
 
     if (alertEl) {
       alertEl.className = "p-3 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300";
@@ -1184,10 +1423,10 @@ function showAdminModeToast(isActive) {
   void toast.offsetWidth;
 
   if (isActive) {
-    toast.className = "fixed bottom-5 right-5 z-50 transform transition-all duration-300 flex items-center gap-2.5 px-4 py-3 rounded-xl shadow-xl text-xs font-bold border bg-purple-950 text-purple-100 border-purple-400 translate-y-0 opacity-100";
+    toast.className = "fixed bottom-24 right-5 z-50 transform transition-all duration-300 flex items-center gap-2.5 px-4 py-3 rounded-xl shadow-xl text-xs font-bold border bg-purple-950 text-purple-100 border-purple-400 translate-y-0 opacity-100";
     toast.innerHTML = `<span class="text-base">👑</span><span><strong>Admin Mode Activated:</strong> Administrator controls (create shifts, assign managers, manage registrations) are enabled.</span>`;
   } else {
-    toast.className = "fixed bottom-5 right-5 z-50 transform transition-all duration-300 flex items-center gap-2.5 px-4 py-3 rounded-xl shadow-xl text-xs font-bold border bg-slate-900 text-slate-100 border-slate-700 translate-y-0 opacity-100";
+    toast.className = "fixed bottom-24 right-5 z-50 transform transition-all duration-300 flex items-center gap-2.5 px-4 py-3 rounded-xl shadow-xl text-xs font-bold border bg-slate-900 text-slate-100 border-slate-700 translate-y-0 opacity-100";
     toast.innerHTML = `<span class="text-base">👔</span><span><strong>Manager View Activated:</strong> Administrator controls are now hidden.</span>`;
   }
 
@@ -1601,6 +1840,8 @@ function subscribeToIncentivesConfig() {
           : (data.tiers && Array.isArray(data.tiers) ? data.tiers : defaultIncentivesConfig.items));
 
       currentIncentivesConfig = {
+        welcomeTitle: data.welcomeTitle || defaultIncentivesConfig.welcomeTitle,
+        welcomeText: data.welcomeText || defaultIncentivesConfig.welcomeText,
         items: sortIncentivesByHours(rawItems.map(item => ({
           id: item.id || ("inc_" + Math.random().toString(36).substring(2, 9)),
           hours: Number(item.hours ?? item.hoursRequired ?? 0),
@@ -1612,6 +1853,8 @@ function subscribeToIncentivesConfig() {
       };
     } else {
       currentIncentivesConfig = {
+        welcomeTitle: defaultIncentivesConfig.welcomeTitle,
+        welcomeText: defaultIncentivesConfig.welcomeText,
         items: sortIncentivesByHours(defaultIncentivesConfig.items)
       };
     }
@@ -1623,6 +1866,8 @@ function subscribeToIncentivesConfig() {
   }, err => {
     console.warn("Incentives config listener error (using fallback defaults):", err);
     currentIncentivesConfig = {
+      welcomeTitle: defaultIncentivesConfig.welcomeTitle,
+      welcomeText: defaultIncentivesConfig.welcomeText,
       items: sortIncentivesByHours(defaultIncentivesConfig.items)
     };
     updateIncentiveAndMyShifts();
@@ -1823,8 +2068,95 @@ function stepSession(direction) {
   const nextSession = sessionsList[nextIdx];
   selectedSessionId = nextSession.id;
   selectedDayDate = nextSession.date || selectedDayDate;
+  sectionExpansionOverrides.clear();
+  allSectionsExpanded = null;
   renderDayTabs();
   renderShifts(currentShiftsDocs);
+}
+
+function setScheduleGroupingMode(mode) {
+  if (scheduleGroupingMode === mode) return;
+  scheduleGroupingMode = mode;
+  try {
+    localStorage.setItem("brewcrew_schedule_grouping_mode", mode);
+  } catch (e) {
+    console.warn("Could not save grouping mode to localStorage", e);
+  }
+  sectionExpansionOverrides.clear();
+  allSectionsExpanded = null;
+  updateScheduleGroupingButtons();
+  renderShifts(currentShiftsDocs);
+}
+
+function updateScheduleGroupingButtons() {
+  const btnTime = document.getElementById("btn-group-time");
+  const btnArea = document.getElementById("btn-group-area");
+  const timeJumpContainer = document.getElementById("time-jump-container");
+
+  if (btnTime && btnArea) {
+    if (scheduleGroupingMode === "time") {
+      btnTime.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all shadow-xs bg-amber-800 text-white flex items-center gap-1.5";
+      btnArea.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all text-amber-900 hover:bg-white/60 flex items-center gap-1.5";
+      if (timeJumpContainer) timeJumpContainer.classList.remove("hidden");
+    } else {
+      btnArea.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all shadow-xs bg-amber-800 text-white flex items-center gap-1.5";
+      btnTime.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all text-amber-900 hover:bg-white/60 flex items-center gap-1.5";
+      if (timeJumpContainer) timeJumpContainer.classList.add("hidden");
+    }
+  }
+}
+
+function isSectionExpanded(sectionId, smartDefault) {
+  if (sectionExpansionOverrides.has(sectionId)) {
+    return sectionExpansionOverrides.get(sectionId);
+  }
+  if (allSectionsExpanded !== null) {
+    return allSectionsExpanded;
+  }
+  return !!smartDefault;
+}
+
+function toggleSectionCollapse(sectionId, smartDefault) {
+  const currentExpanded = isSectionExpanded(sectionId, smartDefault);
+  sectionExpansionOverrides.set(sectionId, !currentExpanded);
+  renderShifts(currentShiftsDocs);
+}
+
+function toggleExpandAllSections() {
+  if (allSectionsExpanded === true) {
+    allSectionsExpanded = false;
+  } else {
+    allSectionsExpanded = true;
+  }
+  sectionExpansionOverrides.clear();
+  renderShifts(currentShiftsDocs);
+}
+
+function updateExpandAllButton(hasAnyCollapsed) {
+  const iconSpan = document.getElementById("expand-all-icon");
+  const textSpan = document.getElementById("expand-all-text");
+  if (hasAnyCollapsed) {
+    if (iconSpan) iconSpan.textContent = "▼";
+    if (textSpan) textSpan.textContent = "Expand All";
+  } else {
+    if (iconSpan) iconSpan.textContent = "▲";
+    if (textSpan) textSpan.textContent = "Collapse All";
+  }
+}
+
+function scrollToTimeSection(sectionId) {
+  sectionExpansionOverrides.set(sectionId, true);
+  renderShifts(currentShiftsDocs);
+  setTimeout(() => {
+    const el = document.getElementById(sectionId);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+      el.classList.add("ring-2", "ring-amber-400");
+      setTimeout(() => {
+        el.classList.remove("ring-2", "ring-amber-400");
+      }, 1500);
+    }
+  }, 60);
 }
 
 // Day / Session Navigation: Two-Tier Day + Session Strip
@@ -1910,6 +2242,8 @@ function renderDayTabs() {
         if (firstSessionOfDay) {
           selectedSessionId = firstSessionOfDay.id;
         }
+        sectionExpansionOverrides.clear();
+        allSectionsExpanded = null;
         renderDayTabs();
         renderShifts(currentShiftsDocs);
       };
@@ -2030,6 +2364,8 @@ function renderDayTabs() {
           chip.onclick = () => {
             selectedSessionId = session.id;
             selectedDayDate = session.date || selectedDayDate;
+            sectionExpansionOverrides.clear();
+            allSectionsExpanded = null;
             renderDayTabs();
             renderShifts(currentShiftsDocs);
           };
@@ -2133,16 +2469,25 @@ function getConflictingRegisteredShift(targetShiftId, targetShiftData) {
   return null;
 }
 
-// Render Schedule Grid (Compact Table View - No Header, No Manager Column, No Scrollbars)
+let currentVisibleGroups = [];
+
+// Render Schedule Grid with Grouping, Smart Accordions, and Time Jump
 function renderShifts(docs) {
   const grid = document.getElementById("shifts-grid");
   if (!grid) return;
 
+  updateScheduleGroupingButtons();
+
   const currentSession = (currentFestivalConfig.sessions || defaultFestivalConfig.sessions).find(s => s.id === selectedSessionId);
   const sessionName = currentSession ? currentSession.name : "this session";
+  const timeJumpChipsContainer = document.getElementById("time-jump-chips");
+  const timeJumpContainer = document.getElementById("time-jump-container");
 
   if (!docs || docs.length === 0) {
-    grid.innerHTML = `<div class="p-6 text-center"><p class='text-slate-500 italic text-sm'>No shifts scheduled for ${escapeHtml(sessionName)}.</p></div>`;
+    if (timeJumpChipsContainer) timeJumpChipsContainer.innerHTML = "";
+    if (timeJumpContainer) timeJumpContainer.classList.add("hidden");
+    currentVisibleGroups = [];
+    grid.innerHTML = `<div class="p-6 text-center bg-white rounded-2xl border border-amber-200 shadow-xs"><p class='text-slate-500 italic text-sm'>No shifts scheduled for ${escapeHtml(sessionName)}.</p></div>`;
     return;
   }
 
@@ -2171,30 +2516,15 @@ function renderShifts(docs) {
     return true;
   });
 
-  // Sort shifts chronologically ascending by startTime, then alphabetically by Area/Category
-  filteredDocs.sort((a, b) => {
-    const dataA = a.data();
-    const dataB = b.data();
-    const startA = getShiftStartTimeMs(dataA.startTime);
-    const startB = getShiftStartTimeMs(dataB.startTime);
-    if (startA !== startB) return startA - startB;
-
-    const catA = (dataA.categoryName || "").trim();
-    const catB = (dataB.categoryName || "").trim();
-    const catComp = catA.localeCompare(catB, undefined, { sensitivity: "base" });
-    if (catComp !== 0) return catComp;
-
-    const endA = getShiftStartTimeMs(dataA.endTime);
-    const endB = getShiftStartTimeMs(dataB.endTime);
-    return endA - endB;
-  });
-
   if (filteredDocs.length === 0) {
+    if (timeJumpChipsContainer) timeJumpChipsContainer.innerHTML = "";
+    if (timeJumpContainer) timeJumpContainer.classList.add("hidden");
+    currentVisibleGroups = [];
     let emptyMsg = `No shifts scheduled for ${escapeHtml(sessionName)}`;
     if (selectedCategory !== 'ALL') emptyMsg += ` under "${escapeHtml(selectedCategory)}"`;
     if (filterOpenOnly) emptyMsg += ` with open spots`;
     grid.innerHTML = `
-      <div class="p-6 text-center space-y-2">
+      <div class="p-6 text-center space-y-2 bg-white rounded-2xl border border-amber-200 shadow-xs">
         <span class="text-2xl block mb-1">🔍</span>
         <h4 class="text-sm font-bold text-slate-800">${emptyMsg}.</h4>
         <p class="text-xs text-slate-500">Try changing categories or toggling off the "Open Only" filter.</p>
@@ -2208,129 +2538,353 @@ function renderShifts(docs) {
     return;
   }
 
-  const isManagerOrAdmin = currentUserRole === "admin" || currentUserRole === "manager";
+  // Build Time Jump chips (sorted unique start times)
+  if (timeJumpChipsContainer && timeJumpContainer) {
+    if (scheduleGroupingMode === "time") {
+      timeJumpContainer.classList.remove("hidden");
+      const startTimesMap = new Map();
+      filteredDocs.forEach(doc => {
+        const shift = doc.data();
+        const startMs = getShiftStartTimeMs(shift.startTime);
+        const timeStr = formatTime(shift.startTime);
+        if (!startTimesMap.has(timeStr) || startTimesMap.get(timeStr) > startMs) {
+          startTimesMap.set(timeStr, startMs);
+        }
+      });
 
-  const rowsHtml = filteredDocs.map(doc => {
-    const shift = doc.data();
-    const isRegistered = userRegistrations.has(doc.id);
-    const isFull = (shift.assignedCount || 0) >= (shift.capacity || 0);
-    const isLocked = isShiftLocked(shift.startTime);
-    const conflict = (!isRegistered && currentUser) ? getConflictingRegisteredShift(doc.id, shift) : null;
+      const sortedStartTimes = Array.from(startTimesMap.entries()).sort((a, b) => a[1] - b[1]);
+      timeJumpChipsContainer.innerHTML = sortedStartTimes.map(([timeStr]) => {
+        const safeTargetId = `time-jump-target-${timeStr.replace(/[^a-zA-Z0-9]/g, '')}`;
+        return `
+          <button type="button" onclick="scrollToTimeSection('${safeTargetId}')" class="px-2.5 py-1 text-xs font-bold rounded-lg bg-white hover:bg-amber-100/90 border border-amber-200 text-amber-900 transition shrink-0 shadow-2xs cursor-pointer">
+            ${escapeHtml(timeStr)}
+          </button>
+        `;
+      }).join("");
+    } else {
+      timeJumpContainer.classList.add("hidden");
+      timeJumpChipsContainer.innerHTML = "";
+    }
+  }
 
-    const startTime = formatTime(shift.startTime);
-    const endTime = formatTime(shift.endTime);
-    const bookedCount = shift.assignedCount || 0;
-    const totalSlots = shift.capacity || 0;
-    const spotsLeft = totalSlots - bookedCount;
+  // Group shifts according to scheduleGroupingMode ('time' vs 'area')
+  const groups = new Map();
+  const seenStartTimes = new Set();
 
-    // Determine Action Button
-    let actionBtnHtml = "";
-    if (!currentUser) {
-      actionBtnHtml = `
-        <button disabled class="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 bg-slate-100 cursor-not-allowed">
-          Sign In
-        </button>
+  if (scheduleGroupingMode === "time") {
+    filteredDocs.forEach(doc => {
+      const shift = doc.data();
+      const startTime = formatTime(shift.startTime);
+      const endTime = formatTime(shift.endTime);
+      const timeWindowKey = `${startTime} – ${endTime}`;
+      const startMs = getShiftStartTimeMs(shift.startTime);
+      const endMs = getShiftStartTimeMs(shift.endTime);
+      const safeTimeStartId = `time-jump-target-${startTime.replace(/[^a-zA-Z0-9]/g, '')}`;
+      const safeSectionId = `sec-time-${startTime.replace(/[^a-zA-Z0-9]/g, '')}-${endTime.replace(/[^a-zA-Z0-9]/g, '')}`;
+      const isFirstOfStartTime = !seenStartTimes.has(startTime);
+      if (isFirstOfStartTime) seenStartTimes.add(startTime);
+
+      if (!groups.has(timeWindowKey)) {
+        groups.set(timeWindowKey, {
+          key: timeWindowKey,
+          id: safeSectionId,
+          anchorId: safeTimeStartId,
+          isFirstOfStartTime,
+          title: timeWindowKey,
+          icon: "🕒",
+          startMs,
+          endMs,
+          shifts: []
+        });
+      }
+      groups.get(timeWindowKey).shifts.push({ id: doc.id, data: shift });
+    });
+  } else {
+    // Group By Area
+    filteredDocs.forEach(doc => {
+      const shift = doc.data();
+      const areaName = (shift.categoryName || 'General Area').trim();
+      const safeSectionId = `sec-area-${areaName.replace(/[^a-zA-Z0-9]/g, '')}`;
+
+      if (!groups.has(areaName)) {
+        groups.set(areaName, {
+          key: areaName,
+          id: safeSectionId,
+          anchorId: safeSectionId,
+          isFirstOfStartTime: false,
+          title: areaName,
+          icon: "🏷️",
+          shifts: []
+        });
+      }
+      groups.get(areaName).shifts.push({ id: doc.id, data: shift });
+    });
+  }
+
+  const groupList = Array.from(groups.values());
+
+  // Sort groups
+  if (scheduleGroupingMode === "time") {
+    groupList.sort((a, b) => {
+      if (a.startMs !== b.startMs) return a.startMs - b.startMs;
+      return a.endMs - b.endMs;
+    });
+    // Sort shifts inside each time group alphabetically by category
+    groupList.forEach(g => {
+      g.shifts.sort((a, b) => {
+        const catA = (a.data.categoryName || "").trim();
+        const catB = (b.data.categoryName || "").trim();
+        return catA.localeCompare(catB, undefined, { sensitivity: "base" });
+      });
+    });
+  } else {
+    // Sort areas alphabetically
+    groupList.sort((a, b) => a.title.localeCompare(b.title, undefined, { sensitivity: "base" }));
+    // Sort shifts inside each area chronologically by startTime
+    groupList.forEach(g => {
+      g.shifts.sort((a, b) => {
+        const startA = getShiftStartTimeMs(a.data.startTime);
+        const startB = getShiftStartTimeMs(b.data.startTime);
+        return startA - startB;
+      });
+    });
+  }
+
+  currentVisibleGroups = groupList;
+  let anySectionCollapsed = false;
+
+  const sectionsHtml = groupList.map(group => {
+    // Aggregate metrics
+    const totalShifts = group.shifts.length;
+    let totalCapacity = 0;
+    let totalBooked = 0;
+    let openSpots = 0;
+    let userBookedShift = null;
+    let hasClashes = false;
+
+    group.shifts.forEach(s => {
+      const cap = s.data.capacity || 0;
+      const booked = s.data.assignedCount || 0;
+      totalCapacity += cap;
+      totalBooked += booked;
+      openSpots += Math.max(0, cap - booked);
+
+      if (userRegistrations.has(s.id)) {
+        userBookedShift = s;
+      } else if (currentUser && getConflictingRegisteredShift(s.id, s.data)) {
+        hasClashes = true;
+      }
+    });
+
+    const isGroupAllFull = openSpots === 0;
+
+    // Smart default: Collapse if user is already booked in this section, OR if section is completely full.
+    // Auto-expand if there are open spots and user is not booked yet.
+    const smartDefaultExpanded = !userBookedShift && !isGroupAllFull;
+    group.smartDefault = smartDefaultExpanded;
+    const isExpanded = isSectionExpanded(group.id, smartDefaultExpanded);
+    group.isExpanded = isExpanded;
+
+    if (!isExpanded) {
+      anySectionCollapsed = true;
+    }
+
+    // Determine badges and header style
+    let headerBorderClass = "border-amber-200 hover:border-amber-300";
+    let headerBgClass = "bg-white hover:bg-amber-50/60";
+    let statusBadgeHtml = "";
+
+    if (userBookedShift) {
+      headerBorderClass = "border-emerald-300 ring-1 ring-emerald-200/80";
+      headerBgClass = "bg-emerald-50/70 hover:bg-emerald-50";
+      const shiftName = scheduleGroupingMode === "time"
+        ? (userBookedShift.data.categoryName || "Shift")
+        : `${formatTime(userBookedShift.data.startTime)} – ${formatTime(userBookedShift.data.endTime)}`;
+      statusBadgeHtml = `
+        <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
+          <span>✓</span> You're booked: ${escapeHtml(shiftName)}
+        </span>
       `;
-    } else if (isRegistered) {
-      if (isLocked) {
+    } else if (isGroupAllFull) {
+      headerBorderClass = "border-slate-200 opacity-80";
+      headerBgClass = "bg-slate-50/80 hover:bg-slate-100/70";
+      statusBadgeHtml = `
+        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-200/80 text-slate-600">
+          Full (${totalShifts} ${totalShifts === 1 ? 'shift' : 'shifts'})
+        </span>
+      `;
+    } else {
+      headerBgClass = "bg-gradient-to-r from-amber-50/70 via-white to-amber-50/30 hover:bg-amber-50/90";
+      const groupUnit = scheduleGroupingMode === "time" ? "areas" : "shifts";
+      statusBadgeHtml = `
+        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-950 border border-amber-200">
+          ${totalShifts} ${groupUnit} &middot; <span class="text-emerald-700 font-extrabold ml-1">${openSpots} open</span>
+        </span>
+      `;
+      if (hasClashes) {
+        statusBadgeHtml += `
+          <span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-amber-50 text-amber-900 border border-amber-200/90" title="Contains shifts that clash with your booked schedule">
+            ⚠️ Clash
+          </span>
+        `;
+      }
+    }
+
+    // Render individual rows within this group
+    const rowsHtml = group.shifts.map(s => {
+      const shift = s.data;
+      const isRegistered = userRegistrations.has(s.id);
+      const isFull = (shift.assignedCount || 0) >= (shift.capacity || 0);
+      const isLocked = isShiftLocked(shift.startTime);
+      const conflict = (!isRegistered && currentUser) ? getConflictingRegisteredShift(s.id, shift) : null;
+
+      const startTime = formatTime(shift.startTime);
+      const endTime = formatTime(shift.endTime);
+      const bookedCount = shift.assignedCount || 0;
+      const totalSlots = shift.capacity || 0;
+      const spotsLeft = totalSlots - bookedCount;
+
+      // Action button
+      let actionBtnHtml = "";
+      if (!currentUser) {
         actionBtnHtml = `
-          <button disabled class="px-2.5 py-1 rounded-lg text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed" title="Shift locked within 7 days">
-            🔒 Locked
+          <button disabled class="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 bg-slate-100 cursor-not-allowed">
+            Sign In
+          </button>
+        `;
+      } else if (isRegistered) {
+        if (isLocked) {
+          actionBtnHtml = `
+            <button disabled class="px-2.5 py-1 rounded-lg text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed" title="Shift locked within 7 days">
+              🔒 Locked
+            </button>
+          `;
+        } else {
+          actionBtnHtml = `
+            <button onclick="cancelShift('${s.id}')" class="px-2.5 py-1 rounded-lg text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 transition shadow-xs">
+              Cancel
+            </button>
+          `;
+        }
+      } else if (conflict) {
+        const conflictName = conflict.categoryName || "another shift";
+        const conflictStart = formatTime(conflict.startTime);
+        const conflictEnd = formatTime(conflict.endTime);
+        actionBtnHtml = `
+          <button disabled class="px-2 py-1 rounded-lg text-[11px] sm:text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 cursor-not-allowed inline-flex items-center gap-1 shadow-xs" title="Time Clash: You are already registered for ${escapeHtml(conflictName)} (${conflictStart} &ndash; ${conflictEnd})">
+            <span>⚠️</span> Clash
+          </button>
+        `;
+      } else if (isFull) {
+        actionBtnHtml = `
+          <button disabled class="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 bg-slate-100 cursor-not-allowed">
+            Full
           </button>
         `;
       } else {
         actionBtnHtml = `
-          <button onclick="cancelShift('${doc.id}')" class="px-2.5 py-1 rounded-lg text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 transition shadow-xs">
-            Cancel
+          <button onclick="claimShift('${s.id}')" class="px-2.5 py-1 rounded-lg text-xs font-bold text-white bg-amber-700 hover:bg-amber-600 transition shadow-xs">
+            Register
           </button>
         `;
       }
-    } else if (conflict) {
-      const conflictName = conflict.categoryName || "another shift";
-      const conflictStart = formatTime(conflict.startTime);
-      const conflictEnd = formatTime(conflict.endTime);
-      actionBtnHtml = `
-        <button disabled class="px-2 py-1 rounded-lg text-[11px] sm:text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 cursor-not-allowed inline-flex items-center gap-1 shadow-xs" title="Time Clash: You are already registered for ${escapeHtml(conflictName)} (${conflictStart} &ndash; ${conflictEnd})">
-          <span>⚠️</span> Clash
-        </button>
-      `;
-    } else if (isFull) {
-      actionBtnHtml = `
-        <button disabled class="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 bg-slate-100 cursor-not-allowed">
-          Full
-        </button>
-      `;
-    } else {
-      actionBtnHtml = `
-        <button onclick="claimShift('${doc.id}')" class="px-2.5 py-1 rounded-lg text-xs font-bold text-white bg-amber-700 hover:bg-amber-600 transition shadow-xs">
-          Register
-        </button>
-      `;
-    }
 
-    // Slots HTML (compact)
-    let slotsHtml = "";
-    if (currentUser) {
-      slotsHtml = `
-        <div class="flex items-center gap-1">
-          <button type="button" onclick="openShiftRosterModal('${doc.id}')" title="View volunteer roster (${bookedCount} booked)" class="group font-bold text-slate-700 hover:text-amber-900 inline-flex items-center gap-0.5 text-xs sm:text-sm transition cursor-pointer">
-            <span class="underline decoration-amber-300 underline-offset-2">${bookedCount}/${totalSlots}</span>
-            <span class="text-[10px] text-amber-700 group-hover:scale-110 transition-transform">👥</span>
+      // Slots indicator
+      let slotsHtml = "";
+      if (currentUser) {
+        slotsHtml = `
+          <div class="flex items-center gap-1">
+            <button type="button" onclick="openShiftRosterModal('${s.id}')" title="View volunteer roster (${bookedCount} booked)" class="group font-bold text-slate-700 hover:text-amber-900 inline-flex items-center gap-0.5 text-xs sm:text-sm transition cursor-pointer">
+              <span class="underline decoration-amber-300 underline-offset-2">${bookedCount}/${totalSlots}</span>
+              <span class="text-[10px] text-amber-700 group-hover:scale-110 transition-transform">👥</span>
+            </button>
+            ${isRegistered ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">Booked</span>' : isFull ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-500">Full</span>' : `<span class="text-[10px] text-emerald-700 font-medium hidden sm:inline">(${spotsLeft} left)</span>`}
+          </div>
+        `;
+      } else {
+        slotsHtml = `
+          <div class="flex items-center gap-1">
+            <span class="font-bold text-slate-700 text-xs sm:text-sm">${bookedCount}/${totalSlots}</span>
+            ${isRegistered ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">Booked</span>' : isFull ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-500">Full</span>' : `<span class="text-[10px] text-emerald-700 font-medium hidden sm:inline">(${spotsLeft} left)</span>`}
+          </div>
+        `;
+      }
+
+      // Admin Edit Button
+      let adminEditBtn = "";
+      if (isAdminMode()) {
+        adminEditBtn = `
+          <button type="button" onclick="openEditShiftModal('${s.id}')" title="Edit Shift Details & Assign Manager" class="p-1 rounded-md text-amber-900 hover:bg-amber-100 border border-transparent hover:border-amber-300 transition text-xs inline-flex items-center justify-center">
+            ✏️
           </button>
-          ${isRegistered ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">Booked</span>' : isFull ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-500">Full</span>' : `<span class="text-[10px] text-emerald-700 font-medium hidden sm:inline">(${spotsLeft} left)</span>`}
-        </div>
-      `;
-    } else {
-      slotsHtml = `
-        <div class="flex items-center gap-1">
-          <span class="font-bold text-slate-700 text-xs sm:text-sm">${bookedCount}/${totalSlots}</span>
-          ${isRegistered ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">Booked</span>' : isFull ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-500">Full</span>' : `<span class="text-[10px] text-emerald-700 font-medium hidden sm:inline">(${spotsLeft} left)</span>`}
-        </div>
-      `;
-    }
+        `;
+      }
 
-    // Admin Edit Button (compact next to action button - visible ONLY in Admin Mode)
-    let adminEditBtn = "";
-    if (isAdminMode()) {
-      adminEditBtn = `
-        <button type="button" onclick="openEditShiftModal('${doc.id}')" title="Edit Shift Details & Assign Manager" class="p-1 rounded-md text-amber-900 hover:bg-amber-100 border border-transparent hover:border-amber-300 transition text-xs inline-flex items-center justify-center">
-          ✏️
-        </button>
-      `;
-    }
-
-    return `
-      <tr class="transition hover:bg-amber-50/50 ${isRegistered ? 'bg-emerald-50/50 border-l-4 border-l-emerald-500' : conflict ? 'bg-amber-50/25 border-l-4 border-l-amber-400' : 'border-l-4 border-l-transparent'}">
-        <td class="py-2.5 px-2.5 sm:px-4 whitespace-nowrap">
-          <span class="font-bold text-slate-800 text-xs sm:text-sm tracking-tight">${startTime} &ndash; ${endTime}</span>
-        </td>
-        <td class="py-2.5 px-2 sm:px-3">
-          <span class="inline-block truncate max-w-[100px] sm:max-w-none px-2 py-0.5 rounded-md text-[11px] sm:text-xs font-bold bg-amber-100/90 text-amber-900 border border-amber-200">
+      // Column 1 content depends on grouping mode
+      let col1Content = "";
+      if (scheduleGroupingMode === "time") {
+        col1Content = `
+          <span class="inline-block px-2.5 py-0.5 rounded-md text-[11px] sm:text-xs font-bold bg-amber-100/90 text-amber-950 border border-amber-200">
             ${escapeHtml(shift.categoryName || 'General Area')}
           </span>
-        </td>
-        <td class="py-2.5 px-2 sm:px-3 whitespace-nowrap">
-          ${slotsHtml}
-        </td>
-        <td class="py-2.5 px-2.5 sm:px-4 whitespace-nowrap text-right">
-          <div class="flex items-center justify-end gap-1">
-            ${adminEditBtn}
-            ${actionBtnHtml}
+        `;
+      } else {
+        col1Content = `
+          <span class="font-bold text-slate-800 text-xs sm:text-sm tracking-tight">${startTime} &ndash; ${endTime}</span>
+        `;
+      }
+
+      return `
+        <tr class="transition hover:bg-amber-50/40 ${isRegistered ? 'bg-emerald-50/50 border-l-4 border-l-emerald-500' : conflict ? 'bg-amber-50/20 border-l-4 border-l-amber-400' : 'border-l-4 border-l-transparent'}">
+          <td class="py-2.5 px-3 sm:px-4">
+            ${col1Content}
+          </td>
+          <td class="py-2.5 px-2 sm:px-3 whitespace-nowrap">
+            ${slotsHtml}
+          </td>
+          <td class="py-2.5 px-2.5 sm:px-4 whitespace-nowrap text-right">
+            <div class="flex items-center justify-end gap-1">
+              ${adminEditBtn}
+              ${actionBtnHtml}
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+
+    return `
+      <div class="section-accordion-card bg-white rounded-2xl shadow-xs border transition-all overflow-hidden ${headerBorderClass}" id="${group.id}">
+        ${group.isFirstOfStartTime ? `<div id="${group.anchorId}"></div>` : ''}
+
+        <!-- Section Accordion Header -->
+        <button type="button" onclick="toggleSectionCollapse('${group.id}', ${smartDefaultExpanded})" class="w-full text-left p-3 sm:px-4 flex items-center justify-between gap-2 transition cursor-pointer select-none ${headerBgClass}">
+          <div class="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-wrap">
+            <span class="text-xs text-amber-800 transition-transform shrink-0 font-bold ${isExpanded ? 'rotate-90 inline-block' : 'inline-block'}">▶</span>
+            <span class="font-extrabold text-slate-900 text-xs sm:text-sm tracking-tight flex items-center gap-1.5">
+              <span>${group.icon}</span> ${escapeHtml(group.title)}
+            </span>
+            ${statusBadgeHtml}
           </div>
-        </td>
-      </tr>
+          <div class="flex items-center gap-2 shrink-0">
+            <span class="text-[11px] font-bold text-amber-900/70 hover:text-amber-950 hidden sm:inline">${isExpanded ? 'Collapse' : 'Expand'}</span>
+          </div>
+        </button>
+
+        <!-- Section Collapsible Table -->
+        <div class="${isExpanded ? 'block' : 'hidden'} border-t border-amber-100">
+          <table class="w-full divide-y divide-amber-100 text-left text-xs sm:text-sm">
+            <tbody class="divide-y divide-amber-100 bg-white">
+              ${rowsHtml}
+            </tbody>
+          </table>
+        </div>
+      </div>
     `;
   }).join("");
 
-  grid.innerHTML = `
-    <div class="w-full overflow-hidden">
-      <table class="w-full divide-y divide-amber-100 text-left text-xs sm:text-sm">
-        <tbody class="divide-y divide-amber-100 bg-white">
-          ${rowsHtml}
-        </tbody>
-      </table>
-    </div>
-  `;
+  updateExpandAllButton(anySectionCollapsed);
+
+  grid.innerHTML = sectionsHtml;
 }
 
 // Real-Time Registrations Listener
@@ -2398,10 +2952,15 @@ async function updateIncentiveAndMyShifts() {
   }
 
   if (!currentUser) {
-    document.getElementById("progress-bar").style.width = "0%";
-    document.getElementById("hours-badge").innerText = `0 / ${maxMilestoneHours} Hours`;
-    document.getElementById("incentive-status").innerText =
-      "Please sign in to view earned rewards.";
+    const pb = document.getElementById("progress-bar");
+    if (pb) pb.style.width = "0%";
+    const hb = document.getElementById("hours-badge");
+    if (hb) hb.innerText = `0 / ${maxMilestoneHours} Hours`;
+    const isEl = document.getElementById("incentive-status");
+    if (isEl) isEl.innerText = "Please sign in to view earned rewards.";
+
+    updateFloatingIncentiveWidget(0, maxMilestoneHours, incentives, true);
+
     if (listContainer) {
       listContainer.innerHTML = `
         <div class="text-center py-8">
@@ -2413,15 +2972,22 @@ async function updateIncentiveAndMyShifts() {
   }
 
   if (regCount === 0) {
-    document.getElementById("progress-bar").style.width = "0%";
-    document.getElementById("hours-badge").innerText = `0 / ${maxMilestoneHours} Hours`;
-    if (incentives.length === 0) {
-      document.getElementById("incentive-status").innerText = "No shifts booked yet.";
-    } else {
-      const summaryStr = incentives.map(i => `${i.hoursRequired} Hours = ${i.name}`).join(" | ");
-      document.getElementById("incentive-status").innerText =
-        `No shifts booked yet. Book shifts to earn rewards (${summaryStr})!`;
+    const pb = document.getElementById("progress-bar");
+    if (pb) pb.style.width = "0%";
+    const hb = document.getElementById("hours-badge");
+    if (hb) hb.innerText = `0 / ${maxMilestoneHours} Hours`;
+    const isEl = document.getElementById("incentive-status");
+    if (isEl) {
+      if (incentives.length === 0) {
+        isEl.innerText = "No shifts booked yet.";
+      } else {
+        const summaryStr = incentives.map(i => `${i.hoursRequired} Hours = ${i.name}`).join(" | ");
+        isEl.innerText = `No shifts booked yet. Book shifts to earn rewards (${summaryStr})!`;
+      }
     }
+
+    updateFloatingIncentiveWidget(0, maxMilestoneHours, incentives, false);
+
     if (listContainer) {
       listContainer.innerHTML = `
         <div class="text-center py-8 bg-amber-50/50 rounded-lg border border-dashed border-amber-300">
@@ -2470,8 +3036,10 @@ async function updateIncentiveAndMyShifts() {
 
   // Update Progress Bar
   const percentage = maxMilestoneHours > 0 ? Math.min((totalHours / maxMilestoneHours) * 100, 100) : 0;
-  document.getElementById("progress-bar").style.width = `${percentage}%`;
-  document.getElementById("hours-badge").innerText = `${totalHours} / ${maxMilestoneHours} Hours`;
+  const pb = document.getElementById("progress-bar");
+  if (pb) pb.style.width = `${percentage}%`;
+  const hb = document.getElementById("hours-badge");
+  if (hb) hb.innerText = `${totalHours} / ${maxMilestoneHours} Hours`;
 
   let statusText = `Total Hours Registered: ${totalHours} hrs. `;
   if (incentives.length === 0) {
@@ -2492,7 +3060,11 @@ async function updateIncentiveAndMyShifts() {
       statusText += `Book ${hoursRemaining} more hour${hoursRemaining === 1 ? '' : 's'} to unlock your ${nextLocked.name}.`;
     }
   }
-  document.getElementById("incentive-status").innerText = statusText;
+  const isEl = document.getElementById("incentive-status");
+  if (isEl) isEl.innerText = statusText;
+
+  // Update Interactive Floating Pint Glass Widget & Roadmap Popover
+  updateFloatingIncentiveWidget(totalHours, maxMilestoneHours, incentives, false);
 
   // Render My Shifts List
   if (listContainer) {
@@ -2530,6 +3102,283 @@ async function updateIncentiveAndMyShifts() {
     });
   }
 }
+
+// ============================================================================
+// Floating Incentive Progress Pint Glass Widget & Milestone Popover
+// ============================================================================
+function updateFloatingIncentiveWidget(totalHours, maxMilestoneHours, incentives, isGuest) {
+  const percentage = maxMilestoneHours > 0 ? Math.min((totalHours / maxMilestoneHours) * 100, 100) : 0;
+
+  // 1. Update Floating Pint SVG Fill
+  const liquidRect = document.getElementById("pint-liquid-rect");
+  const foamRect = document.getElementById("pint-foam-rect");
+  const bubblesEl = document.getElementById("pint-bubbles");
+  const fullHeadEl = document.getElementById("pint-full-head");
+  const glowEl = document.getElementById("floating-incentive-glow");
+  const floatingBadge = document.getElementById("floating-incentive-badge");
+
+  // Max liquid height in SVG is 31px (from y=36 to y=5)
+  const maxSvgHeight = 31;
+  const liquidHeight = percentage > 0 ? Math.max(2, Math.round((percentage / 100) * maxSvgHeight * 10) / 10) : 0;
+  const liquidY = 36 - liquidHeight;
+
+  if (liquidRect) {
+    liquidRect.setAttribute("height", liquidHeight);
+    liquidRect.setAttribute("y", liquidY);
+  }
+
+  if (foamRect) {
+    if (percentage > 0) {
+      foamRect.setAttribute("y", Math.max(5, liquidY - 1.5));
+      foamRect.classList.remove("opacity-0");
+    } else {
+      foamRect.classList.add("opacity-0");
+    }
+  }
+
+  if (bubblesEl) {
+    if (percentage > 0) {
+      bubblesEl.classList.remove("opacity-0");
+    } else {
+      bubblesEl.classList.add("opacity-0");
+    }
+  }
+
+  if (fullHeadEl) {
+    if (percentage >= 100) {
+      fullHeadEl.classList.remove("hidden");
+    } else {
+      fullHeadEl.classList.add("hidden");
+    }
+  }
+
+  if (glowEl) {
+    if (percentage >= 100) {
+      glowEl.classList.remove("hidden");
+    } else {
+      glowEl.classList.add("hidden");
+    }
+  }
+
+  if (floatingBadge) {
+    floatingBadge.innerText = isGuest ? "0h" : `${totalHours}h`;
+  }
+
+  // 2. Update Popover Header & Progress Card
+  const popoverHoursPill = document.getElementById("popover-hours-pill");
+  if (popoverHoursPill) {
+    popoverHoursPill.innerText = isGuest ? `0 / ${maxMilestoneHours}h` : `${totalHours} / ${maxMilestoneHours}h`;
+  }
+
+  const popoverProgressBar = document.getElementById("popover-progress-bar");
+  if (popoverProgressBar) {
+    popoverProgressBar.style.width = `${percentage}%`;
+  }
+
+  const popoverProgressPercent = document.getElementById("popover-progress-percent");
+  if (popoverProgressPercent) {
+    popoverProgressPercent.innerText = `${Math.round(percentage)}%`;
+  }
+
+  const popoverStatusText = document.getElementById("popover-status-text");
+  if (popoverStatusText) {
+    if (isGuest) {
+      popoverStatusText.innerText = "Sign in to track your shift hours, fill your pint, and earn festival rewards!";
+    } else if (totalHours === 0) {
+      popoverStatusText.innerText = "No shifts booked yet. Explore the schedule to pick shifts and fill your pint!";
+    } else if (incentives.length === 0) {
+      popoverStatusText.innerText = `You've registered ${totalHours} hours! (No rewards currently configured).`;
+    } else {
+      const unlocked = incentives.filter(inc => totalHours >= inc.hoursRequired);
+      const nextLocked = incentives.find(inc => totalHours < inc.hoursRequired);
+
+      if (unlocked.length === incentives.length) {
+        const allNames = unlocked.map(inc => inc.name).join(" + ");
+        popoverStatusText.innerText = `🎉 Outstanding! All rewards unlocked: ${allNames}!`;
+      } else if (nextLocked) {
+        const hoursRemaining = Math.max(0, Math.round((nextLocked.hoursRequired - totalHours) * 10) / 10);
+        popoverStatusText.innerText = `Book ${hoursRemaining} more hour${hoursRemaining === 1 ? '' : 's'} to unlock: ${nextLocked.name}!`;
+      }
+    }
+  }
+
+  // 3. Guest vs Authenticated Views in Popover
+  const guestCard = document.getElementById("incentive-guest-welcome-card");
+  const authCard = document.getElementById("incentive-auth-progress-card");
+  const footerGuest = document.getElementById("popover-footer-guest");
+  const footerAuth = document.getElementById("popover-footer-auth");
+
+  const guestTitle = document.getElementById("incentive-guest-title");
+  const guestText = document.getElementById("incentive-guest-text");
+
+  if (isGuest) {
+    if (guestCard) guestCard.classList.remove("hidden");
+    if (authCard) authCard.classList.add("hidden");
+    if (footerGuest) footerGuest.classList.remove("hidden");
+    if (footerAuth) footerAuth.classList.add("hidden");
+    if (guestTitle) {
+      guestTitle.innerText = currentIncentivesConfig.welcomeTitle || defaultIncentivesConfig.welcomeTitle;
+    }
+    if (guestText) {
+      guestText.innerText = currentIncentivesConfig.welcomeText || defaultIncentivesConfig.welcomeText;
+    }
+  } else {
+    if (guestCard) guestCard.classList.add("hidden");
+    if (authCard) authCard.classList.remove("hidden");
+    if (footerGuest) footerGuest.classList.add("hidden");
+    if (footerAuth) footerAuth.classList.remove("hidden");
+  }
+
+  // 4. Milestone Roadmap Cards List
+  const milestonesList = document.getElementById("popover-milestones-list");
+  const milestonesSummary = document.getElementById("popover-milestones-summary");
+
+  if (milestonesSummary) {
+    milestonesSummary.innerText = incentives.length > 0 ? `${incentives.length} Milestones` : "";
+  }
+
+  if (milestonesList) {
+    if (incentives.length === 0) {
+      milestonesList.innerHTML = `<p class="text-xs text-slate-500 italic text-center py-2">No reward milestones currently defined.</p>`;
+    } else {
+      let foundNextGoal = false;
+      milestonesList.innerHTML = "";
+
+      incentives.forEach(item => {
+        const req = Number(item.hoursRequired ?? item.hours ?? 0);
+        const isUnlocked = !isGuest && totalHours >= req;
+        let isNextGoal = false;
+
+        if (!isGuest && !isUnlocked && !foundNextGoal) {
+          isNextGoal = true;
+          foundNextGoal = true;
+        }
+
+        const hoursLeft = Math.max(0, Math.round((req - totalHours) * 10) / 10);
+
+        // Pick icon
+        const nameLower = (item.name || "").toLowerCase();
+        let icon = "🎁";
+        if (nameLower.includes("entry") || nameLower.includes("pass") || nameLower.includes("ticket")) {
+          icon = "🎟️";
+        } else if (nameLower.includes("shirt") || nameLower.includes("t-shirt") || nameLower.includes("tee") || nameLower.includes("merch")) {
+          icon = "👕";
+        } else if (nameLower.includes("pint") || nameLower.includes("beer") || nameLower.includes("drink")) {
+          icon = "🍺";
+        } else if (nameLower.includes("vip") || nameLower.includes("gold") || nameLower.includes("exclusive")) {
+          icon = "👑";
+        }
+
+        let cardClass = "";
+        let statusBadge = "";
+
+        if (isUnlocked) {
+          cardClass = "bg-emerald-50/70 border-emerald-300 ring-1 ring-emerald-300/40";
+          statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 shrink-0">✓ Unlocked 🍺</span>`;
+        } else if (isNextGoal) {
+          cardClass = "bg-amber-100/60 border-amber-400 ring-1 ring-amber-400/50 shadow-2xs";
+          statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-200 text-amber-900 border border-amber-400 flex items-center gap-1 shrink-0 animate-pulse">🎯 Next (${hoursLeft}h left)</span>`;
+        } else {
+          cardClass = isGuest ? "bg-amber-50/40 border-amber-200/80" : "bg-slate-50 border-slate-200 opacity-80";
+          statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 shrink-0">🔒 ${req}h Required</span>`;
+        }
+
+        const card = document.createElement("div");
+        card.className = `p-3 rounded-xl border flex items-center justify-between gap-3 transition ${cardClass}`;
+        card.innerHTML = `
+          <div class="flex items-center gap-2.5 min-w-0">
+            <span class="text-xl shrink-0">${icon}</span>
+            <div class="min-w-0">
+              <h5 class="text-xs font-bold text-slate-900 truncate">${escapeHtml(item.name || item.rewardName || 'Reward')}</h5>
+              <p class="text-[11px] text-slate-500 truncate">${escapeHtml(item.description || `${req} volunteer hours required`)}</p>
+            </div>
+          </div>
+          ${statusBadge}
+        `;
+        milestonesList.appendChild(card);
+      });
+    }
+  }
+}
+
+function toggleIncentivePopover() {
+  const popover = document.getElementById("incentive-popover");
+  if (!popover) return;
+  const isHidden = popover.classList.contains("hidden");
+  if (isHidden) {
+    openIncentivePopover();
+  } else {
+    closeIncentivePopover();
+  }
+}
+
+function openIncentivePopover() {
+  const popover = document.getElementById("incentive-popover");
+  const backdrop = document.getElementById("incentive-popover-backdrop");
+  if (!popover) return;
+
+  // Refresh content
+  updateIncentiveAndMyShifts();
+
+  popover.classList.remove("hidden");
+  if (backdrop) backdrop.classList.remove("hidden");
+
+  // Force reflow
+  void popover.offsetWidth;
+
+  popover.classList.remove("opacity-0", "translate-y-4", "pointer-events-none");
+  popover.classList.add("opacity-100", "translate-y-0", "pointer-events-auto");
+  if (backdrop) {
+    backdrop.classList.remove("opacity-0");
+    backdrop.classList.add("opacity-100");
+  }
+}
+
+function closeIncentivePopover() {
+  const popover = document.getElementById("incentive-popover");
+  const backdrop = document.getElementById("incentive-popover-backdrop");
+  if (!popover || popover.classList.contains("hidden")) return;
+
+  popover.classList.remove("opacity-100", "translate-y-0", "pointer-events-auto");
+  popover.classList.add("opacity-0", "translate-y-4", "pointer-events-none");
+  if (backdrop) {
+    backdrop.classList.remove("opacity-100");
+    backdrop.classList.add("opacity-0");
+  }
+
+  setTimeout(() => {
+    popover.classList.add("hidden");
+    if (backdrop) backdrop.classList.add("hidden");
+  }, 250);
+}
+
+function handleGuestPopoverSignIn() {
+  closeIncentivePopover();
+  // Ensure central login screen is visible and focused
+  const authScreen = document.getElementById("auth-screen");
+  if (authScreen && authScreen.classList.contains("hidden")) {
+    const authenticatedApp = document.getElementById("authenticated-app");
+    if (authenticatedApp) authenticatedApp.classList.add("hidden");
+    authScreen.classList.remove("hidden");
+    authScreen.classList.add("flex");
+  }
+}
+
+// Global click-outside & Escape key handlers for popover
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    closeIncentivePopover();
+  }
+});
+
+document.addEventListener("click", (e) => {
+  const popover = document.getElementById("incentive-popover");
+  const btn = document.getElementById("floating-incentive-btn");
+  if (!popover || popover.classList.contains("hidden")) return;
+  if (!popover.contains(e.target) && (!btn || !btn.contains(e.target))) {
+    closeIncentivePopover();
+  }
+});
 
 // Volunteer Shift Actions
 async function claimShift(shiftId) {
@@ -3004,6 +3853,7 @@ async function openShiftRosterModal(shiftId) {
         fullName: user?.fullName || "Volunteer",
         email: user?.email || "",
         phoneNumber: user?.phoneNumber || "",
+        photoURL: user?.photoURL || "",
         groupOrClub: user?.groupOrClub || "",
         profileVisibility: user?.profileVisibility || "public",
         role: user?.role || "volunteer"
@@ -3053,11 +3903,13 @@ async function openShiftRosterModal(shiftId) {
           ? `<span class="text-[10px] font-medium px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300">👥 ${escapeHtml(v.groupOrClub)}</span>`
           : "";
 
+        const avatarHtml = v.photoURL
+          ? `<img src="${escapeHtml(v.photoURL)}" class="w-8 h-8 rounded-full object-cover flex-shrink-0 border border-amber-300 shadow-2xs" alt="Avatar" />`
+          : `<div class="w-8 h-8 rounded-full bg-amber-200 text-amber-900 font-bold flex items-center justify-center text-xs flex-shrink-0">${escapeHtml((v.fullName || "V")[0].toUpperCase())}</div>`;
+
         row.innerHTML = `
           <div class="flex items-center space-x-2.5 overflow-hidden">
-            <div class="w-8 h-8 rounded-full bg-amber-200 text-amber-900 font-bold flex items-center justify-center text-xs flex-shrink-0">
-              ${escapeHtml((v.fullName || "V")[0].toUpperCase())}
-            </div>
+            ${avatarHtml}
             <div class="truncate">
               <div class="flex items-center gap-1.5 flex-wrap">
                 <p class="font-bold text-slate-800 text-xs truncate">${escapeHtml(v.fullName)}</p>
@@ -3080,11 +3932,13 @@ async function openShiftRosterModal(shiftId) {
           ? `<span class="text-[10px] font-medium px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-900 border border-emerald-300">👥 ${escapeHtml(v.groupOrClub)}</span>`
           : "";
 
+        const avatarHtml = v.photoURL
+          ? `<img src="${escapeHtml(v.photoURL)}" class="w-8 h-8 rounded-full object-cover flex-shrink-0 border border-emerald-400 shadow-2xs" alt="Avatar" />`
+          : `<div class="w-8 h-8 rounded-full bg-emerald-200 text-emerald-900 font-bold flex items-center justify-center text-xs flex-shrink-0">${escapeHtml((v.fullName || "V")[0].toUpperCase())}</div>`;
+
         row.innerHTML = `
           <div class="flex items-center space-x-2.5 overflow-hidden">
-            <div class="w-8 h-8 rounded-full bg-emerald-200 text-emerald-900 font-bold flex items-center justify-center text-xs flex-shrink-0">
-              ${escapeHtml((v.fullName || "V")[0].toUpperCase())}
-            </div>
+            ${avatarHtml}
             <div class="truncate">
               <div class="flex items-center gap-1.5 flex-wrap">
                 <p class="font-bold text-slate-900 text-xs truncate">${escapeHtml(v.fullName)}</p>
@@ -3103,7 +3957,7 @@ async function openShiftRosterModal(shiftId) {
           </div>
         `;
       }
-      // CASE C: Viewer is a Volunteer viewing a PRIVATE volunteer -> Space / Anonymous placeholder
+      // CASE C: Viewer is a Volunteer viewing a PRIVATE volunteer -> Space / Anonymous placeholder (no avatar)
       else if (isPrivate) {
         row.className = "flex items-center justify-between p-3 rounded-lg border border-dashed border-slate-300 bg-slate-50/80 transition gap-3";
         row.innerHTML = `
@@ -3121,7 +3975,7 @@ async function openShiftRosterModal(shiftId) {
           </div>
         `;
       }
-      // CASE D: Viewer is a Volunteer viewing a PUBLIC volunteer -> Name & Group/Club visible; Email & Phone NEVER visible
+      // CASE D: Viewer is a Volunteer viewing a PUBLIC volunteer -> Name & Group/Club & Avatar visible; Email & Phone NEVER visible
       else {
         row.className = "flex items-center justify-between p-3 rounded-lg border border-amber-200 bg-amber-50/50 hover:bg-amber-50 transition gap-3";
 
@@ -3129,11 +3983,13 @@ async function openShiftRosterModal(shiftId) {
           ? `<span class="text-[10px] font-medium px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300">👥 ${escapeHtml(v.groupOrClub)}</span>`
           : "";
 
+        const avatarHtml = v.photoURL
+          ? `<img src="${escapeHtml(v.photoURL)}" class="w-8 h-8 rounded-full object-cover flex-shrink-0 border border-amber-300 shadow-2xs" alt="Avatar" />`
+          : `<div class="w-8 h-8 rounded-full bg-amber-200 text-amber-900 font-bold flex items-center justify-center text-xs flex-shrink-0">${escapeHtml((v.fullName || "V")[0].toUpperCase())}</div>`;
+
         row.innerHTML = `
           <div class="flex items-center space-x-2.5 overflow-hidden">
-            <div class="w-8 h-8 rounded-full bg-amber-200 text-amber-900 font-bold flex items-center justify-center text-xs flex-shrink-0">
-              ${escapeHtml((v.fullName || "V")[0].toUpperCase())}
-            </div>
+            ${avatarHtml}
             <div class="truncate">
               <div class="flex items-center gap-1.5 flex-wrap">
                 <p class="font-bold text-slate-800 text-xs truncate">${escapeHtml(v.fullName)}</p>
@@ -3166,6 +4022,7 @@ function closeShiftRosterModal() {
  * - Does not allow manager users to assign/unassign shifts already assigned to other managers.
  * - Retains ability for admin users to assign any manager or unassign managers.
  * - Strictly masks manager email from volunteer viewers.
+ * - Displays assigned manager's custom avatar photo if available.
  */
 function renderRosterManagerSection(shiftId, shift) {
   const mgrCard = document.getElementById("roster-modal-manager-card");
@@ -3233,12 +4090,24 @@ function renderRosterManagerSection(shiftId, shift) {
     }
   }
 
+  // Look up manager's photo if assigned
+  let managerPhoto = "";
+  if (shift.managerId) {
+    if (currentUser && shift.managerId === currentUser.uid) {
+      managerPhoto = currentUserProfile?.photoURL || "";
+    } else {
+      managerPhoto = allUsersMap.get(shift.managerId)?.photoURL || "";
+    }
+  }
+
+  const managerAvatarHtml = managerPhoto
+    ? `<img src="${escapeHtml(managerPhoto)}" class="w-8 h-8 rounded-full object-cover shrink-0 border border-amber-300 shadow-2xs" alt="Manager photo" />`
+    : `<div class="w-8 h-8 rounded-full ${isUnassigned ? 'bg-amber-200/80 text-amber-900' : isCurrentUserManager ? 'bg-emerald-100 text-emerald-900 border border-emerald-300' : 'bg-blue-100 text-blue-900 border border-blue-300'} flex items-center justify-center font-bold text-sm shrink-0">👔</div>`;
+
   mgrCard.innerHTML = `
     <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
       <div class="flex items-center gap-2.5 min-w-0">
-        <div class="w-8 h-8 rounded-full ${isUnassigned ? 'bg-amber-200/80 text-amber-900' : isCurrentUserManager ? 'bg-emerald-100 text-emerald-900 border border-emerald-300' : 'bg-blue-100 text-blue-900 border border-blue-300'} flex items-center justify-center font-bold text-sm shrink-0">
-          👔
-        </div>
+        ${managerAvatarHtml}
         <div class="truncate">
           <div class="flex items-center gap-1.5 flex-wrap">
             <span class="text-xs font-bold text-slate-800">Shift Manager</span>
@@ -3446,9 +4315,13 @@ function renderAdminUsers() {
     tr.innerHTML = `
       <td class="p-3">
         <div class="flex items-center space-x-2.5">
-          <div class="w-7 h-7 rounded-full bg-amber-200 text-amber-900 font-bold flex items-center justify-center text-xs flex-shrink-0">
-            ${escapeHtml((u.fullName || u.email || "U")[0].toUpperCase())}
-          </div>
+          ${u.photoURL ? `
+            <img src="${escapeHtml(u.photoURL)}" class="w-7 h-7 rounded-full object-cover flex-shrink-0 border border-amber-300 shadow-2xs" alt="Avatar" />
+          ` : `
+            <div class="w-7 h-7 rounded-full bg-amber-200 text-amber-900 font-bold flex items-center justify-center text-xs flex-shrink-0">
+              ${escapeHtml((u.fullName || u.email || "U")[0].toUpperCase())}
+            </div>
+          `}
           <div>
             <p class="font-bold text-slate-800 text-xs">${escapeHtml(u.fullName || "Volunteer")} ${isSelf ? '<span class="text-[10px] text-amber-800 font-semibold bg-amber-100 px-1 py-0.2 rounded">(You)</span>' : ''}</p>
           </div>
@@ -3927,6 +4800,15 @@ async function handleSaveFestivalConfig() {
 function renderAdminIncentivesConfig() {
   if (currentUserRole !== "admin") return;
 
+  const welcomeTitleInput = document.getElementById("admin-incentive-welcome-title");
+  const welcomeTextInput = document.getElementById("admin-incentive-welcome-text");
+  if (welcomeTitleInput) {
+    welcomeTitleInput.value = currentIncentivesConfig.welcomeTitle || defaultIncentivesConfig.welcomeTitle || "";
+  }
+  if (welcomeTextInput) {
+    welcomeTextInput.value = currentIncentivesConfig.welcomeText || defaultIncentivesConfig.welcomeText || "";
+  }
+
   const rawItems = currentIncentivesConfig?.items || defaultIncentivesConfig.items;
   adminEditingIncentives = sortIncentivesByHours(JSON.parse(JSON.stringify(rawItems)));
   adminInlineEditingIncentiveId = null;
@@ -4103,12 +4985,21 @@ async function persistAdminIncentivesToFirestore() {
   if (currentUserRole !== "admin") return;
   try {
     adminEditingIncentives = sortIncentivesByHours(adminEditingIncentives);
+    const welcomeTitleInput = document.getElementById("admin-incentive-welcome-title");
+    const welcomeTextInput = document.getElementById("admin-incentive-welcome-text");
+    const welcomeTitle = welcomeTitleInput?.value?.trim() || currentIncentivesConfig.welcomeTitle || defaultIncentivesConfig.welcomeTitle;
+    const welcomeText = welcomeTextInput?.value?.trim() || currentIncentivesConfig.welcomeText || defaultIncentivesConfig.welcomeText;
+
     await db.collection("config").doc("incentives").set({
+      welcomeTitle: welcomeTitle,
+      welcomeText: welcomeText,
       items: adminEditingIncentives,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       updatedBy: currentUser.uid
     }, { merge: true });
 
+    currentIncentivesConfig.welcomeTitle = welcomeTitle;
+    currentIncentivesConfig.welcomeText = welcomeText;
     currentIncentivesConfig.items = JSON.parse(JSON.stringify(adminEditingIncentives));
     updateIncentiveAndMyShifts();
   } catch (err) {
@@ -4133,13 +5024,22 @@ async function handleSaveIncentivesConfig() {
 
   try {
     adminEditingIncentives = sortIncentivesByHours(adminEditingIncentives);
+    const welcomeTitleInput = document.getElementById("admin-incentive-welcome-title");
+    const welcomeTextInput = document.getElementById("admin-incentive-welcome-text");
+    const welcomeTitle = welcomeTitleInput?.value?.trim() || defaultIncentivesConfig.welcomeTitle;
+    const welcomeText = welcomeTextInput?.value?.trim() || defaultIncentivesConfig.welcomeText;
+
     const configData = {
+      welcomeTitle: welcomeTitle,
+      welcomeText: welcomeText,
       items: adminEditingIncentives,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       updatedBy: currentUser.uid
     };
 
     await db.collection("config").doc("incentives").set(configData, { merge: true });
+    currentIncentivesConfig.welcomeTitle = welcomeTitle;
+    currentIncentivesConfig.welcomeText = welcomeText;
     currentIncentivesConfig.items = JSON.parse(JSON.stringify(adminEditingIncentives));
     updateIncentiveAndMyShifts();
 

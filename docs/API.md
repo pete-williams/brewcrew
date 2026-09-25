@@ -53,15 +53,15 @@ All callable functions (except background triggers) require user authentication.
 
 | Role | Hierarchy Level | Capabilities |
 | :--- | :--- | :--- |
-| `volunteer` | Standard User | Register for open shifts (`claimShift`), cancel own shift with 7-day lockout (`cancelShift`), browse shifts. |
-| `manager` | Elevated Staff | All volunteer actions + self-claim unassigned shift as manager (`assignShiftManager`), relinquish shift manager role, inspect volunteer roster. |
+| `volunteer` | Standard User | Register for open shifts (`claimShift`), cancel own shift with 7-day lockout (`cancelShift`), browse shifts, view privacy-masked shift rosters, manage own profile (public/private visibility, group/club, custom avatar). |
+| `manager` | Elevated Staff | All volunteer actions + inspect complete volunteer rosters (including contact info), self-claim unassigned shifts as manager (`assignShiftManager`) or release assigned shifts in the roster modal, update shift notes/status. |
 | `admin` | Festival Administrator | Full system access: create shifts (`createShift`), update shifts (`updateShift`), delete empty sessions (`deleteFestivalSession`), assign/reassign any manager (`assignShiftManager`), cancel any volunteer's shift bypassing lockout (`cancelShift`), update crew roles (`updateUserRole`), dispatch email announcements (`sendAdminBroadcast`). |
 
 #### Admin Mode UI Toggle (Client-Side Interface Switching)
 
 To maintain an uncluttered operational interface, users with the `admin` role default to **Manager View** upon sign-in:
 - **Manager View (Default on Login)**: Admin users operate with shift manager capabilities (browsing shifts, viewing volunteer rosters, claiming unassigned shifts as manager). Administrative controls (`createShift`, `assignShiftManager`, individual volunteer registration cancellations, Admin Panel view) are hidden.
-- **Admin Mode (Toggled)**: Admin users can enter **Admin Mode** at any time via the navigation bar toggle, user profile dropdown menu, or schedule view action banner. Activating Admin Mode dynamically exposes and exports all administrator functions and controls (create new shifts, edit shifts, assign shift managers, cancel individual volunteer registrations, and access the Admin Panel).
+- **Admin Mode (Toggled)**: Admin users can enter **Admin Mode** at any time via the user profile dropdown menu or the schedule view action banner. Activating Admin Mode dynamically exposes all administrator functions and controls (create new shifts, edit shifts, assign shift managers, cancel individual volunteer registrations, and access the Admin Panel). An enabled role badge (`Admin`, `Manager`, `Volunteer`) is displayed directly over the user's avatar in the navigation header.
 - **Security Assurance**: Non-admin users (`volunteer` and `manager`) never see the toggle and cannot activate Admin Mode. Server-side authorization in Cloud Functions and Firestore security rules independently verify the caller's Firestore role document on every operation regardless of client state.
 
 ---
@@ -472,10 +472,12 @@ Global festival settings document storing brand identity, manager contacts, and 
 
 ### 2. `/config/incentives`
 
-Global volunteer incentives and milestone rewards configuration document defining reward thresholds earned as volunteers accumulate shift hours.
+Global volunteer incentives and milestone rewards configuration document defining reward thresholds earned as volunteers accumulate shift hours and guest welcome messaging.
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
+| `welcomeTitle` | `string` | Custom greeting title displayed to unauthenticated visitors inside the floating pint glass incentive popover. |
+| `welcomeText` | `string` | Custom explanatory text displayed to unauthenticated visitors describing the festival volunteer program and how lending a hand unlocks rewards. |
 | `items` | `array` | List of configured reward milestone objects: `[{ id: string, hours: number, hoursRequired: number, name: string, rewardName: string, description: string }]`. |
 | `updatedAt` | `timestamp` | Server timestamp when incentives were last updated. |
 | `updatedBy` | `string` | UID of administrator who committed the update. |
@@ -511,6 +513,7 @@ User profile document created upon initial registration or OAuth sign-in, manage
 | `phoneNumber` | `string` | **Mandatory** contact phone number required on registration and onboarding. |
 | `groupOrClub` | `string` | Optional text field specifying group, club, CAMRA branch, or brewery team affiliation. Visible to other volunteers only when `profileVisibility` is `"public"`. |
 | `profileVisibility` | `string` | Profile privacy setting: `"public"` (default) or `"private"`. When `"public"`, user name and group/club are displayed on volunteer shift rosters. When `"private"`, other volunteers see only an anonymous placeholder space. Shift managers and admins can always view full roster details. |
+| `photoURL` | `string` | Optional custom profile avatar stored as a client-compressed (128x128 JPEG) Data URL. When `profileVisibility` is `"public"`, displayed in shift rosters to volunteers. When `"private"`, masked with an anonymous lock placeholder to volunteer viewers. Shift managers and admins always see avatars. |
 | `role` | `string` | Access tier: `"volunteer"`, `"manager"`, or `"admin"`. |
 | `createdAt` | `timestamp` | Server timestamp when the user profile was initialized. |
 | `updatedAt` | `timestamp` | Server timestamp when the user profile was last updated. |
@@ -518,12 +521,12 @@ User profile document created upon initial registration or OAuth sign-in, manage
 #### Shift Roster Privacy & Access Control Rules
 
 The Shift Roster Modal (`shift-roster-modal`) allows participants to view roster occupancy while enforcing privacy boundaries:
-- **Shift Managers & Admins**: Can view all registered volunteers' full names, group/club affiliations, email addresses, phone numbers, and privacy badges (`🌐 Public` / `🔒 Private`). In Admin Mode, administrators can cancel individual registrations.
+- **Shift Managers & Admins**: Can view all registered volunteers' full names, custom avatar photos, group/club affiliations, email addresses, phone numbers, and privacy badges (`🌐 Public` / `🔒 Private`). In Admin Mode, administrators can cancel individual registrations.
 - **Volunteers Viewing Roster**:
-  - **Self Row**: Volunteers see their own registration marked with a `You` badge, their group/club affiliation, their privacy status, and an inline link to edit profile settings.
-  - **Public Profiles**: Volunteers see other registered crew members' names and optional group/club affiliations. Contact details (email and mobile phone) are **never** exposed to volunteer viewers.
-  - **Private Profiles**: Volunteers see an anonymous space (`🔒 Volunteer - Private Profile`) indicating that the shift slot is occupied, without revealing the volunteer's name, group, email, or phone.
-  - **Shift Manager**: Volunteers see the assigned shift manager's name (or "Unassigned"); the manager's personal email is hidden from volunteer viewers.
+  - **Self Row**: Volunteers see their own registration marked with a `You` badge, their avatar photo, their group/club affiliation, their privacy status, and an inline link to edit profile settings.
+  - **Public Profiles**: Volunteers see other registered crew members' names, custom avatar photos (or letter initials), and optional group/club affiliations. Contact details (email and mobile phone) are **never** exposed to volunteer viewers.
+  - **Private Profiles**: Volunteers see an anonymous space (`🔒 Volunteer - Private Profile`) indicating that the shift slot is occupied, without revealing the volunteer's name, avatar photo, group, email, or phone.
+  - **Shift Manager**: Volunteers see the assigned shift manager's name and avatar photo (or "Unassigned"); the manager's personal email is hidden from volunteer viewers.
 
 ---
 

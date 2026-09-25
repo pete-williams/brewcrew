@@ -23,8 +23,9 @@ This document provides a comprehensive technical reference for all backend Cloud
   - [1. `onRegistrationCreated` (Retired)](#1-onregistrationcreated-retired)
 - [Firestore Data Models & Schemas](#firestore-data-models--schemas)
   - [1. `/config/festival`](#1-configfestival)
-  - [2. `/shifts/{shiftId}`](#2-shiftsshiftid)
-  - [3. `/users/{userId}`](#3-usersuserid)
+  - [2. `/config/incentives`](#2-configincentives)
+  - [3. `/shifts/{shiftId}`](#3-shiftsshiftid)
+  - [4. `/users/{userId}`](#4-usersuserid)
 - [Firestore Security Rules Overview](#firestore-security-rules-overview)
 - [Maintenance & Documentation Maintenance Policy](#maintenance--documentation-maintenance-policy)
 
@@ -56,6 +57,13 @@ All callable functions (except background triggers) require user authentication.
 | `manager` | Elevated Staff | All volunteer actions + self-claim unassigned shift as manager (`assignShiftManager`), relinquish shift manager role, inspect volunteer roster. |
 | `admin` | Festival Administrator | Full system access: create shifts (`createShift`), update shifts (`updateShift`), delete empty sessions (`deleteFestivalSession`), assign/reassign any manager (`assignShiftManager`), cancel any volunteer's shift bypassing lockout (`cancelShift`), update crew roles (`updateUserRole`), dispatch email announcements (`sendAdminBroadcast`). |
 
+#### Admin Mode UI Toggle (Client-Side Interface Switching)
+
+To maintain an uncluttered operational interface, users with the `admin` role default to **Manager View** upon sign-in:
+- **Manager View (Default on Login)**: Admin users operate with shift manager capabilities (browsing shifts, viewing volunteer rosters, claiming unassigned shifts as manager). Administrative controls (`createShift`, `assignShiftManager`, individual volunteer registration cancellations, Admin Panel view) are hidden.
+- **Admin Mode (Toggled)**: Admin users can enter **Admin Mode** at any time via the navigation bar toggle, user profile dropdown menu, or schedule view action banner. Activating Admin Mode dynamically exposes and exports all administrator functions and controls (create new shifts, edit shifts, assign shift managers, cancel individual volunteer registrations, and access the Admin Panel).
+- **Security Assurance**: Non-admin users (`volunteer` and `manager`) never see the toggle and cannot activate Admin Mode. Server-side authorization in Cloud Functions and Firestore security rules independently verify the caller's Firestore role document on every operation regardless of client state.
+
 ---
 
 ## Error Handling & Status Codes
@@ -68,7 +76,7 @@ All callable Cloud Functions throw `HttpsError` from `firebase-functions/v2/http
 | `permission-denied` | 403 Forbidden | Caller does not possess the requisite role (`admin` or `manager`). |
 | `invalid-argument` | 400 Bad Request | Missing or malformed parameters in `request.data` (e.g. non-existent `sessionId`). |
 | `not-found` | 404 Not Found | Referenced entity (shift, session, user, registration) does not exist. |
-| `failed-precondition`| 412 Precondition Failed | Operation rejected due to state conflict (e.g. shift full, lockout window active, session has assigned shifts, self-lockout). |
+| `failed-precondition`| 412 Precondition Failed | Operation rejected due to state conflict (e.g. shift full, lockout window active, session has assigned shifts, self-lockout, overlapping shift registrations). |
 | `already-exists` | 409 Conflict | Duplicate booking or manager slot already filled. |
 | `internal` | 500 Internal Server Error | Unexpected downstream error (e.g. SMTP transport failure). |
 
@@ -78,7 +86,7 @@ All callable Cloud Functions throw `HttpsError` from `firebase-functions/v2/http
 
 ### 1. `claimShift`
 
-Registers an authenticated volunteer for an open festival shift atomically, ensuring no capacity overbooking occurs under concurrent requests.
+Registers an authenticated volunteer for an open festival shift atomically, ensuring no capacity overbooking occurs under concurrent requests and preventing concurrent/overlapping shift bookings for the same volunteer.
 
 - **Trigger**: `onCall`
 - **Permissions**: Authenticated user (`volunteer`, `manager`, or `admin`).
@@ -102,7 +110,13 @@ Registers an authenticated volunteer for an open festival shift atomically, ensu
 2. Reads `/shifts/{shiftId}`. Throws `not-found` if the shift does not exist.
 3. Compares `shift.assignedCount >= shift.capacity`. If full, throws `failed-precondition` (`"This shift is already full."`).
 4. Checks `/registrations/{shiftId}_{uid}`. If a registration exists with `status: "confirmed"`, throws `already-exists` (`"You are already registered for this shift."`).
-5. Atomically executes:
+5. **Overlapping & Simultaneous Shift Registration Safeguard**:
+   - Parses target shift `startTime` and `endTime` into epoch timestamps.
+   - Queries caller's active registrations (`/registrations` where `userId == uid` and `status == "confirmed"`).
+   - Within the transaction, fetches all other registered shift documents (`transaction.getAll`).
+   - Validates for time conflicts using interval intersection: `targetStart < otherEnd && otherStart < targetEnd`.
+   - If an overlapping shift is detected (same start/end times, partial overlap, or nested shifts), aborts the transaction and throws `failed-precondition` (`"Cannot register: this shift overlaps with your registered shift for \"<conflictName>\"."`).
+6. Atomically executes:
    - Increments `/shifts/{shiftId}.assignedCount` by `1`.
    - Writes `/registrations/{shiftId}_{uid}`:
      ```json
@@ -456,7 +470,17 @@ Global festival settings document storing brand identity, manager contacts, and 
 | `updatedAt` | `timestamp` | Server timestamp when settings were last modified. |
 | `updatedBy` | `string` | UID of administrator who committed the update. |
 
-### 2. `/shifts/{shiftId}`
+### 2. `/config/incentives`
+
+Global volunteer incentives and milestone rewards configuration document defining reward thresholds earned as volunteers accumulate shift hours.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `items` | `array` | List of configured reward milestone objects: `[{ id: string, hours: number, hoursRequired: number, name: string, rewardName: string, description: string }]`. |
+| `updatedAt` | `timestamp` | Server timestamp when incentives were last updated. |
+| `updatedBy` | `string` | UID of administrator who committed the update. |
+
+### 3. `/shifts/{shiftId}`
 
 Festival shift documents defining individual working slots.
 
@@ -476,17 +500,30 @@ Festival shift documents defining individual working slots.
 | `updatedAt` | `timestamp` | Server timestamp when shift was last edited. |
 | `updatedBy` | `string` | UID of administrator who last edited the shift. |
 
-### 3. `/users/{userId}`
+### 4. `/users/{userId}`
 
-User profile document created upon initial registration or OAuth sign-in.
+User profile document created upon initial registration or OAuth sign-in, manageable by volunteers via the "My Profile" modal.
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `fullName` | `string` | Full name of the volunteer or crew member. |
 | `email` | `string` | Registered email address (lowercase). |
 | `phoneNumber` | `string` | **Mandatory** contact phone number required on registration and onboarding. |
+| `groupOrClub` | `string` | Optional text field specifying group, club, CAMRA branch, or brewery team affiliation. Visible to other volunteers only when `profileVisibility` is `"public"`. |
+| `profileVisibility` | `string` | Profile privacy setting: `"public"` (default) or `"private"`. When `"public"`, user name and group/club are displayed on volunteer shift rosters. When `"private"`, other volunteers see only an anonymous placeholder space. Shift managers and admins can always view full roster details. |
 | `role` | `string` | Access tier: `"volunteer"`, `"manager"`, or `"admin"`. |
 | `createdAt` | `timestamp` | Server timestamp when the user profile was initialized. |
+| `updatedAt` | `timestamp` | Server timestamp when the user profile was last updated. |
+
+#### Shift Roster Privacy & Access Control Rules
+
+The Shift Roster Modal (`shift-roster-modal`) allows participants to view roster occupancy while enforcing privacy boundaries:
+- **Shift Managers & Admins**: Can view all registered volunteers' full names, group/club affiliations, email addresses, phone numbers, and privacy badges (`🌐 Public` / `🔒 Private`). In Admin Mode, administrators can cancel individual registrations.
+- **Volunteers Viewing Roster**:
+  - **Self Row**: Volunteers see their own registration marked with a `You` badge, their group/club affiliation, their privacy status, and an inline link to edit profile settings.
+  - **Public Profiles**: Volunteers see other registered crew members' names and optional group/club affiliations. Contact details (email and mobile phone) are **never** exposed to volunteer viewers.
+  - **Private Profiles**: Volunteers see an anonymous space (`🔒 Volunteer - Private Profile`) indicating that the shift slot is occupied, without revealing the volunteer's name, group, email, or phone.
+  - **Shift Manager**: Volunteers see the assigned shift manager's name (or "Unassigned"); the manager's personal email is hidden from volunteer viewers.
 
 ---
 
@@ -496,11 +533,11 @@ While Cloud Functions execute using the Firebase Admin SDK (which bypasses secur
 
 | Collection | Path | Read Rule | Write / Mutation Rule |
 | :--- | :--- | :--- | :--- |
-| `config` | `/config/{configId}` | **Public** (`allow read: if true;`) | `admin` only (`isAdmin()`). Enables unauthenticated login screen branding while guarding writes. |
+| `config` | `/config/{configId}` | **Public** (`allow read: if true;`) | `admin` only (`isAdmin()`). Enables unauthenticated login screen branding (`/config/festival`) and volunteer reward milestone configuration (`/config/incentives`) while guarding writes. |
 | `users` | `/users/{userId}` | Authenticated users | Create only as `volunteer`; update profile only; only `admin` can mutate `role`. |
 | `shifts` | `/shifts/{shiftId}` | Authenticated users | Create/Delete: `admin` only. Update: `admin` or assigned `manager` (manager fields only). |
 | `registrations` | `/registrations/{regId}` | Authenticated users | `admin` only. Client writes disabled to prevent race conditions; mutations routed through `claimShift` / `cancelShift`. |
-| `incentives` | `/incentives/{incId}` | Authenticated users | `admin` only. |
+| `incentives` | `/incentives/{incId}` | Authenticated users | `admin` only. (Legacy fallback path; active incentive configuration stored in `/config/incentives`). |
 
 ---
 

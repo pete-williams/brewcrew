@@ -92,7 +92,7 @@ The **BrewCrew Platform** streamlines volunteer coordination for beer and cider 
 | `users` | `{userId}` | `fullName`, `email`, `role`, `createdAt`, `updatedAt` | User profile and RBAC permissions (`volunteer`, `manager`, `admin`). |
 | `shifts` | `{shiftId}` | `sessionId`, `categoryName`, `capacity`, `assignedCount`, `startTime`, `endTime`, `managerId`, `managerName`, `managerEmail` | Shift inventory, timestamps, categoryName area, and assigned area manager. |
 | `registrations` | `{shiftId}_{userId}` | `shiftId`, `userId`, `status`, `registeredAt` | Composite-key join mapping volunteer bookings to shifts. |
-| `incentives` | `{incentiveId}` | `hoursRequired`, `rewardName` | Reward tier threshold definitions. |
+| `config` | `festival`, `incentives` | `festivalName`, `sessions`, `items` (`hoursRequired`, `rewardName`) | Festival branding, schedule sessions, and volunteer reward milestone definitions. |
 
 ---
 

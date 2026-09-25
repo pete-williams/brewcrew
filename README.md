@@ -17,26 +17,27 @@ The **BrewCrew Platform** streamlines volunteer coordination for beer and cider 
 ## 🚀 Key Features
 
 ### 1. Volunteer Portal
-* **Interactive 7-Day Schedule Grid:** Filter shifts across 7 festival days and specific area categories (dynamically derived from active shifts, supporting arbitrary custom areas).
-* **Atomic Shift Booking:** Powered by Firestore transactions in Cloud Functions (`claimShift`) to eliminate race conditions and overbooking during registration bursts.
+* **Interactive Multi-Day Schedule & Smart Grouping:** Filter shifts across festival days and specific area categories (supporting arbitrary custom areas). Features a dual-mode View Switcher (**By Time Slot** vs. **By Area**) with local preference persistence, an interactive **Time Jump** quick-nav bar for fast scrolling to specific start times across ~50 concurrent shifts, smart accordions that auto-expand available shifts while collapsing filled slots, and prominent booked-shift banners.
+* **Atomic Shift Booking & Overlap Protection:** Powered by Firestore transactions in Cloud Functions (`claimShift`) to eliminate race conditions and overbooking. Automatically detects and prevents overlapping or simultaneous shift bookings for the same volunteer.
 * **My Shifts Dashboard:** Real-time personal schedule with built-in cancellation enforcement.
 * **7-Day Lockout Rule:** Prevents volunteers from cancelling shifts within 7 days of the shift start time, ensuring reliable staffing levels.
-* **Incentive Progress Tracker:** Dynamic visual progress bar tracking accumulated volunteer hours against milestone rewards:
-  * **4 Hours:** Free Festival Entry
-  * **8 Hours:** Entry Pass + Festival Volunteer T-Shirt
+* **Floating Pint Glass Incentive Tracker:** An interactive pint glass Floating Action Button (FAB) in the bottom-right corner that fills with golden ale as volunteers register for shift hours, crowning with a frothy foam head and celebration glow at 100%. Clicking reveals an anchored roadmap popover (or bottom sheet on mobile) displaying current progress, status badges (*Unlocked* 🍺, *Next Goal* 🎯, *Locked* 🔒), and configurable guest welcome explanation messaging.
 * **Automated Confirmations:** Event-driven Cloud Function (`onRegistrationCreated`) dispatches transactional email confirmations upon booking.
+* **User Profile & Avatar Customization:** Dedicated "My Profile" modal enabling volunteers to update their contact details, optional Group or Club affiliation (e.g., CAMRA branch, brewery team), and Roster Profile Visibility (`public` vs. `private`). Includes custom profile photo uploads with in-browser square auto-crop and compression (also available on account registration).
+* **Shift Roster Viewing with Privacy Protection:** Volunteers can view who is scheduled on any shift. Public profiles display member names, club badges, and photos; private profiles display as anonymous spaces (`🔒 Volunteer - Private Profile`). Contact details (email and phone) are strictly masked from volunteer viewers.
 
 ### 2. Shift Manager Experience
-* **Self-Service Shift Claiming:** Qualified shift managers can claim unassigned shifts (`assignShiftManager`) to lead specific bars or areas (strictly 1 manager per shift).
-* **Shift Roster Oversight:** Managers can view attendee rosters for their assigned shifts.
-* **Manager Relinquish:** Managers can unassign themselves if their availability changes prior to the event.
+* **In-Roster Shift Claiming & Relinquish:** Qualified shift managers can claim unassigned shifts (`assignShiftManager`) directly within the Shift Roster modal and release shifts back to unassigned status if their availability changes.
+* **Full Shift Roster Oversight:** Managers can view complete attendee rosters with verified contact information (email addresses and phone numbers) for operational coordination and safety.
 
 ### 3. Administrator Console
-* **Schedule & Shift Builder:** Create new festival shifts with customizable capacity, start/end dates and times, festival day index (1–7), and optional manager pre-assignment.
+* **Admin Mode UI Toggle:** Administrators default to Manager View upon sign-in for an uncluttered operational workflow, with an interactive toggle switch to enter Admin Mode and access privileged administrative controls.
+* **Schedule & Shift Builder:** Create and edit festival shifts with customizable capacity, start/end dates and times, session assignments, and optional manager pre-assignment.
 * **Volunteer Roster & Admin Overrides:** View registered volunteers on any shift and administratively cancel registrations when needed (bypassing the 7-day lockout).
 * **Crew Member Directory & RBAC:**
-  * Real-time search across all crew members by name or email.
+  * Real-time search across all crew members by name, email, or phone.
   * Role filtering (`volunteer`, `manager`, `admin`).
+  * Custom avatar thumbnail display.
   * Dynamic role promotion/demotion (`updateUserRole`) with safeguards preventing admins from accidentally revoking their own admin access.
 * **Mass Communication Broadcast:** Cloud Function endpoint (`sendAdminBroadcast`) allowing admins to dispatch email announcements to the volunteer crew.
 
@@ -89,7 +90,7 @@ The **BrewCrew Platform** streamlines volunteer coordination for beer and cider 
 
 | Collection | Document ID | Key Fields | Description |
 | :--- | :--- | :--- | :--- |
-| `users` | `{userId}` | `fullName`, `email`, `role`, `createdAt`, `updatedAt` | User profile and RBAC permissions (`volunteer`, `manager`, `admin`). |
+| `users` | `{userId}` | `fullName`, `email`, `phoneNumber`, `groupOrClub`, `profileVisibility`, `photoURL`, `role`, `createdAt`, `updatedAt` | User profile, contact details, optional club affiliation, roster privacy mode, avatar Data URL, and RBAC permissions (`volunteer`, `manager`, `admin`). |
 | `shifts` | `{shiftId}` | `sessionId`, `categoryName`, `capacity`, `assignedCount`, `startTime`, `endTime`, `managerId`, `managerName`, `managerEmail` | Shift inventory, timestamps, categoryName area, and assigned area manager. |
 | `registrations` | `{shiftId}_{userId}` | `shiftId`, `userId`, `status`, `registeredAt` | Composite-key join mapping volunteer bookings to shifts. |
 | `config` | `festival`, `incentives` | `festivalName`, `sessions`, `items` (`hoursRequired`, `rewardName`) | Festival branding, schedule sessions, and volunteer reward milestone definitions. |

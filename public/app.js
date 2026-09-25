@@ -189,6 +189,11 @@ window.toggleIncentivePopover = toggleIncentivePopover;
 window.openIncentivePopover = openIncentivePopover;
 window.closeIncentivePopover = closeIncentivePopover;
 window.handleGuestPopoverSignIn = handleGuestPopoverSignIn;
+window.toggleScheduleFilterDrawer = toggleScheduleFilterDrawer;
+window.setScheduleGroupingMode = setScheduleGroupingMode;
+window.toggleExpandAllSections = toggleExpandAllSections;
+window.exportAllShiftsToICS = exportAllShiftsToICS;
+window.exportSingleShiftToICS = exportSingleShiftToICS;
 
 // Manager Window Exports (Guarded by manager/admin role internally)
 window.managerClaimShift = managerClaimShift;
@@ -301,6 +306,15 @@ document.addEventListener("DOMContentLoaded", () => {
   // Immediately subscribe to festival settings (public read document)
   subscribeToFestivalConfig();
   subscribeToIncentivesConfig();
+
+  // Initialize schedule filter drawer state from localStorage
+  try {
+    const drawerOpen = localStorage.getItem("brewcrew_filter_drawer_open") === "true";
+    toggleScheduleFilterDrawer(drawerOpen);
+  } catch (e) {
+    console.warn("Could not read filter drawer state", e);
+  }
+  updateFilterDrawerBadges();
 
   // Bind navigation listeners
   const scheduleBtn = document.getElementById("nav-schedule-btn");
@@ -566,6 +580,7 @@ function switchView(viewName) {
     if (window.location.hash !== "#my-shifts") {
       window.location.hash = "#my-shifts";
     }
+    updateIncentiveAndMyShifts();
   } else if (viewName === "admin") {
     if (!isAdminMode()) {
       switchView("schedule");
@@ -1410,6 +1425,39 @@ async function handleSaveUserProfile(event) {
 }
 
 let toastTimeout = null;
+
+function showNotificationToast(htmlContent, type = "info") {
+  const toast = document.getElementById("admin-mode-toast");
+  if (!toast) return;
+
+  if (toastTimeout) {
+    clearTimeout(toastTimeout);
+    toastTimeout = null;
+  }
+
+  toast.classList.remove("hidden", "translate-y-12", "opacity-0");
+  void toast.offsetWidth;
+
+  let styleClasses = "bg-slate-900 text-slate-100 border-slate-700";
+  if (type === "success") {
+    styleClasses = "bg-emerald-950 text-emerald-100 border-emerald-500";
+  } else if (type === "warning") {
+    styleClasses = "bg-amber-950 text-amber-100 border-amber-500";
+  } else if (type === "error") {
+    styleClasses = "bg-rose-950 text-rose-100 border-rose-500";
+  }
+
+  toast.className = `fixed bottom-24 right-5 z-50 transform transition-all duration-300 flex items-center gap-2.5 px-4 py-3 rounded-xl shadow-xl text-xs font-bold border ${styleClasses} translate-y-0 opacity-100`;
+  toast.innerHTML = htmlContent;
+
+  toastTimeout = setTimeout(() => {
+    toast.classList.add("translate-y-12", "opacity-0");
+    setTimeout(() => {
+      toast.classList.add("hidden");
+    }, 300);
+  }, 3500);
+}
+
 function showAdminModeToast(isActive) {
   const toast = document.getElementById("admin-mode-toast");
   if (!toast) return;
@@ -1778,6 +1826,7 @@ function renderCategoryFilters() {
 function filterCategory(cat) {
   selectedCategory = cat;
   renderCategoryFilters();
+  updateFilterDrawerBadges();
   renderShifts(currentShiftsDocs);
 }
 
@@ -2054,6 +2103,7 @@ function updateFilterOpenOnlyButton() {
 function toggleOpenSpotsOnly() {
   filterOpenOnly = !filterOpenOnly;
   updateFilterOpenOnlyButton();
+  updateFilterDrawerBadges();
   renderShifts(currentShiftsDocs);
 }
 
@@ -2085,6 +2135,7 @@ function setScheduleGroupingMode(mode) {
   sectionExpansionOverrides.clear();
   allSectionsExpanded = null;
   updateScheduleGroupingButtons();
+  updateFilterDrawerBadges();
   renderShifts(currentShiftsDocs);
 }
 
@@ -2157,6 +2208,230 @@ function scrollToTimeSection(sectionId) {
       }, 1500);
     }
   }, 60);
+}
+
+// Schedule Filter Drawer & Controls
+function toggleScheduleFilterDrawer(forceState) {
+  const drawer = document.getElementById("schedule-filter-drawer");
+  const arrow = document.getElementById("filter-drawer-arrow");
+  const btn = document.getElementById("btn-toggle-filter-drawer");
+  if (!drawer) return;
+
+  const isCurrentlyOpen = !drawer.classList.contains("hidden");
+  const shouldOpen = typeof forceState === "boolean" ? forceState : !isCurrentlyOpen;
+
+  if (shouldOpen) {
+    drawer.classList.remove("hidden");
+    if (arrow) arrow.classList.add("rotate-180");
+    if (btn) btn.classList.add("bg-amber-100", "border-amber-400");
+  } else {
+    drawer.classList.add("hidden");
+    if (arrow) arrow.classList.remove("rotate-180");
+    if (btn) btn.classList.remove("bg-amber-100", "border-amber-400");
+  }
+
+  try {
+    localStorage.setItem("brewcrew_filter_drawer_open", shouldOpen ? "true" : "false");
+  } catch (e) {
+    console.warn("Could not save filter drawer state to localStorage", e);
+  }
+}
+
+function updateFilterDrawerBadges() {
+  const container = document.getElementById("filter-drawer-active-badges");
+  if (!container) return;
+
+  const activeBadges = [];
+  if (selectedCategory && selectedCategory !== "ALL") {
+    activeBadges.push(selectedCategory);
+  }
+  if (filterOpenOnly) {
+    activeBadges.push("Open Only");
+  }
+  if (scheduleGroupingMode === "area") {
+    activeBadges.push("By Area");
+  }
+
+  if (activeBadges.length === 0) {
+    container.classList.add("hidden");
+    container.innerHTML = "";
+  } else {
+    container.classList.remove("hidden");
+    container.innerHTML = `<span class="bg-amber-600 text-white text-[10px] font-extrabold px-1.5 py-0.5 rounded-full shadow-2xs">${activeBadges.length}</span>`;
+  }
+}
+
+// Calendar Export Utilities (RFC 5545 iCalendar standard)
+function parseShiftDate(ts) {
+  if (!ts) return new Date();
+  if (typeof ts.toDate === "function") return ts.toDate();
+  if (ts.seconds) return new Date(ts.seconds * 1000);
+  return new Date(ts);
+}
+
+function formatICSDate(date) {
+  const pad = n => String(n).padStart(2, "0");
+  return (
+    date.getUTCFullYear() +
+    pad(date.getUTCMonth() + 1) +
+    pad(date.getUTCDate()) +
+    "T" +
+    pad(date.getUTCHours()) +
+    pad(date.getUTCMinutes()) +
+    pad(date.getUTCSeconds()) +
+    "Z"
+  );
+}
+
+function escapeICSString(str) {
+  if (!str) return "";
+  return String(str)
+    .replace(/\\/g, "\\\\")
+    .replace(/;/g, "\\;")
+    .replace(/,/g, "\\,")
+    .replace(/\n/g, "\\n");
+}
+
+function generateICSContent(events) {
+  const nowStr = formatICSDate(new Date());
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//BrewCrew Volunteer Platform//EN",
+    "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH"
+  ];
+
+  events.forEach(evt => {
+    const uid = (evt.id || Math.random().toString(36).substring(2)) + "@brewcrew.festival";
+    const startStr = formatICSDate(evt.startDate);
+    const endStr = formatICSDate(evt.endDate);
+    const summary = escapeICSString(evt.summary || "Festival Volunteer Shift");
+    const description = escapeICSString(evt.description || "");
+    const location = escapeICSString(evt.location || "Festival Grounds");
+
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${uid}`);
+    lines.push(`DTSTAMP:${nowStr}`);
+    lines.push(`DTSTART:${startStr}`);
+    lines.push(`DTEND:${endStr}`);
+    lines.push(`SUMMARY:${summary}`);
+    if (description) lines.push(`DESCRIPTION:${description}`);
+    if (location) lines.push(`LOCATION:${location}`);
+    lines.push("STATUS:CONFIRMED");
+    lines.push("END:VEVENT");
+  });
+
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n");
+}
+
+function downloadICSFile(filename, content) {
+  const blob = new Blob([content], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.setAttribute("download", filename);
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+async function exportAllShiftsToICS() {
+  if (!currentUser) {
+    alert("Please sign in to export your volunteer schedule.");
+    return;
+  }
+
+  if (userRegistrations.size > 0 && userRegisteredShifts.size === 0) {
+    await updateIncentiveAndMyShifts();
+  }
+
+  if (userRegisteredShifts.size === 0) {
+    showNotificationToast("<span>ℹ️</span><span>No confirmed shifts to export yet. Book shifts on the schedule to add them to your calendar!</span>", "warning");
+    return;
+  }
+
+  const festivalName = (currentFestivalConfig && currentFestivalConfig.festivalName) || "Beer Festival";
+  const events = [];
+
+  userRegisteredShifts.forEach((shift, shiftId) => {
+    const startMs = getShiftStartTimeMs(shift.startTime);
+    const endMs = getShiftStartTimeMs(shift.endTime);
+    if (!startMs || !endMs) return;
+
+    const startDate = new Date(startMs);
+    const endDate = new Date(endMs);
+    const durationHours = Math.max(0, Math.round(((endMs - startMs) / (1000 * 3600)) * 10) / 10);
+    const role = shift.categoryName || "Volunteer";
+    const manager = shift.managerName || "Assigned On-Site";
+
+    events.push({
+      id: shiftId,
+      startDate,
+      endDate,
+      summary: `${festivalName}: ${role} Shift`,
+      description: `Role: ${role}\\nFestival: ${festivalName}\\nDuration: ${durationHours} hrs\\nManager: ${manager}\\nBrewCrew Volunteer Platform`,
+      location: festivalName
+    });
+  });
+
+  if (events.length === 0) {
+    showNotificationToast("<span>⚠️</span><span>Unable to generate calendar events for current shifts.</span>", "error");
+    return;
+  }
+
+  const icsContent = generateICSContent(events);
+  downloadICSFile("brewcrew_volunteer_schedule.ics", icsContent);
+  showNotificationToast(`<span>📅</span><span>Successfully exported <strong>${events.length} shift${events.length === 1 ? '' : 's'}</strong> to calendar (.ics)</span>`, "success");
+}
+
+async function exportSingleShiftToICS(shiftId) {
+  if (!currentUser) {
+    alert("Please sign in to export your shift.");
+    return;
+  }
+
+  let shift = userRegisteredShifts.get(shiftId);
+  if (!shift) {
+    try {
+      const doc = await db.collection("shifts").doc(shiftId).get();
+      if (doc.exists) {
+        shift = doc.data();
+      }
+    } catch (e) {
+      console.error("Error reading shift for calendar export:", e);
+    }
+  }
+
+  if (!shift) {
+    showNotificationToast("<span>⚠️</span><span>Shift details could not be found.</span>", "error");
+    return;
+  }
+
+  const festivalName = (currentFestivalConfig && currentFestivalConfig.festivalName) || "Beer Festival";
+  const startMs = getShiftStartTimeMs(shift.startTime);
+  const endMs = getShiftStartTimeMs(shift.endTime);
+  const startDate = new Date(startMs);
+  const endDate = new Date(endMs);
+  const durationHours = Math.max(0, Math.round(((endMs - startMs) / (1000 * 3600)) * 10) / 10);
+  const role = shift.categoryName || "Volunteer";
+  const manager = shift.managerName || "Assigned On-Site";
+
+  const event = {
+    id: shiftId,
+    startDate,
+    endDate,
+    summary: `${festivalName}: ${role} Shift`,
+    description: `Role: ${role}\\nFestival: ${festivalName}\\nDate: ${formatDate(shift.startTime)}\\nTime: ${formatTime(shift.startTime)} – ${formatTime(shift.endTime)} (${durationHours} hrs)\\nManager: ${manager}\\nBrewCrew Platform`,
+    location: festivalName
+  };
+
+  const icsContent = generateICSContent([event]);
+  const cleanRole = role.toLowerCase().replace(/[^a-z0-9]+/g, "_");
+  downloadICSFile(`brewcrew_shift_${cleanRole}.ics`, icsContent);
+  showNotificationToast(`<span>📅</span><span>Exported <strong>${role}</strong> shift to calendar (.ics)</span>`, "success");
 }
 
 // Day / Session Navigation: Two-Tier Day + Session Strip
@@ -2477,6 +2752,7 @@ function renderShifts(docs) {
   if (!grid) return;
 
   updateScheduleGroupingButtons();
+  updateFilterDrawerBadges();
 
   const currentSession = (currentFestivalConfig.sessions || defaultFestivalConfig.sessions).find(s => s.id === selectedSessionId);
   const sessionName = currentSession ? currentSession.name : "this session";
@@ -2918,11 +3194,14 @@ function subscribeToUserRegistrations(uid) {
     });
 }
 
-// Incentive Progress & My Shifts List
+// Incentive Progress & My Shifts List (Volunteer Schedule Hub)
 async function updateIncentiveAndMyShifts() {
   const listContainer = document.getElementById("my-shifts-list");
   const countBadge = document.getElementById("my-shifts-count");
   const menuCountBadge = document.getElementById("menu-my-shifts-count");
+  const statCountEl = document.getElementById("my-shifts-stat-count");
+  const statHoursEl = document.getElementById("my-shifts-stat-hours");
+  const statNextEl = document.getElementById("my-shifts-stat-next");
   const regCount = userRegistrations.size;
 
   if (countBadge) {
@@ -2959,12 +3238,18 @@ async function updateIncentiveAndMyShifts() {
     const isEl = document.getElementById("incentive-status");
     if (isEl) isEl.innerText = "Please sign in to view earned rewards.";
 
+    if (statCountEl) statCountEl.textContent = "0";
+    if (statHoursEl) statHoursEl.textContent = "0 hrs";
+    if (statNextEl) statNextEl.textContent = "Sign in to view";
+
     updateFloatingIncentiveWidget(0, maxMilestoneHours, incentives, true);
 
     if (listContainer) {
       listContainer.innerHTML = `
-        <div class="text-center py-8">
-          <p class="text-slate-500 mb-3">Please sign in to view and manage your registered shifts.</p>
+        <div class="text-center py-10 bg-white rounded-2xl border border-amber-200 shadow-xs p-6 space-y-3">
+          <span class="text-3xl block">📋</span>
+          <h3 class="text-base font-bold text-slate-800">Sign in to View Your Schedule</h3>
+          <p class="text-xs text-slate-500 max-w-md mx-auto">Please sign in to view your booked shifts, check volunteer rosters, and export to your calendar.</p>
         </div>
       `;
     }
@@ -2986,17 +3271,23 @@ async function updateIncentiveAndMyShifts() {
       }
     }
 
+    if (statCountEl) statCountEl.textContent = "0";
+    if (statHoursEl) statHoursEl.textContent = "0 hrs";
+    if (statNextEl) statNextEl.textContent = "No upcoming shifts";
+
     updateFloatingIncentiveWidget(0, maxMilestoneHours, incentives, false);
 
     if (listContainer) {
       listContainer.innerHTML = `
-        <div class="text-center py-8 bg-amber-50/50 rounded-lg border border-dashed border-amber-300">
-          <span class="text-3xl block mb-2">📋</span>
-          <p class="text-slate-700 font-semibold mb-1">No shifts booked yet</p>
-          <p class="text-slate-500 text-xs mb-4">Browse the festival schedule to pick shifts that match your availability.</p>
-          <button onclick="switchView('schedule')" class="bg-amber-700 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-semibold transition shadow-sm">
-            Explore Schedule
-          </button>
+        <div class="text-center py-10 bg-white rounded-2xl border border-dashed border-amber-300 shadow-2xs p-6 space-y-3">
+          <span class="text-3xl block">📋</span>
+          <h3 class="text-base font-bold text-slate-800">No Shifts Booked Yet</h3>
+          <p class="text-xs text-slate-500 max-w-md mx-auto">Browse the festival schedule to pick shifts that match your availability and start earning volunteer rewards!</p>
+          <div>
+            <button type="button" onclick="switchView('schedule')" class="bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold px-4 py-2 rounded-xl transition shadow-xs inline-flex items-center gap-1.5 cursor-pointer">
+              <span>➕</span> Browse Shifts
+            </button>
+          </div>
         </div>
       `;
     }
@@ -3034,6 +3325,26 @@ async function updateIncentiveAndMyShifts() {
     return (a.categoryName || "").localeCompare(b.categoryName || "");
   });
 
+  totalHours = Math.round(totalHours * 10) / 10;
+
+  // Update Summary Metrics Bar
+  if (statCountEl) statCountEl.textContent = String(userShifts.length);
+  if (statHoursEl) statHoursEl.textContent = `${totalHours} hrs`;
+
+  const nowMs = Date.now();
+  const upcomingShifts = userShifts.filter(s => getShiftStartTimeMs(s.startTime) > nowMs);
+  const nextShift = upcomingShifts.length > 0 ? upcomingShifts[0] : userShifts[0];
+  if (statNextEl) {
+    if (nextShift) {
+      const shiftDay = formatDate(nextShift.startTime);
+      const shiftTime = formatTime(nextShift.startTime);
+      statNextEl.innerHTML = `<span class="text-amber-950 font-bold">${escapeHtml(nextShift.categoryName || 'Shift')}</span> &bull; <span class="text-slate-600 font-medium">${shiftDay}, ${shiftTime}</span>`;
+      statNextEl.title = `${nextShift.categoryName || 'Shift'} on ${shiftDay} at ${shiftTime}`;
+    } else {
+      statNextEl.textContent = "No upcoming shifts";
+    }
+  }
+
   // Update Progress Bar
   const percentage = maxMilestoneHours > 0 ? Math.min((totalHours / maxMilestoneHours) * 100, 100) : 0;
   const pb = document.getElementById("progress-bar");
@@ -3066,39 +3377,110 @@ async function updateIncentiveAndMyShifts() {
   // Update Interactive Floating Pint Glass Widget & Roadmap Popover
   updateFloatingIncentiveWidget(totalHours, maxMilestoneHours, incentives, false);
 
-  // Render My Shifts List
+  // Render Day-Grouped Modernized My Shifts Hub
   if (listContainer) {
     listContainer.innerHTML = "";
+
+    // Group shifts by day (using formatDate)
+    const dayGroups = new Map();
     userShifts.forEach(shift => {
-      const isLocked = isShiftLocked(shift.startTime);
-      const card = document.createElement("div");
-      card.className = "border border-amber-200 rounded-lg p-4 bg-amber-50/40 hover:bg-amber-50/80 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3";
-      card.innerHTML = `
-        <div>
-          <div class="flex items-center gap-2 mb-1">
-            <span class="bg-amber-100 text-amber-900 text-xs font-semibold px-2 py-0.5 rounded">${escapeHtml(shift.categoryName || 'Bar Area')}</span>
-            <span class="text-xs text-slate-500 font-medium">${shift.durationHours} hrs</span>
-          </div>
-          <h4 class="font-bold text-slate-800 text-base">
-            ${formatDate(shift.startTime)} &bull; ${formatTime(shift.startTime)} &ndash; ${formatTime(shift.endTime)}
-          </h4>
-          <p class="text-xs text-slate-500 mt-0.5">
-            Manager: <span class="text-slate-700 font-medium">${escapeHtml(shift.managerName || 'Assigned On-Site')}</span>
-          </p>
+      const sDate = formatDate(shift.startTime) || "Scheduled Shifts";
+      if (!dayGroups.has(sDate)) {
+        dayGroups.set(sDate, []);
+      }
+      dayGroups.get(sDate).push(shift);
+    });
+
+    const sessionsList = currentFestivalConfig.sessions || defaultFestivalConfig.sessions || [];
+
+    dayGroups.forEach((groupShifts, dayLabel) => {
+      const groupHours = Math.round(groupShifts.reduce((acc, s) => acc + s.durationHours, 0) * 10) / 10;
+
+      const dayCard = document.createElement("div");
+      dayCard.className = "bg-white rounded-2xl shadow-xs border border-amber-200 overflow-hidden";
+
+      // Day Header Banner
+      const headerDiv = document.createElement("div");
+      headerDiv.className = "bg-amber-100/70 border-b border-amber-200 px-4 py-3 flex items-center justify-between gap-2 flex-wrap sm:flex-nowrap";
+      headerDiv.innerHTML = `
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="text-base text-amber-900">📅</span>
+          <h3 class="font-extrabold text-amber-950 text-sm sm:text-base truncate">${escapeHtml(dayLabel)}</h3>
         </div>
-        <div class="flex sm:flex-col items-end gap-1.5">
-          ${isLocked ? `
-            <span class="inline-flex items-center text-xs font-semibold px-3 py-1.5 rounded bg-slate-200 text-slate-600 cursor-not-allowed" title="Shifts cannot be cancelled within 7 days of shift date">
-              🔒 Locked (&lt; 7 Days)
-            </span>
-          ` : `
-            <button onclick="cancelShift('${shift.id}')" class="text-xs font-semibold px-3 py-1.5 rounded-lg bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 transition shadow-sm">
-              Cancel Shift
-            </button>
-          `}
+        <div class="flex items-center gap-2 text-xs font-bold shrink-0">
+          <span class="bg-white text-amber-900 px-2.5 py-0.5 rounded-full border border-amber-300 shadow-2xs">${groupShifts.length} shift${groupShifts.length === 1 ? '' : 's'}</span>
+          <span class="bg-amber-800 text-amber-50 px-2.5 py-0.5 rounded-full shadow-2xs">${groupHours} hrs</span>
         </div>
       `;
-      listContainer.appendChild(card);
+      dayCard.appendChild(headerDiv);
+
+      // Shift List Rows
+      const rowsDiv = document.createElement("div");
+      rowsDiv.className = "divide-y divide-amber-100";
+
+      groupShifts.forEach(shift => {
+        const isLocked = isShiftLocked(shift.startTime);
+        const session = sessionsList.find(s => s.id === shift.sessionId);
+        const sessionName = session ? session.name : "";
+
+        const row = document.createElement("div");
+        row.className = "p-4 hover:bg-amber-50/40 transition flex flex-col sm:flex-row sm:items-center justify-between gap-3";
+        row.innerHTML = `
+          <div class="space-y-1.5 min-w-0">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="bg-amber-800 text-amber-50 text-[11px] font-bold px-2.5 py-0.5 rounded-md shadow-2xs tracking-wide">
+                ${escapeHtml(shift.categoryName || 'General Area')}
+              </span>
+              ${sessionName ? `
+                <span class="bg-amber-100 text-amber-900 text-[11px] font-bold px-2 py-0.5 rounded-md border border-amber-300/80">
+                  ${escapeHtml(sessionName)}
+                </span>
+              ` : ''}
+              <span class="text-xs text-slate-500 font-semibold flex items-center gap-1">
+                <span>⏱️</span> ${shift.durationHours} hrs
+              </span>
+            </div>
+            <div class="text-slate-900 font-extrabold text-sm sm:text-base flex items-center gap-2">
+              <span>🕒</span>
+              <span>${formatTime(shift.startTime)} &ndash; ${formatTime(shift.endTime)}</span>
+            </div>
+            <div class="text-xs text-slate-500 flex items-center gap-1.5 flex-wrap">
+              <span>👔</span>
+              <span>Manager: <strong class="text-slate-700">${escapeHtml(shift.managerName || 'Assigned On-Site')}</strong></span>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-1.5 flex-wrap sm:flex-nowrap shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-100">
+            <button type="button" 
+                    onclick="openShiftRosterModal('${shift.id}')" 
+                    class="text-xs font-bold px-3 py-1.5 rounded-xl bg-white hover:bg-amber-50 text-amber-950 border border-amber-300 transition shadow-2xs flex items-center gap-1.5 cursor-pointer" 
+                    title="View shift roster and fellow volunteers">
+              <span>👥</span> Roster
+            </button>
+            <button type="button" 
+                    onclick="exportSingleShiftToICS('${shift.id}')" 
+                    class="text-xs font-bold px-3 py-1.5 rounded-xl bg-white hover:bg-amber-50 text-amber-950 border border-amber-300 transition shadow-2xs flex items-center gap-1.5 cursor-pointer" 
+                    title="Export this shift to calendar (.ics)">
+              <span>📅</span> Calendar
+            </button>
+            ${isLocked ? `
+              <span class="inline-flex items-center text-xs font-bold px-3 py-1.5 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 cursor-not-allowed" title="Shifts cannot be cancelled within 7 days of shift date">
+                🔒 Locked (&lt;7d)
+              </span>
+            ` : `
+              <button type="button" 
+                      onclick="cancelShift('${shift.id}')" 
+                      class="text-xs font-bold px-3 py-1.5 rounded-xl bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 transition shadow-2xs cursor-pointer">
+                Cancel Shift
+              </button>
+            `}
+          </div>
+        `;
+        rowsDiv.appendChild(row);
+      });
+
+      dayCard.appendChild(rowsDiv);
+      listContainer.appendChild(dayCard);
     });
   }
 }

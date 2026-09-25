@@ -23,6 +23,11 @@ let currentUser = null;
 let currentUserProfile = null;
 let currentUserRole = "volunteer";
 let userProfileUnsubscribe = null;
+let adminModeActive = false; // When true and currentUserRole === 'admin', administrator controls are active
+
+function isAdminMode() {
+  return currentUserRole === "admin" && adminModeActive;
+}
 
 let selectedSessionId = "sess_1";
 let selectedDayDate = "";
@@ -90,11 +95,48 @@ let adminEditingSessions = [];
 let adminInlineEditingSessionId = null;
 const adminExpandedSessionIds = new Set();
 
+// Incentives Configuration State (Default fallback + dynamic Firestore config/incentives)
+const defaultIncentivesConfig = {
+  items: [
+    {
+      id: "inc_1",
+      hours: 4,
+      hoursRequired: 4,
+      name: "Free Festival Entry Pass",
+      rewardName: "Free Festival Entry Pass",
+      description: "General admission festival entry pass"
+    },
+    {
+      id: "inc_2",
+      hours: 8,
+      hoursRequired: 8,
+      name: "Volunteer T-Shirt",
+      rewardName: "Volunteer T-Shirt",
+      description: "Official BrewCrew Festival Volunteer T-Shirt"
+    }
+  ]
+};
+
+let currentIncentivesConfig = JSON.parse(JSON.stringify(defaultIncentivesConfig));
+let incentivesConfigUnsubscribe = null;
+let adminEditingIncentives = [];
+let adminInlineEditingIncentiveId = null;
+
+function sortIncentivesByHours(items) {
+  if (!items || !Array.isArray(items)) return [];
+  return [...items].sort((a, b) => {
+    const hoursA = Number(a.hoursRequired ?? a.hours ?? 0);
+    const hoursB = Number(b.hoursRequired ?? b.hours ?? 0);
+    return hoursA - hoursB;
+  });
+}
+
 // Categories State (Dynamically derived from shift records)
 let availableCategories = [];
 
 // Realtime Registrations & Users Cache & Listeners
 const userRegistrations = new Map(); // shiftId -> regData
+const userRegisteredShifts = new Map(); // shiftId -> shiftData
 let shiftsUnsubscribe = null;
 let registrationsUnsubscribe = null;
 let currentShiftsDocs = [];
@@ -118,18 +160,35 @@ window.showAuthTab = showAuthTab;
 window.showAuthSubView = showAuthSubView;
 window.togglePasswordVisibility = togglePasswordVisibility;
 window.logout = logout;
+window.toggleUserMenu = toggleUserMenu;
+window.closeUserMenu = closeUserMenu;
+window.handleMenuAdminClick = handleMenuAdminClick;
+window.handleMenuScheduleClick = handleMenuScheduleClick;
+window.handleMenuMyShiftsClick = handleMenuMyShiftsClick;
+window.handleMenuLogout = handleMenuLogout;
 window.filterCategory = filterCategory;
 window.claimShift = claimShift;
 window.cancelShift = cancelShift;
 window.stepSession = stepSession;
 window.toggleOpenSpotsOnly = toggleOpenSpotsOnly;
 window.updateFilterOpenOnlyButton = updateFilterOpenOnlyButton;
+window.toggleAdminMode = toggleAdminMode;
+window.isAdminMode = isAdminMode;
 
 // Manager Window Exports (Guarded by manager/admin role internally)
 window.managerClaimShift = managerClaimShift;
 window.managerUnassignShift = managerUnassignShift;
+window.handleRosterClaimShift = handleRosterClaimShift;
+window.handleRosterReleaseShift = handleRosterReleaseShift;
+window.handleAdminReleaseShiftManager = handleAdminReleaseShiftManager;
 window.openShiftRosterModal = openShiftRosterModal;
 window.closeShiftRosterModal = closeShiftRosterModal;
+window.handleEditShiftClick = handleEditShiftClick;
+
+// User Profile Window Exports (Open to all authenticated users)
+window.openUserProfileModal = openUserProfileModal;
+window.closeUserProfileModal = closeUserProfileModal;
+window.handleSaveUserProfile = handleSaveUserProfile;
 
 // Dynamic Admin Function Management:
 // Ensure NONE of the API functions used by admins are available to non-admin users.
@@ -160,6 +219,13 @@ function updateAdminExports(isAdmin) {
     "saveEditFestivalSession",
     "cancelEditFestivalSession",
     "previewFestivalLogo",
+    "renderAdminIncentivesConfig",
+    "handleSaveIncentivesConfig",
+    "handleAddIncentive",
+    "handleRemoveIncentive",
+    "startEditIncentive",
+    "saveEditIncentive",
+    "cancelEditIncentive",
     "handleSendAdminBroadcast",
     "updateBroadcastTargetLabel",
     "toggleSessionShiftsAccordion",
@@ -191,6 +257,13 @@ function updateAdminExports(isAdmin) {
     window.saveEditFestivalSession = saveEditFestivalSession;
     window.cancelEditFestivalSession = cancelEditFestivalSession;
     window.previewFestivalLogo = previewFestivalLogo;
+    window.renderAdminIncentivesConfig = renderAdminIncentivesConfig;
+    window.handleSaveIncentivesConfig = handleSaveIncentivesConfig;
+    window.handleAddIncentive = handleAddIncentive;
+    window.handleRemoveIncentive = handleRemoveIncentive;
+    window.startEditIncentive = startEditIncentive;
+    window.saveEditIncentive = saveEditIncentive;
+    window.cancelEditIncentive = cancelEditIncentive;
     window.handleSendAdminBroadcast = handleSendAdminBroadcast;
     window.updateBroadcastTargetLabel = updateBroadcastTargetLabel;
     window.toggleSessionShiftsAccordion = toggleSessionShiftsAccordion;
@@ -208,6 +281,7 @@ updateAdminExports(false);
 document.addEventListener("DOMContentLoaded", () => {
   // Immediately subscribe to festival settings (public read document)
   subscribeToFestivalConfig();
+  subscribeToIncentivesConfig();
 
   // Bind navigation listeners
   const scheduleBtn = document.getElementById("nav-schedule-btn");
@@ -220,8 +294,25 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   const adminBtn = document.getElementById("nav-admin-btn");
   if (adminBtn) {
-    adminBtn.addEventListener("click", () => switchView("admin"));
+    adminBtn.addEventListener("click", () => {
+      closeUserMenu();
+      switchView("admin");
+    });
   }
+
+  // Dismiss user dropdown menu when clicking outside or pressing Escape
+  document.addEventListener("click", (e) => {
+    const authControls = document.getElementById("auth-controls");
+    if (authControls && !authControls.contains(e.target)) {
+      closeUserMenu();
+    }
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      closeUserMenu();
+    }
+  });
 
   // Setup Auth State Listener (Strict Gateway: Interface is completely hidden until authenticated)
   auth.onAuthStateChanged(user => {
@@ -245,22 +336,55 @@ document.addEventListener("DOMContentLoaded", () => {
         authenticatedApp.classList.remove("hidden");
       }
 
-      // 2. Populate Authenticated User Details in Navbar
+      // 2. Populate Authenticated User Details in User Initial Button & Dropdown
       const userInfo = document.getElementById("user-info");
       if (userInfo) {
         userInfo.classList.remove("hidden");
         userInfo.classList.add("flex");
       }
+
+      const initials = getUserInitials(user.displayName, user.email);
+      const userInitialsEl = document.getElementById("user-initials");
+      if (userInitialsEl) {
+        userInitialsEl.innerText = initials;
+      }
+      const menuInitialsEl = document.getElementById("menu-user-initials");
+      if (menuInitialsEl) {
+        menuInitialsEl.innerText = initials;
+      }
+
       const userNameEl = document.getElementById("user-name");
       if (userNameEl) {
-        userNameEl.innerText = user.displayName || user.email;
+        userNameEl.innerText = user.displayName || user.email || "Volunteer";
       }
+
+      const userEmailEl = document.getElementById("user-email");
+      if (userEmailEl) {
+        userEmailEl.innerText = user.email || "";
+      }
+
       const userAvatarEl = document.getElementById("user-avatar");
-      if (userAvatarEl) {
-        userAvatarEl.src = user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(user.displayName || user.email || "Volunteer")}&background=b45309&color=fff`;
+      const menuAvatarEl = document.getElementById("menu-user-avatar");
+      if (user.photoURL) {
+        if (userAvatarEl) {
+          userAvatarEl.src = user.photoURL;
+          userAvatarEl.classList.remove("hidden");
+          if (userInitialsEl) userInitialsEl.classList.add("hidden");
+        }
+        if (menuAvatarEl) {
+          menuAvatarEl.src = user.photoURL;
+          menuAvatarEl.classList.remove("hidden");
+          if (menuInitialsEl) menuInitialsEl.classList.add("hidden");
+        }
+      } else {
+        if (userAvatarEl) userAvatarEl.classList.add("hidden");
+        if (userInitialsEl) userInitialsEl.classList.remove("hidden");
+        if (menuAvatarEl) menuAvatarEl.classList.add("hidden");
+        if (menuInitialsEl) menuInitialsEl.classList.remove("hidden");
       }
 
       // 3. Sync User Profile & Initialize Authenticated Realtime Listeners
+      adminModeActive = false; // Default to Manager view upon login as requested
       syncUserProfile(user);
       subscribeToCurrentUserProfile(user.uid);
       subscribeToUserRegistrations(user.uid);
@@ -271,8 +395,10 @@ document.addEventListener("DOMContentLoaded", () => {
       initRoute();
     } else {
       // Unauthenticated State: Ensure interface is NOT loaded and only login prompt is visible
+      closeUserMenu();
       currentUserProfile = null;
       currentUserRole = "volunteer";
+      adminModeActive = false;
 
       // 1. Hide Authenticated App, Show Login Prompt Screen
       if (authenticatedApp) {
@@ -307,6 +433,7 @@ document.addEventListener("DOMContentLoaded", () => {
       availableCategories = [];
       allUsersMap.clear();
       userRegistrations.clear();
+      userRegisteredShifts.clear();
       currentShiftsDocs = [];
 
       // 3. Clear Auth Form Inputs & Alerts
@@ -330,7 +457,11 @@ function initRoute() {
   if (hash === "#my-shifts" || window.location.pathname.endsWith("/my-shifts")) {
     switchView("my-shifts");
   } else if (hash === "#admin") {
-    if (currentUserRole === "admin") {
+    if (isAdminMode()) {
+      switchView("admin");
+    } else if (currentUserRole === "admin") {
+      adminModeActive = true;
+      updateRoleUI();
       switchView("admin");
     } else {
       window.location.hash = "#schedule";
@@ -345,7 +476,11 @@ function initRoute() {
     if (window.location.hash === "#my-shifts") {
       switchView("my-shifts");
     } else if (window.location.hash === "#admin") {
-      if (currentUserRole === "admin") {
+      if (isAdminMode()) {
+        switchView("admin");
+      } else if (currentUserRole === "admin") {
+        adminModeActive = true;
+        updateRoleUI();
         switchView("admin");
       } else {
         window.location.hash = "#schedule";
@@ -358,8 +493,13 @@ function initRoute() {
 }
 
 function switchView(viewName) {
-  if (viewName === "admin" && currentUserRole !== "admin") {
-    viewName = "schedule";
+  if (viewName === "admin" && !isAdminMode()) {
+    if (currentUserRole === "admin") {
+      adminModeActive = true;
+      updateRoleUI();
+    } else {
+      viewName = "schedule";
+    }
   }
   currentView = viewName;
 
@@ -371,46 +511,50 @@ function switchView(viewName) {
   const navMyShiftsBtn = document.getElementById("nav-my-shifts-btn");
   const navAdminBtn = document.getElementById("nav-admin-btn");
 
-  const activeClass = "px-3.5 py-1.5 rounded-md text-sm font-semibold transition bg-amber-700 text-white shadow-sm flex items-center";
-  const inactiveClass = "px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white flex items-center";
-  const hiddenAdminClass = "hidden px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white items-center";
+  const activeTabClass = "px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs sm:text-sm font-semibold transition bg-amber-700 text-white shadow-sm flex items-center gap-1 sm:gap-1.5";
+  const inactiveTabClass = "px-2 sm:px-3 py-1 sm:py-1.5 rounded-md text-xs sm:text-sm font-semibold transition text-amber-200 hover:text-white flex items-center gap-1 sm:gap-1.5";
+
+  const activeDropdownAdminClass = "w-full px-3 py-2 text-left text-xs sm:text-sm font-bold text-purple-950 bg-purple-100 border border-purple-300 rounded-xl transition flex items-center justify-between group shadow-xs";
+  const inactiveDropdownAdminClass = "w-full px-3 py-2 text-left text-xs sm:text-sm font-semibold text-purple-900 bg-purple-50/80 hover:bg-purple-100 border border-transparent rounded-xl transition flex items-center justify-between group";
 
   if (scheduleView) scheduleView.classList.add("hidden");
   if (myShiftsView) myShiftsView.classList.add("hidden");
   if (adminView) adminView.classList.add("hidden");
 
-  if (navScheduleBtn) navScheduleBtn.className = inactiveClass;
-  if (navMyShiftsBtn) navMyShiftsBtn.className = inactiveClass;
+  if (navScheduleBtn) navScheduleBtn.className = inactiveTabClass;
+  if (navMyShiftsBtn) navMyShiftsBtn.className = inactiveTabClass;
 
   if (navAdminBtn) {
-    if (currentUserRole === "admin") {
-      navAdminBtn.className = (viewName === "admin") ? activeClass : inactiveClass;
+    if (isAdminMode()) {
+      navAdminBtn.classList.remove("hidden");
+      navAdminBtn.className = (viewName === "admin") ? activeDropdownAdminClass : inactiveDropdownAdminClass;
     } else {
-      navAdminBtn.className = hiddenAdminClass;
+      navAdminBtn.classList.add("hidden");
     }
   }
 
   if (viewName === "my-shifts") {
     if (myShiftsView) myShiftsView.classList.remove("hidden");
-    if (navMyShiftsBtn) navMyShiftsBtn.className = activeClass;
+    if (navMyShiftsBtn) navMyShiftsBtn.className = activeTabClass;
     if (window.location.hash !== "#my-shifts") {
       window.location.hash = "#my-shifts";
     }
   } else if (viewName === "admin") {
-    if (currentUserRole !== "admin") {
+    if (!isAdminMode()) {
       switchView("schedule");
       return;
     }
     if (adminView) adminView.classList.remove("hidden");
-    if (navAdminBtn) navAdminBtn.className = activeClass;
+    if (navAdminBtn) navAdminBtn.className = activeDropdownAdminClass;
     if (window.location.hash !== "#admin") {
       window.location.hash = "#admin";
     }
     renderAdminUsers();
     renderAdminFestivalConfig();
+    renderAdminIncentivesConfig();
   } else {
     if (scheduleView) scheduleView.classList.remove("hidden");
-    if (navScheduleBtn) navScheduleBtn.className = activeClass;
+    if (navScheduleBtn) navScheduleBtn.className = activeTabClass;
     if (window.location.hash !== "#schedule") {
       window.location.hash = "#schedule";
     }
@@ -476,6 +620,8 @@ async function handleEmailSignUp(event) {
   const nameInput = document.getElementById("register-name");
   const emailInput = document.getElementById("register-email");
   const phoneInput = document.getElementById("register-phone");
+  const groupInput = document.getElementById("register-group");
+  const visibilityInput = document.getElementById("register-visibility");
   const passwordInput = document.getElementById("register-password");
   const confirmPasswordInput = document.getElementById("register-confirm-password");
   const submitBtn = document.getElementById("btn-submit-register");
@@ -484,6 +630,8 @@ async function handleEmailSignUp(event) {
   const fullName = nameInput?.value?.trim();
   const email = emailInput?.value?.trim();
   const phoneNumber = phoneInput?.value?.trim();
+  const groupOrClub = groupInput?.value?.trim() || "";
+  const profileVisibility = visibilityInput?.value === "private" ? "private" : "public";
   const password = passwordInput?.value;
   const confirmPassword = confirmPasswordInput?.value;
 
@@ -525,6 +673,8 @@ async function handleEmailSignUp(event) {
       fullName: fullName,
       email: email.toLowerCase(),
       phoneNumber: phoneNumber,
+      groupOrClub: groupOrClub,
+      profileVisibility: profileVisibility,
       role: "volunteer",
       createdAt: firebase.firestore.FieldValue.serverTimestamp()
     });
@@ -664,7 +814,68 @@ function getFriendlyAuthErrorMessage(error) {
   }
 }
 
+// User Menu and Initials Helper Functions
+function getUserInitials(name, email) {
+  if (name && typeof name === "string" && name.trim()) {
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  if (email && typeof email === "string" && email.trim()) {
+    const localPart = email.split("@")[0].replace(/[^a-zA-Z0-9]/g, "");
+    return localPart.slice(0, 2).toUpperCase() || "U";
+  }
+  return "U";
+}
+
+function toggleUserMenu() {
+  const dropdown = document.getElementById("user-menu-dropdown");
+  const btn = document.getElementById("user-menu-btn");
+  if (!dropdown) return;
+  const isHidden = dropdown.classList.contains("hidden");
+  if (isHidden) {
+    dropdown.classList.remove("hidden");
+    if (btn) btn.setAttribute("aria-expanded", "true");
+  } else {
+    dropdown.classList.add("hidden");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+  }
+}
+
+function closeUserMenu() {
+  const dropdown = document.getElementById("user-menu-dropdown");
+  const btn = document.getElementById("user-menu-btn");
+  if (dropdown) dropdown.classList.add("hidden");
+  if (btn) btn.setAttribute("aria-expanded", "false");
+}
+
+function handleMenuAdminClick() {
+  closeUserMenu();
+  if (currentUserRole === "admin" && !adminModeActive) {
+    toggleAdminMode(true);
+  }
+  switchView("admin");
+}
+
+function handleMenuScheduleClick() {
+  closeUserMenu();
+  switchView("schedule");
+}
+
+function handleMenuMyShiftsClick() {
+  closeUserMenu();
+  switchView("my-shifts");
+}
+
+function handleMenuLogout() {
+  closeUserMenu();
+  logout();
+}
+
 function logout() {
+  closeUserMenu();
   auth.signOut().catch(err => console.error("Sign out error:", err));
 }
 
@@ -678,14 +889,24 @@ async function syncUserProfile(user) {
         email: user.email,
         role: "volunteer",
         phoneNumber: "",
+        groupOrClub: "",
+        profileVisibility: "public",
         createdAt: firebase.firestore.FieldValue.serverTimestamp()
       });
     } else {
       const data = doc.data();
+      const updates = {};
       if ((!data.fullName || data.fullName === "Volunteer") && user.displayName) {
-        await userRef.update({
-          fullName: user.displayName
-        });
+        updates.fullName = user.displayName;
+      }
+      if (!data.profileVisibility) {
+        updates.profileVisibility = "public";
+      }
+      if (data.groupOrClub === undefined) {
+        updates.groupOrClub = "";
+      }
+      if (Object.keys(updates).length > 0) {
+        await userRef.update(updates);
       }
     }
   } catch (err) {
@@ -702,6 +923,43 @@ function subscribeToCurrentUserProfile(uid) {
     if (doc.exists) {
       currentUserProfile = doc.data();
       currentUserRole = currentUserProfile.role || "volunteer";
+      if (currentUserProfile.fullName) {
+        const name = currentUserProfile.fullName;
+        const initials = getUserInitials(name, currentUser ? currentUser.email : "");
+        const userInitialsEl = document.getElementById("user-initials");
+        if (userInitialsEl) userInitialsEl.innerText = initials;
+        const menuInitialsEl = document.getElementById("menu-user-initials");
+        if (menuInitialsEl) menuInitialsEl.innerText = initials;
+        const userNameEl = document.getElementById("user-name");
+        if (userNameEl) userNameEl.innerText = name;
+      }
+
+      // Update Group or Club in user dropdown menu
+      const menuGroupWrap = document.getElementById("menu-user-group-wrap");
+      const menuGroup = document.getElementById("menu-user-group");
+      if (menuGroupWrap && menuGroup) {
+        const group = (currentUserProfile.groupOrClub || "").trim();
+        if (group) {
+          menuGroup.textContent = group;
+          menuGroupWrap.classList.remove("hidden");
+        } else {
+          menuGroupWrap.classList.add("hidden");
+        }
+      }
+
+      // Update Roster Profile Visibility badge in user dropdown menu
+      const menuVisibilityBadge = document.getElementById("menu-user-visibility-badge");
+      if (menuVisibilityBadge) {
+        const isPrivate = currentUserProfile.profileVisibility === "private";
+        menuVisibilityBadge.textContent = isPrivate ? "🔒 Private" : "🌐 Public";
+        if (isPrivate) {
+          menuVisibilityBadge.className = "inline-flex text-[10px] font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-300";
+          menuVisibilityBadge.title = "Profile is private: hidden from other volunteers on shift rosters";
+        } else {
+          menuVisibilityBadge.className = "inline-flex text-[10px] font-semibold px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-800 border border-emerald-300";
+          menuVisibilityBadge.title = "Profile is public: name & group visible to other volunteers on rosters";
+        }
+      }
     } else {
       currentUserProfile = null;
       currentUserRole = "volunteer";
@@ -720,7 +978,7 @@ function subscribeToCurrentUserProfile(uid) {
 
     if (currentUserRole === "admin") {
       subscribeToAllUsers();
-      if (window.location.hash === "#admin") {
+      if (window.location.hash === "#admin" && isAdminMode()) {
         switchView("admin");
       }
     } else if (currentUserRole === "manager") {
@@ -741,7 +999,7 @@ function subscribeToCurrentUserProfile(uid) {
 
     renderShifts(currentShiftsDocs);
 
-    if (currentView === "admin" && currentUserRole !== "admin") {
+    if (currentView === "admin" && !isAdminMode()) {
       switchView("schedule");
     }
   }, err => {
@@ -790,49 +1048,373 @@ async function handleRequiredPhoneSubmit(event) {
   }
 }
 
+// ============================================================================
+// User Profile Management (Name, Phone, Group/Club, Public/Private Privacy)
+// ============================================================================
+function openUserProfileModal() {
+  if (!currentUser) {
+    if (typeof showAuthModal === "function") {
+      showAuthModal();
+    }
+    return;
+  }
+  closeUserMenu();
+
+  const modal = document.getElementById("user-profile-modal");
+  const alertEl = document.getElementById("user-profile-alert");
+  const nameInput = document.getElementById("profile-name");
+  const emailInput = document.getElementById("profile-email");
+  const phoneInput = document.getElementById("profile-phone");
+  const groupInput = document.getElementById("profile-group");
+  const visibilitySelect = document.getElementById("profile-visibility");
+
+  if (alertEl) {
+    alertEl.className = "hidden p-3 rounded-lg text-xs";
+    alertEl.innerText = "";
+  }
+
+  const profile = currentUserProfile || {};
+  if (nameInput) nameInput.value = profile.fullName || currentUser.displayName || "";
+  if (emailInput) emailInput.value = currentUser.email || profile.email || "";
+  if (phoneInput) phoneInput.value = profile.phoneNumber || "";
+  if (groupInput) groupInput.value = profile.groupOrClub || "";
+  if (visibilitySelect) visibilitySelect.value = profile.profileVisibility === "private" ? "private" : "public";
+
+  if (modal) modal.classList.remove("hidden");
+}
+
+function closeUserProfileModal() {
+  const modal = document.getElementById("user-profile-modal");
+  if (modal) modal.classList.add("hidden");
+}
+
+async function handleSaveUserProfile(event) {
+  event.preventDefault();
+  if (!currentUser) return;
+
+  const alertEl = document.getElementById("user-profile-alert");
+  const nameInput = document.getElementById("profile-name");
+  const phoneInput = document.getElementById("profile-phone");
+  const groupInput = document.getElementById("profile-group");
+  const visibilitySelect = document.getElementById("profile-visibility");
+  const saveBtn = document.getElementById("btn-save-profile");
+
+  const fullName = nameInput?.value?.trim();
+  const phoneNumber = phoneInput?.value?.trim();
+  const groupOrClub = groupInput?.value?.trim() || "";
+  const profileVisibility = visibilitySelect?.value === "private" ? "private" : "public";
+
+  if (!fullName) {
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-300";
+      alertEl.innerText = "Please enter your full name.";
+      alertEl.classList.remove("hidden");
+    }
+    return;
+  }
+
+  if (!phoneNumber) {
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-300";
+      alertEl.innerText = "Mobile phone number is mandatory for volunteer coordination.";
+      alertEl.classList.remove("hidden");
+    }
+    return;
+  }
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = `<span>⏳</span> Saving...`;
+  }
+
+  try {
+    // 1. Update Firebase Auth displayName if changed
+    if (currentUser.displayName !== fullName) {
+      await currentUser.updateProfile({ displayName: fullName });
+    }
+
+    // 2. Update Firestore user profile
+    await db.collection("users").doc(currentUser.uid).set({
+      fullName: fullName,
+      phoneNumber: phoneNumber,
+      groupOrClub: groupOrClub,
+      profileVisibility: profileVisibility,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }, { merge: true });
+
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-300";
+      alertEl.innerText = "Profile updated successfully!";
+      alertEl.classList.remove("hidden");
+    }
+
+    // Give visual confirmation, then close modal and refresh active views
+    setTimeout(() => {
+      closeUserProfileModal();
+      if (activeRosterShiftId) {
+        openShiftRosterModal(activeRosterShiftId);
+      }
+    }, 600);
+  } catch (err) {
+    console.error("Failed to update user profile:", err);
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-300";
+      alertEl.innerText = "Failed to update profile: " + err.message;
+      alertEl.classList.remove("hidden");
+    }
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = `<span>💾</span> Save Profile`;
+    }
+  }
+}
+
+let toastTimeout = null;
+function showAdminModeToast(isActive) {
+  const toast = document.getElementById("admin-mode-toast");
+  if (!toast) return;
+
+  if (toastTimeout) {
+    clearTimeout(toastTimeout);
+    toastTimeout = null;
+  }
+
+  toast.classList.remove("hidden", "translate-y-12", "opacity-0");
+  void toast.offsetWidth;
+
+  if (isActive) {
+    toast.className = "fixed bottom-5 right-5 z-50 transform transition-all duration-300 flex items-center gap-2.5 px-4 py-3 rounded-xl shadow-xl text-xs font-bold border bg-purple-950 text-purple-100 border-purple-400 translate-y-0 opacity-100";
+    toast.innerHTML = `<span class="text-base">👑</span><span><strong>Admin Mode Activated:</strong> Administrator controls (create shifts, assign managers, manage registrations) are enabled.</span>`;
+  } else {
+    toast.className = "fixed bottom-5 right-5 z-50 transform transition-all duration-300 flex items-center gap-2.5 px-4 py-3 rounded-xl shadow-xl text-xs font-bold border bg-slate-900 text-slate-100 border-slate-700 translate-y-0 opacity-100";
+    toast.innerHTML = `<span class="text-base">👔</span><span><strong>Manager View Activated:</strong> Administrator controls are now hidden.</span>`;
+  }
+
+  toastTimeout = setTimeout(() => {
+    toast.classList.add("translate-y-12", "opacity-0");
+    setTimeout(() => {
+      toast.classList.add("hidden");
+    }, 300);
+  }, 3500);
+}
+
+function toggleAdminMode(targetState) {
+  if (currentUserRole !== "admin") return;
+  if (typeof targetState === "boolean") {
+    adminModeActive = targetState;
+  } else {
+    adminModeActive = !adminModeActive;
+  }
+
+  // If turning admin mode off while viewing admin panel, redirect to schedule view
+  if (!adminModeActive && currentView === "admin") {
+    switchView("schedule");
+  }
+
+  updateRoleUI();
+  renderShifts(currentShiftsDocs);
+  if (activeRosterShiftId) {
+    openShiftRosterModal(activeRosterShiftId);
+  }
+
+  showAdminModeToast(adminModeActive);
+}
+
 function updateRoleUI() {
   const roleBadge = document.getElementById("user-role-badge");
   const navAdminBtn = document.getElementById("nav-admin-btn");
   const adminScheduleBar = document.getElementById("admin-schedule-bar");
+  const adminManagerModeBar = document.getElementById("admin-manager-mode-bar");
+  const roleDot = document.getElementById("user-role-dot");
+  const roleBadgeIcon = document.getElementById("user-role-badge-icon");
 
-  const activeClass = "px-3.5 py-1.5 rounded-md text-sm font-semibold transition bg-amber-700 text-white shadow-sm flex items-center";
-  const inactiveClass = "px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white flex items-center";
-  const hiddenAdminClass = "hidden px-3.5 py-1.5 rounded-md text-sm font-semibold transition text-amber-200 hover:text-white items-center";
+  // Header Nav Toggle Elements
+  const navToggleWrap = document.getElementById("admin-mode-nav-toggle-wrap");
+  const navAdminBtnEl = document.getElementById("admin-mode-nav-btn");
+  const navIcon = document.getElementById("nav-admin-mode-icon");
+  const navText = document.getElementById("nav-admin-mode-text");
+  const navSlider = document.getElementById("nav-admin-mode-slider");
+  const navThumb = document.getElementById("nav-admin-mode-slider-thumb");
+
+  // User Dropdown Card Toggle Elements
+  const menuAdminCard = document.getElementById("menu-admin-mode-card");
+  const menuIcon = document.getElementById("menu-admin-mode-icon");
+  const menuTitle = document.getElementById("menu-admin-mode-title");
+  const menuDesc = document.getElementById("menu-admin-mode-desc");
+  const menuToggleBtn = document.getElementById("menu-admin-mode-toggle-btn");
+  const menuThumb = document.getElementById("menu-admin-mode-thumb");
+
+  const activeDropdownAdminClass = "w-full px-3 py-2 text-left text-xs sm:text-sm font-bold text-purple-950 bg-purple-100 border border-purple-300 rounded-xl transition flex items-center justify-between group shadow-xs";
+  const inactiveDropdownAdminClass = "w-full px-3 py-2 text-left text-xs sm:text-sm font-semibold text-purple-900 bg-purple-50/80 hover:bg-purple-100 border border-transparent rounded-xl transition flex items-center justify-between group";
 
   if (currentUser) {
     if (roleBadge) {
       roleBadge.classList.remove("hidden");
       if (currentUserRole === "admin") {
-        roleBadge.className = "text-[10px] font-bold px-1.5 py-0.5 rounded w-fit uppercase tracking-wider bg-purple-100 text-purple-900 border border-purple-300";
-        roleBadge.innerText = "👑 Admin";
+        if (adminModeActive) {
+          roleBadge.className = "inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider bg-purple-100 text-purple-900 border border-purple-300";
+          roleBadge.innerText = "👑 Admin";
+        } else {
+          roleBadge.className = "inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider bg-blue-100 text-blue-900 border border-blue-300";
+          roleBadge.innerText = "👔 Manager (Admin)";
+        }
       } else if (currentUserRole === "manager") {
-        roleBadge.className = "text-[10px] font-bold px-1.5 py-0.5 rounded w-fit uppercase tracking-wider bg-blue-100 text-blue-900 border border-blue-300";
+        roleBadge.className = "inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider bg-blue-100 text-blue-900 border border-blue-300";
         roleBadge.innerText = "👔 Manager";
       } else {
-        roleBadge.className = "text-[10px] font-bold px-1.5 py-0.5 rounded w-fit uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-300";
+        roleBadge.className = "inline-flex text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-300";
         roleBadge.innerText = "🤝 Volunteer";
+      }
+    }
+
+    if (roleDot) {
+      roleDot.classList.remove("hidden");
+      if (currentUserRole === "admin") {
+        if (adminModeActive) {
+          roleDot.className = "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-amber-900 bg-purple-400";
+          roleDot.title = "Role: Administrator (Admin Mode Active)";
+        } else {
+          roleDot.className = "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-amber-900 bg-blue-400";
+          roleDot.title = "Role: Administrator (Viewing as Manager)";
+        }
+      } else if (currentUserRole === "manager") {
+        roleDot.className = "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-amber-900 bg-blue-400";
+        roleDot.title = "Role: Shift Manager";
+      } else {
+        roleDot.className = "absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-amber-900 bg-amber-400";
+        roleDot.title = "Role: Volunteer";
+      }
+    }
+
+    if (roleBadgeIcon) {
+      roleBadgeIcon.classList.remove("hidden");
+      if (currentUserRole === "admin") {
+        if (adminModeActive) {
+          roleBadgeIcon.innerText = "👑";
+          roleBadgeIcon.className = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full border border-white bg-purple-700 text-white flex items-center justify-center text-[9px] leading-none shadow-xs select-none";
+          roleBadgeIcon.title = "Role: Administrator (Admin Mode Active)";
+        } else {
+          roleBadgeIcon.innerText = "👔";
+          roleBadgeIcon.className = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full border border-white bg-blue-700 text-white flex items-center justify-center text-[9px] leading-none shadow-xs select-none";
+          roleBadgeIcon.title = "Role: Administrator (Viewing as Manager)";
+        }
+      } else if (currentUserRole === "manager") {
+        roleBadgeIcon.innerText = "👔";
+        roleBadgeIcon.className = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full border border-white bg-blue-700 text-white flex items-center justify-center text-[9px] leading-none shadow-xs select-none";
+        roleBadgeIcon.title = "Role: Shift Manager";
+      } else {
+        roleBadgeIcon.innerText = "🤝";
+        roleBadgeIcon.className = "absolute -bottom-1 -right-1 w-4 h-4 rounded-full border border-white bg-amber-800 text-white flex items-center justify-center text-[9px] leading-none shadow-xs select-none";
+        roleBadgeIcon.title = "Role: Volunteer";
       }
     }
   } else {
     if (roleBadge) roleBadge.classList.add("hidden");
+    if (roleDot) roleDot.classList.add("hidden");
+    if (roleBadgeIcon) roleBadgeIcon.classList.add("hidden");
   }
 
   if (currentUserRole === "admin") {
+    // Header Nav Toggle (if element exists)
+    if (navToggleWrap) {
+      navToggleWrap.classList.remove("hidden");
+      navToggleWrap.classList.add("flex");
+    }
+    if (adminModeActive) {
+      if (navAdminBtnEl) {
+        navAdminBtnEl.className = "flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-full text-xs font-bold transition-all duration-200 select-none border border-purple-400/80 bg-gradient-to-r from-purple-900/90 to-amber-950/90 hover:from-purple-800 hover:to-amber-900 text-purple-100 shadow-sm";
+        navAdminBtnEl.title = "Admin Mode is Active (Click to switch to Manager View)";
+      }
+      if (navIcon) navIcon.innerText = "👑";
+      if (navText) navText.innerText = "Admin Mode";
+      if (navSlider) navSlider.className = "relative inline-flex h-3.5 w-6 sm:h-4 sm:w-7 shrink-0 cursor-pointer rounded-full bg-gradient-to-r from-purple-500 to-amber-400 transition-colors duration-200 ease-in-out";
+      if (navThumb) navThumb.className = "inline-block h-2.5 w-2.5 sm:h-3 sm:w-3 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out translate-x-3 sm:translate-x-3.5 mt-0.5";
+    } else {
+      if (navAdminBtnEl) {
+        navAdminBtnEl.className = "flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-full text-xs font-bold transition-all duration-200 select-none border border-amber-400/40 bg-amber-950/70 hover:bg-amber-950 text-amber-200 shadow-2xs";
+        navAdminBtnEl.title = "Viewing as Manager (Click to enter Admin Mode)";
+      }
+      if (navIcon) navIcon.innerText = "👔";
+      if (navText) navText.innerText = "Manager View";
+      if (navSlider) navSlider.className = "relative inline-flex h-3.5 w-6 sm:h-4 sm:w-7 shrink-0 cursor-pointer rounded-full bg-slate-600 transition-colors duration-200 ease-in-out";
+      if (navThumb) navThumb.className = "inline-block h-2.5 w-2.5 sm:h-3 sm:w-3 transform rounded-full bg-white shadow-xs transition duration-200 ease-in-out translate-x-0.5 mt-0.5";
+    }
+
+    // Dropdown Menu Card
+    if (menuAdminCard) menuAdminCard.classList.remove("hidden");
+    if (adminModeActive) {
+      if (menuIcon) menuIcon.innerText = "👑";
+      if (menuTitle) menuTitle.innerText = "Admin Mode Active";
+      if (menuDesc) menuDesc.innerText = "Administrator controls are enabled";
+      if (menuToggleBtn) {
+        menuToggleBtn.className = "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-purple-500 bg-purple-600";
+        menuToggleBtn.setAttribute("aria-checked", "true");
+        menuToggleBtn.title = "Click to switch to Manager View";
+      }
+      if (menuThumb) menuThumb.className = "pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out translate-x-4";
+    } else {
+      if (menuIcon) menuIcon.innerText = "👔";
+      if (menuTitle) menuTitle.innerText = "Manager View Active";
+      if (menuDesc) menuDesc.innerText = "Admin options are hidden";
+      if (menuToggleBtn) {
+        menuToggleBtn.className = "relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none focus:ring-2 focus:ring-amber-500 bg-slate-300";
+        menuToggleBtn.setAttribute("aria-checked", "false");
+        menuToggleBtn.title = "Click to enter Admin Mode";
+      }
+      if (menuThumb) menuThumb.className = "pointer-events-none inline-block h-4 w-4 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out translate-x-0";
+    }
+
+    // Schedule Action & Manager Mode Bars
+    if (adminModeActive) {
+      if (adminScheduleBar) {
+        adminScheduleBar.classList.remove("hidden");
+        adminScheduleBar.classList.add("flex");
+      }
+      if (adminManagerModeBar) {
+        adminManagerModeBar.classList.add("hidden");
+        adminManagerModeBar.classList.remove("flex");
+      }
+    } else {
+      if (adminScheduleBar) {
+        adminScheduleBar.classList.add("hidden");
+        adminScheduleBar.classList.remove("flex");
+      }
+      if (adminManagerModeBar) {
+        adminManagerModeBar.classList.remove("hidden");
+        adminManagerModeBar.classList.add("flex");
+      }
+    }
+
+    // Admin Panel Link in User Menu
     if (navAdminBtn) {
-      navAdminBtn.className = (currentView === "admin") ? activeClass : inactiveClass;
+      if (adminModeActive) {
+        navAdminBtn.classList.remove("hidden");
+        navAdminBtn.className = (currentView === "admin") ? activeDropdownAdminClass : inactiveDropdownAdminClass;
+      } else {
+        navAdminBtn.classList.add("hidden");
+      }
     }
-    if (adminScheduleBar) {
-      adminScheduleBar.classList.remove("hidden");
-      adminScheduleBar.classList.add("flex");
-    }
-    updateAdminExports(true);
+
+    updateAdminExports(adminModeActive);
   } else {
+    if (navToggleWrap) {
+      navToggleWrap.classList.add("hidden");
+      navToggleWrap.classList.remove("flex");
+    }
+    if (menuAdminCard) {
+      menuAdminCard.classList.add("hidden");
+    }
     if (navAdminBtn) {
-      navAdminBtn.className = hiddenAdminClass;
+      navAdminBtn.classList.add("hidden");
     }
     if (adminScheduleBar) {
       adminScheduleBar.classList.add("hidden");
       adminScheduleBar.classList.remove("flex");
+    }
+    if (adminManagerModeBar) {
+      adminManagerModeBar.classList.add("hidden");
+      adminManagerModeBar.classList.remove("flex");
     }
     updateAdminExports(false);
 
@@ -861,6 +1443,7 @@ function subscribeToAllUsers() {
 function populateManagerDropdowns() {
   const newShiftSelect = document.getElementById("new-shift-manager");
   const assignSelect = document.getElementById("assign-manager-select");
+  const editShiftSelect = document.getElementById("edit-shift-manager-select");
 
   const managerUsers = [];
   allUsersMap.forEach((user, uid) => {
@@ -892,6 +1475,12 @@ function populateManagerDropdowns() {
     const curVal = assignSelect.value;
     assignSelect.innerHTML = optionsHtml;
     assignSelect.value = curVal;
+  }
+
+  if (editShiftSelect) {
+    const curVal = editShiftSelect.value;
+    editShiftSelect.innerHTML = optionsHtml;
+    editShiftSelect.value = curVal;
   }
 }
 
@@ -995,6 +1584,48 @@ function subscribeToFestivalConfig() {
     };
     applyFestivalBranding();
     renderDayTabs();
+  });
+}
+
+// Incentives Configuration Dynamic Listener
+function subscribeToIncentivesConfig() {
+  if (incentivesConfigUnsubscribe) return;
+
+  incentivesConfigUnsubscribe = db.collection("config").doc("incentives").onSnapshot(doc => {
+    if (doc.exists) {
+      const data = doc.data();
+      const rawItems = (data.items && Array.isArray(data.items))
+        ? data.items
+        : (data.incentives && Array.isArray(data.incentives)
+          ? data.incentives
+          : (data.tiers && Array.isArray(data.tiers) ? data.tiers : defaultIncentivesConfig.items));
+
+      currentIncentivesConfig = {
+        items: sortIncentivesByHours(rawItems.map(item => ({
+          id: item.id || ("inc_" + Math.random().toString(36).substring(2, 9)),
+          hours: Number(item.hours ?? item.hoursRequired ?? 0),
+          hoursRequired: Number(item.hoursRequired ?? item.hours ?? 0),
+          name: item.name || item.rewardName || "Reward",
+          rewardName: item.rewardName || item.name || "Reward",
+          description: item.description || ""
+        })))
+      };
+    } else {
+      currentIncentivesConfig = {
+        items: sortIncentivesByHours(defaultIncentivesConfig.items)
+      };
+    }
+
+    updateIncentiveAndMyShifts();
+    if (currentUserRole === "admin" && currentView === "admin") {
+      renderAdminIncentivesConfig();
+    }
+  }, err => {
+    console.warn("Incentives config listener error (using fallback defaults):", err);
+    currentIncentivesConfig = {
+      items: sortIncentivesByHours(defaultIncentivesConfig.items)
+    };
+    updateIncentiveAndMyShifts();
   });
 }
 
@@ -1286,42 +1917,126 @@ function renderDayTabs() {
     });
   }
 
-  // 2. Render Tier 2: Session Chips for Selected Day
-  if (sessionChipsContainer) {
-    sessionChipsContainer.innerHTML = "";
-    const activeDaySessions = sessionsList.filter(s => (s.date || "undated") === selectedDayDate);
+  // 2. Render Tier 2: Sessions for Selected Day
+  const singleDetailContainer = document.getElementById("session-single-detail");
+  const sessionHeaderRow = document.getElementById("session-header-row");
+  const sessionStepper = document.getElementById("session-stepper");
+  const sessionTierCard = document.getElementById("session-tier-card");
 
-    activeDaySessions.forEach(session => {
-      const isSelected = session.id === selectedSessionId;
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = `p-2.5 rounded-xl text-left transition flex items-center justify-between border ${
-        isSelected
-          ? "bg-amber-700 text-white border-amber-800 shadow-sm ring-2 ring-amber-400/50"
-          : "bg-white text-slate-800 border-amber-200 hover:bg-amber-50 shadow-xs"
-      }`;
+  const activeDaySessions = sessionsList.filter(s => (s.date || "undated") === selectedDayDate);
 
-      const timeRange = session.startTime && session.endTime ? `${session.startTime} – ${session.endTime}` : "";
-      chip.innerHTML = `
-        <div class="truncate mr-2">
-          <span class="text-xs font-bold block truncate">${escapeHtml(session.name || "Session")}</span>
-          ${timeRange ? `<span class="text-[11px] ${isSelected ? 'text-amber-100' : 'text-slate-500'} block">${escapeHtml(timeRange)}</span>` : ''}
-          ${session.description ? `<span class="text-[10px] ${isSelected ? 'text-amber-200/90' : 'text-slate-400'} block truncate">${escapeHtml(session.description)}</span>` : ''}
+  if (activeDaySessions.length === 1) {
+    const singleSession = activeDaySessions[0];
+    selectedSessionId = singleSession.id;
+
+    // Single session scheduled for this day:
+    // Remove the sessions selector (session-chips), replacing it with the details of the session to save space.
+    if (sessionChipsContainer) {
+      sessionChipsContainer.innerHTML = "";
+      sessionChipsContainer.classList.add("hidden");
+    }
+    if (sessionStepper) {
+      sessionStepper.classList.add("hidden");
+      sessionStepper.classList.remove("flex");
+    }
+    if (sessionHeaderRow) {
+      sessionHeaderRow.classList.add("hidden");
+      sessionHeaderRow.classList.remove("flex");
+    }
+    if (sessionTierCard) {
+      sessionTierCard.className = "bg-amber-100/70 p-2.5 sm:px-3 sm:py-2 rounded-2xl border border-amber-300/90 shadow-xs";
+    }
+
+    if (singleDetailContainer) {
+      singleDetailContainer.classList.remove("hidden");
+      const activeDayInfo = getDayInfoFromDateStr(selectedDayDate);
+      const timeRange = singleSession.startTime && singleSession.endTime ? `${singleSession.startTime} – ${singleSession.endTime}` : "";
+      singleDetailContainer.innerHTML = `
+        <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div class="flex items-center gap-2 flex-wrap min-w-0">
+            <span class="text-[11px] font-extrabold uppercase tracking-wide text-amber-900 flex items-center gap-1.5 shrink-0">
+              <span>🍺</span> ${escapeHtml(singleSession.name || "Session")}
+            </span>
+            ${timeRange ? `
+              <span class="px-2 py-0.5 rounded-md bg-white border border-amber-300/80 text-amber-950 font-bold text-[11px] shrink-0 shadow-2xs">
+                ⏰ ${escapeHtml(timeRange)}
+              </span>
+            ` : ''}
+            ${singleSession.description ? `
+              <span class="text-slate-600 text-[11px] truncate hidden md:inline">
+                &bull; ${escapeHtml(singleSession.description)}
+              </span>
+            ` : ''}
+          </div>
+          <span class="text-[10px] font-semibold text-amber-800 bg-amber-200/60 px-2 py-0.5 rounded-full border border-amber-300 shrink-0">
+            ${escapeHtml(activeDayInfo.fullName)}
+          </span>
         </div>
-        <span class="text-[11px] font-extrabold shrink-0 px-2 py-0.5 rounded-md ${
-          isSelected ? 'bg-amber-900/60 text-amber-200' : 'bg-amber-50 text-amber-900 border border-amber-200'
-        }">
-          ${isSelected ? '● Active' : 'Select'}
-        </span>
       `;
-      chip.onclick = () => {
-        selectedSessionId = session.id;
-        selectedDayDate = session.date || selectedDayDate;
-        renderDayTabs();
-        renderShifts(currentShiftsDocs);
-      };
-      sessionChipsContainer.appendChild(chip);
-    });
+    }
+  } else {
+    // Multiple sessions (or 0 sessions) scheduled:
+    if (singleDetailContainer) {
+      singleDetailContainer.classList.add("hidden");
+      singleDetailContainer.innerHTML = "";
+    }
+    if (sessionHeaderRow) {
+      sessionHeaderRow.classList.remove("hidden");
+      sessionHeaderRow.classList.add("flex");
+    }
+    if (sessionStepper) {
+      if (activeDaySessions.length > 1) {
+        sessionStepper.classList.remove("hidden");
+        sessionStepper.classList.add("flex");
+      } else {
+        sessionStepper.classList.add("hidden");
+        sessionStepper.classList.remove("flex");
+      }
+    }
+    if (sessionTierCard) {
+      sessionTierCard.className = "bg-amber-100/70 p-3 rounded-2xl border border-amber-300/90 shadow-xs";
+    }
+
+    if (sessionChipsContainer) {
+      sessionChipsContainer.classList.remove("hidden");
+      sessionChipsContainer.innerHTML = "";
+
+      if (activeDaySessions.length === 0) {
+        sessionChipsContainer.innerHTML = "<p class='text-xs text-slate-500 italic p-2 text-center col-span-full'>No sessions scheduled for this day.</p>";
+      } else {
+        activeDaySessions.forEach(session => {
+          const isSelected = session.id === selectedSessionId;
+          const chip = document.createElement("button");
+          chip.type = "button";
+          chip.className = `p-2.5 rounded-xl text-left transition flex items-center justify-between border ${
+            isSelected
+              ? "bg-amber-700 text-white border-amber-800 shadow-sm ring-2 ring-amber-400/50"
+              : "bg-white text-slate-800 border-amber-200 hover:bg-amber-50 shadow-xs"
+          }`;
+
+          const timeRange = session.startTime && session.endTime ? `${session.startTime} – ${session.endTime}` : "";
+          chip.innerHTML = `
+            <div class="truncate mr-2">
+              <span class="text-xs font-bold block truncate">${escapeHtml(session.name || "Session")}</span>
+              ${timeRange ? `<span class="text-[11px] ${isSelected ? 'text-amber-100' : 'text-slate-500'} block">${escapeHtml(timeRange)}</span>` : ''}
+              ${session.description ? `<span class="text-[10px] ${isSelected ? 'text-amber-200/90' : 'text-slate-400'} block truncate">${escapeHtml(session.description)}</span>` : ''}
+            </div>
+            <span class="text-[11px] font-extrabold shrink-0 px-2 py-0.5 rounded-md ${
+              isSelected ? 'bg-amber-900/60 text-amber-200' : 'bg-amber-50 text-amber-900 border border-amber-200'
+            }">
+              ${isSelected ? '● Active' : 'Select'}
+            </span>
+          `;
+          chip.onclick = () => {
+            selectedSessionId = session.id;
+            selectedDayDate = session.date || selectedDayDate;
+            renderDayTabs();
+            renderShifts(currentShiftsDocs);
+          };
+          sessionChipsContainer.appendChild(chip);
+        });
+      }
+    }
   }
 
   // Backward compatibility fallback if legacy container still present
@@ -1355,12 +2070,18 @@ function subscribeToShifts() {
 
   const grid = document.getElementById("shifts-grid");
   if (grid) {
-    grid.innerHTML = "<p class='text-slate-500 italic col-span-full'>Loading festival shifts...</p>";
+    grid.innerHTML = "<p class='text-slate-500 italic p-6 text-center'>Loading festival shifts...</p>";
   }
 
   shiftsUnsubscribe = db.collection("shifts")
     .onSnapshot(snapshot => {
       currentShiftsDocs = snapshot.docs;
+      userRegistrations.forEach((reg, sId) => {
+        const sDoc = currentShiftsDocs.find(d => d.id === sId);
+        if (sDoc) {
+          userRegisteredShifts.set(sId, sDoc.data());
+        }
+      });
       const shiftCats = currentShiftsDocs
         .map(doc => {
           const cat = doc.data()?.categoryName;
@@ -1372,12 +2093,47 @@ function subscribeToShifts() {
     }, err => {
       console.error("Error listening to shifts:", err);
       if (grid) {
-        grid.innerHTML = "<p class='text-rose-500 col-span-full'>Failed to load shifts: " + err.message + "</p>";
+        grid.innerHTML = "<p class='text-rose-500 p-6 text-center'>Failed to load shifts: " + err.message + "</p>";
       }
     });
 }
 
-// Render Schedule Grid
+/**
+ * Checks whether a target shift conflicts with any shift the user is already registered for.
+ * Two shifts conflict if they overlap in time: targetStart < otherEnd && otherStart < targetEnd.
+ * @param {string} targetShiftId - ID of the shift being checked.
+ * @param {object} targetShiftData - Data of the shift being checked.
+ * @returns {object|null} The conflicting registered shift data with its id, or null if no conflict.
+ */
+function getConflictingRegisteredShift(targetShiftId, targetShiftData) {
+  if (!currentUser || userRegistrations.size === 0 || !targetShiftData) return null;
+  if (userRegistrations.has(targetShiftId)) return null;
+
+  const targetStartMs = getShiftStartTimeMs(targetShiftData.startTime);
+  const targetEndMs = getShiftStartTimeMs(targetShiftData.endTime);
+  if (!targetStartMs || !targetEndMs || targetStartMs >= targetEndMs) return null;
+
+  for (const [registeredShiftId] of userRegistrations.entries()) {
+    if (registeredShiftId === targetShiftId) continue;
+    let regShiftData = userRegisteredShifts.get(registeredShiftId);
+    if (!regShiftData) {
+      const foundDoc = currentShiftsDocs.find(d => d.id === registeredShiftId);
+      if (foundDoc) regShiftData = foundDoc.data();
+    }
+    if (!regShiftData) continue;
+
+    const regStartMs = getShiftStartTimeMs(regShiftData.startTime);
+    const regEndMs = getShiftStartTimeMs(regShiftData.endTime);
+
+    if (regStartMs && regEndMs && targetStartMs < regEndMs && regStartMs < targetEndMs) {
+      return { id: registeredShiftId, ...regShiftData };
+    }
+  }
+
+  return null;
+}
+
+// Render Schedule Grid (Compact Table View - No Header, No Manager Column, No Scrollbars)
 function renderShifts(docs) {
   const grid = document.getElementById("shifts-grid");
   if (!grid) return;
@@ -1386,7 +2142,7 @@ function renderShifts(docs) {
   const sessionName = currentSession ? currentSession.name : "this session";
 
   if (!docs || docs.length === 0) {
-    grid.innerHTML = `<p class='text-slate-500 italic col-span-full'>No shifts scheduled for ${escapeHtml(sessionName)}.</p>`;
+    grid.innerHTML = `<div class="p-6 text-center"><p class='text-slate-500 italic text-sm'>No shifts scheduled for ${escapeHtml(sessionName)}.</p></div>`;
     return;
   }
 
@@ -1415,15 +2171,22 @@ function renderShifts(docs) {
     return true;
   });
 
-  // Sort shifts chronologically ascending by startTime, then endTime, then category
+  // Sort shifts chronologically ascending by startTime, then alphabetically by Area/Category
   filteredDocs.sort((a, b) => {
-    const startA = getShiftStartTimeMs(a.data().startTime);
-    const startB = getShiftStartTimeMs(b.data().startTime);
+    const dataA = a.data();
+    const dataB = b.data();
+    const startA = getShiftStartTimeMs(dataA.startTime);
+    const startB = getShiftStartTimeMs(dataB.startTime);
     if (startA !== startB) return startA - startB;
-    const endA = getShiftStartTimeMs(a.data().endTime);
-    const endB = getShiftStartTimeMs(b.data().endTime);
-    if (endA !== endB) return endA - endB;
-    return (a.data().categoryName || "").localeCompare(b.data().categoryName || "");
+
+    const catA = (dataA.categoryName || "").trim();
+    const catB = (dataB.categoryName || "").trim();
+    const catComp = catA.localeCompare(catB, undefined, { sensitivity: "base" });
+    if (catComp !== 0) return catComp;
+
+    const endA = getShiftStartTimeMs(dataA.endTime);
+    const endB = getShiftStartTimeMs(dataB.endTime);
+    return endA - endB;
   });
 
   if (filteredDocs.length === 0) {
@@ -1431,8 +2194,8 @@ function renderShifts(docs) {
     if (selectedCategory !== 'ALL') emptyMsg += ` under "${escapeHtml(selectedCategory)}"`;
     if (filterOpenOnly) emptyMsg += ` with open spots`;
     grid.innerHTML = `
-      <div class="col-span-full bg-white p-6 rounded-2xl border border-amber-200 text-center space-y-2">
-        <span class="text-3xl">🔍</span>
+      <div class="p-6 text-center space-y-2">
+        <span class="text-2xl block mb-1">🔍</span>
         <h4 class="text-sm font-bold text-slate-800">${emptyMsg}.</h4>
         <p class="text-xs text-slate-500">Try changing categories or toggling off the "Open Only" filter.</p>
         ${filterOpenOnly || selectedCategory !== 'ALL' ? `
@@ -1445,163 +2208,129 @@ function renderShifts(docs) {
     return;
   }
 
-  grid.innerHTML = "";
+  const isManagerOrAdmin = currentUserRole === "admin" || currentUserRole === "manager";
 
-  filteredDocs.forEach(doc => {
+  const rowsHtml = filteredDocs.map(doc => {
     const shift = doc.data();
     const isRegistered = userRegistrations.has(doc.id);
     const isFull = (shift.assignedCount || 0) >= (shift.capacity || 0);
     const isLocked = isShiftLocked(shift.startTime);
+    const conflict = (!isRegistered && currentUser) ? getConflictingRegisteredShift(doc.id, shift) : null;
 
     const startTime = formatTime(shift.startTime);
     const endTime = formatTime(shift.endTime);
-    const shiftDate = formatDate(shift.startTime);
+    const bookedCount = shift.assignedCount || 0;
+    const totalSlots = shift.capacity || 0;
+    const spotsLeft = totalSlots - bookedCount;
 
-    const card = document.createElement("div");
-    card.className = `bg-white p-5 rounded-xl shadow-sm border transition flex flex-col justify-between ${
-      isRegistered ? 'border-emerald-400 ring-2 ring-emerald-200' : 'border-amber-200'
-    }`;
-
-    // Admin Edit Button
-    let adminEditBtnHtml = "";
-    if (currentUserRole === "admin") {
-      adminEditBtnHtml = `
-        <button onclick="openEditShiftModal('${doc.id}')" class="text-xs font-semibold px-2.5 py-1 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition shadow-xs flex items-center gap-1">
-          ✏️ Edit Shift
-        </button>
-      `;
-    }
-
-    // Manager Section & Actions
-    const hasManager = Boolean(shift.managerId);
-    const isUserAssignedManager = currentUser && shift.managerId === currentUser.uid;
-
-    let managerText = `<span class="italic text-slate-500">Unassigned (On-Site)</span>`;
-    if (shift.managerName) {
-      managerText = `<span class="font-semibold text-slate-800">${escapeHtml(shift.managerName)}</span>`;
-      if (isUserAssignedManager) {
-        managerText += ` <span class="bg-blue-100 text-blue-800 text-[10px] font-bold px-1.5 py-0.5 rounded">You</span>`;
-      }
-    }
-
-    let managerActionHtml = "";
-    if (currentUserRole === "admin") {
-      managerActionHtml = `
-        <button onclick="openAssignManagerModal('${doc.id}')" class="text-[11px] font-semibold text-amber-800 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 border border-amber-300 px-2.5 py-1 rounded-md transition shadow-xs flex items-center gap-1">
-          ⚙️ ${hasManager ? 'Change Manager' : 'Assign Manager'}
-        </button>
-      `;
-    } else if (currentUserRole === "manager") {
-      if (!hasManager) {
-        managerActionHtml = `
-          <button onclick="managerClaimShift('${doc.id}')" class="text-[11px] font-semibold text-blue-700 hover:text-blue-900 bg-blue-50 hover:bg-blue-100 border border-blue-300 px-2.5 py-1 rounded-md transition shadow-xs flex items-center gap-1">
-            👔 Assign Myself as Manager
-          </button>
-        `;
-      } else if (isUserAssignedManager) {
-        managerActionHtml = `
-          <button onclick="managerUnassignShift('${doc.id}')" class="text-[11px] font-medium text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 border border-slate-300 px-2 py-0.5 rounded-md transition">
-            Step Down
-          </button>
-        `;
-      }
-    }
-
-    const managerSectionHtml = `
-      <div class="mt-2.5 pt-2.5 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2">
-        <p class="text-xs text-slate-600"><strong>Manager:</strong> ${managerText}</p>
-        ${managerActionHtml}
-      </div>
-    `;
-
-    // Requirement B: Admin (and Manager) Shift Roster Inspection & User Cancellation
-    let rosterSectionHtml = "";
-    if (currentUserRole === "admin" || currentUserRole === "manager") {
-      const bookedCount = shift.assignedCount || 0;
-      if (bookedCount > 0) {
-        rosterSectionHtml = `
-          <div class="mt-2 pt-2 border-t border-slate-100 flex justify-between items-center text-xs">
-            <span class="text-slate-500 font-medium">Volunteers Booked: ${bookedCount}</span>
-            <button onclick="openShiftRosterModal('${doc.id}')" class="text-amber-800 hover:text-amber-950 font-bold underline flex items-center gap-1">
-              👥 View Roster &bull; Manage
-            </button>
-          </div>
-        `;
-      } else {
-        rosterSectionHtml = `
-          <div class="mt-2 pt-2 border-t border-slate-100 text-xs text-slate-400 italic">
-            No volunteers booked yet
-          </div>
-        `;
-      }
-    }
-
-    // Determine Action Button & Badges for Volunteer Registration
+    // Determine Action Button
     let actionBtnHtml = "";
     if (!currentUser) {
       actionBtnHtml = `
-        <button disabled class="mt-4 w-full py-2.5 rounded-lg text-sm font-bold text-slate-400 bg-slate-200 cursor-not-allowed">
-          Sign In to Register
+        <button disabled class="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 bg-slate-100 cursor-not-allowed">
+          Sign In
         </button>
       `;
     } else if (isRegistered) {
       if (isLocked) {
         actionBtnHtml = `
-          <button disabled class="mt-4 w-full py-2.5 rounded-lg text-xs font-bold text-slate-500 bg-slate-200 cursor-not-allowed">
-            🔒 Registered &bull; Locked (&lt; 7 Days)
+          <button disabled class="px-2.5 py-1 rounded-lg text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed" title="Shift locked within 7 days">
+            🔒 Locked
           </button>
         `;
       } else {
         actionBtnHtml = `
-          <button onclick="cancelShift('${doc.id}')" class="mt-4 w-full py-2.5 rounded-lg text-sm font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 transition shadow-sm">
-            Cancel Registration
+          <button onclick="cancelShift('${doc.id}')" class="px-2.5 py-1 rounded-lg text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 transition shadow-xs">
+            Cancel
           </button>
         `;
       }
+    } else if (conflict) {
+      const conflictName = conflict.categoryName || "another shift";
+      const conflictStart = formatTime(conflict.startTime);
+      const conflictEnd = formatTime(conflict.endTime);
+      actionBtnHtml = `
+        <button disabled class="px-2 py-1 rounded-lg text-[11px] sm:text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 cursor-not-allowed inline-flex items-center gap-1 shadow-xs" title="Time Clash: You are already registered for ${escapeHtml(conflictName)} (${conflictStart} &ndash; ${conflictEnd})">
+          <span>⚠️</span> Clash
+        </button>
+      `;
     } else if (isFull) {
       actionBtnHtml = `
-        <button disabled class="mt-4 w-full py-2.5 rounded-lg text-sm font-bold text-slate-400 bg-slate-200 cursor-not-allowed">
-          Shift Full
+        <button disabled class="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 bg-slate-100 cursor-not-allowed">
+          Full
         </button>
       `;
     } else {
       actionBtnHtml = `
-        <button onclick="claimShift('${doc.id}')" class="mt-4 w-full py-2.5 rounded-lg text-sm font-bold text-white bg-amber-700 hover:bg-amber-600 transition shadow-sm">
-          Register for Shift
+        <button onclick="claimShift('${doc.id}')" class="px-2.5 py-1 rounded-lg text-xs font-bold text-white bg-amber-700 hover:bg-amber-600 transition shadow-xs">
+          Register
         </button>
       `;
     }
 
-    const spotsLeft = (shift.capacity || 0) - (shift.assignedCount || 0);
-    let availabilityBadgeHtml = "";
-    if (isRegistered) {
-      availabilityBadgeHtml = `<span class="bg-emerald-600 text-white text-xs font-extrabold px-2.5 py-0.5 rounded-full shadow-xs flex items-center gap-1">✓ Registered</span>`;
-    } else if (isFull) {
-      availabilityBadgeHtml = `<span class="bg-slate-200 text-slate-600 text-xs font-bold px-2 py-0.5 rounded-full">Full (${shift.assignedCount || 0}/${shift.capacity || 0})</span>`;
-    } else {
-      availabilityBadgeHtml = `<span class="bg-emerald-100 text-emerald-800 text-xs font-bold px-2.5 py-0.5 rounded-full">🟢 ${spotsLeft} spot${spotsLeft === 1 ? '' : 's'} left</span>`;
-    }
-
-    card.innerHTML = `
-      <div>
-        <div class="flex justify-between items-start mb-2.5 gap-2">
-          <div class="flex flex-wrap items-center gap-1.5">
-            <span class="bg-amber-100 text-amber-900 text-xs font-bold px-2.5 py-0.5 rounded-md border border-amber-200">${escapeHtml(shift.categoryName || 'Bar Area')}</span>
-          </div>
-          <div>
-            ${availabilityBadgeHtml}
-          </div>
+    // Slots HTML (compact)
+    let slotsHtml = "";
+    if (currentUser) {
+      slotsHtml = `
+        <div class="flex items-center gap-1">
+          <button type="button" onclick="openShiftRosterModal('${doc.id}')" title="View volunteer roster (${bookedCount} booked)" class="group font-bold text-slate-700 hover:text-amber-900 inline-flex items-center gap-0.5 text-xs sm:text-sm transition cursor-pointer">
+            <span class="underline decoration-amber-300 underline-offset-2">${bookedCount}/${totalSlots}</span>
+            <span class="text-[10px] text-amber-700 group-hover:scale-110 transition-transform">👥</span>
+          </button>
+          ${isRegistered ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">Booked</span>' : isFull ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-500">Full</span>' : `<span class="text-[10px] text-emerald-700 font-medium hidden sm:inline">(${spotsLeft} left)</span>`}
         </div>
-        <h3 class="font-bold text-lg text-slate-800">${startTime} &ndash; ${endTime}</h3>
-        ${shiftDate ? `<p class="text-xs text-slate-500 mb-1">${shiftDate}</p>` : ''}
-        ${adminEditBtnHtml ? `<div class="my-2">${adminEditBtnHtml}</div>` : ''}
-        ${managerSectionHtml}
-        ${rosterSectionHtml}
-      </div>
-      ${actionBtnHtml}
+      `;
+    } else {
+      slotsHtml = `
+        <div class="flex items-center gap-1">
+          <span class="font-bold text-slate-700 text-xs sm:text-sm">${bookedCount}/${totalSlots}</span>
+          ${isRegistered ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">Booked</span>' : isFull ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-500">Full</span>' : `<span class="text-[10px] text-emerald-700 font-medium hidden sm:inline">(${spotsLeft} left)</span>`}
+        </div>
+      `;
+    }
+
+    // Admin Edit Button (compact next to action button - visible ONLY in Admin Mode)
+    let adminEditBtn = "";
+    if (isAdminMode()) {
+      adminEditBtn = `
+        <button type="button" onclick="openEditShiftModal('${doc.id}')" title="Edit Shift Details & Assign Manager" class="p-1 rounded-md text-amber-900 hover:bg-amber-100 border border-transparent hover:border-amber-300 transition text-xs inline-flex items-center justify-center">
+          ✏️
+        </button>
+      `;
+    }
+
+    return `
+      <tr class="transition hover:bg-amber-50/50 ${isRegistered ? 'bg-emerald-50/50 border-l-4 border-l-emerald-500' : conflict ? 'bg-amber-50/25 border-l-4 border-l-amber-400' : 'border-l-4 border-l-transparent'}">
+        <td class="py-2.5 px-2.5 sm:px-4 whitespace-nowrap">
+          <span class="font-bold text-slate-800 text-xs sm:text-sm tracking-tight">${startTime} &ndash; ${endTime}</span>
+        </td>
+        <td class="py-2.5 px-2 sm:px-3">
+          <span class="inline-block truncate max-w-[100px] sm:max-w-none px-2 py-0.5 rounded-md text-[11px] sm:text-xs font-bold bg-amber-100/90 text-amber-900 border border-amber-200">
+            ${escapeHtml(shift.categoryName || 'General Area')}
+          </span>
+        </td>
+        <td class="py-2.5 px-2 sm:px-3 whitespace-nowrap">
+          ${slotsHtml}
+        </td>
+        <td class="py-2.5 px-2.5 sm:px-4 whitespace-nowrap text-right">
+          <div class="flex items-center justify-end gap-1">
+            ${adminEditBtn}
+            ${actionBtnHtml}
+          </div>
+        </td>
+      </tr>
     `;
-    grid.appendChild(card);
-  });
+  }).join("");
+
+  grid.innerHTML = `
+    <div class="w-full overflow-hidden">
+      <table class="w-full divide-y divide-amber-100 text-left text-xs sm:text-sm">
+        <tbody class="divide-y divide-amber-100 bg-white">
+          ${rowsHtml}
+        </tbody>
+      </table>
+    </div>
+  `;
 }
 
 // Real-Time Registrations Listener
@@ -1615,9 +2344,14 @@ function subscribeToUserRegistrations(uid) {
     .where("status", "==", "confirmed")
     .onSnapshot(async snapshot => {
       userRegistrations.clear();
+      userRegisteredShifts.clear();
       snapshot.docs.forEach(doc => {
         const data = doc.data();
         userRegistrations.set(data.shiftId, data);
+        const shiftDoc = currentShiftsDocs.find(d => d.id === data.shiftId);
+        if (shiftDoc) {
+          userRegisteredShifts.set(data.shiftId, shiftDoc.data());
+        }
       });
 
       // Update incentive calculation and My Shifts view
@@ -1634,6 +2368,7 @@ function subscribeToUserRegistrations(uid) {
 async function updateIncentiveAndMyShifts() {
   const listContainer = document.getElementById("my-shifts-list");
   const countBadge = document.getElementById("my-shifts-count");
+  const menuCountBadge = document.getElementById("menu-my-shifts-count");
   const regCount = userRegistrations.size;
 
   if (countBadge) {
@@ -1645,9 +2380,26 @@ async function updateIncentiveAndMyShifts() {
     }
   }
 
+  if (menuCountBadge) {
+    if (regCount > 0) {
+      menuCountBadge.innerText = regCount;
+      menuCountBadge.classList.remove("hidden");
+    } else {
+      menuCountBadge.classList.add("hidden");
+    }
+  }
+
+  const incentives = sortIncentivesByHours(currentIncentivesConfig?.items || defaultIncentivesConfig.items);
+  const maxMilestoneHours = incentives.length > 0 ? Number(incentives[incentives.length - 1].hoursRequired || 8) : 8;
+  const milestonesSubtext = incentives.map(i => `${i.hoursRequired}h`).join(" • ");
+  const milestonesEl = document.getElementById("incentive-milestones-label");
+  if (milestonesEl) {
+    milestonesEl.innerText = incentives.length > 0 ? `Milestones: ${milestonesSubtext}` : "";
+  }
+
   if (!currentUser) {
     document.getElementById("progress-bar").style.width = "0%";
-    document.getElementById("hours-badge").innerText = "0 / 8 Hours";
+    document.getElementById("hours-badge").innerText = `0 / ${maxMilestoneHours} Hours`;
     document.getElementById("incentive-status").innerText =
       "Please sign in to view earned rewards.";
     if (listContainer) {
@@ -1662,9 +2414,14 @@ async function updateIncentiveAndMyShifts() {
 
   if (regCount === 0) {
     document.getElementById("progress-bar").style.width = "0%";
-    document.getElementById("hours-badge").innerText = "0 / 8 Hours";
-    document.getElementById("incentive-status").innerText =
-      "No shifts booked yet. Book 4 hours for a Free Entry Pass, or 8 hours for Entry + T-Shirt!";
+    document.getElementById("hours-badge").innerText = `0 / ${maxMilestoneHours} Hours`;
+    if (incentives.length === 0) {
+      document.getElementById("incentive-status").innerText = "No shifts booked yet.";
+    } else {
+      const summaryStr = incentives.map(i => `${i.hoursRequired} Hours = ${i.name}`).join(" | ");
+      document.getElementById("incentive-status").innerText =
+        `No shifts booked yet. Book shifts to earn rewards (${summaryStr})!`;
+    }
     if (listContainer) {
       listContainer.innerHTML = `
         <div class="text-center py-8 bg-amber-50/50 rounded-lg border border-dashed border-amber-300">
@@ -1684,12 +2441,14 @@ async function updateIncentiveAndMyShifts() {
   const shiftIds = Array.from(userRegistrations.keys());
   const shiftDocs = await Promise.all(shiftIds.map(id => db.collection("shifts").doc(id).get()));
 
+  userRegisteredShifts.clear();
   let totalHours = 0;
   const userShifts = [];
 
   shiftDocs.forEach(shiftDoc => {
     if (shiftDoc.exists) {
       const data = shiftDoc.data();
+      userRegisteredShifts.set(shiftDoc.id, data);
       const startMs = getShiftStartTimeMs(data.startTime);
       const endMs = getShiftStartTimeMs(data.endTime);
       const durationHours = Math.max(0, Math.round(((endMs - startMs) / (1000 * 3600)) * 10) / 10);
@@ -1710,17 +2469,28 @@ async function updateIncentiveAndMyShifts() {
   });
 
   // Update Progress Bar
-  const percentage = Math.min((totalHours / 8) * 100, 100);
+  const percentage = maxMilestoneHours > 0 ? Math.min((totalHours / maxMilestoneHours) * 100, 100) : 0;
   document.getElementById("progress-bar").style.width = `${percentage}%`;
-  document.getElementById("hours-badge").innerText = `${totalHours} / 8 Hours`;
+  document.getElementById("hours-badge").innerText = `${totalHours} / ${maxMilestoneHours} Hours`;
 
   let statusText = `Total Hours Registered: ${totalHours} hrs. `;
-  if (totalHours >= 8) {
-    statusText += "🎉 Unlocked: Free Festival Entry Pass + Volunteer T-Shirt!";
-  } else if (totalHours >= 4) {
-    statusText += `🎉 Unlocked: Free Festival Entry Pass! (Book ${8 - totalHours} more hours for a T-Shirt)`;
+  if (incentives.length === 0) {
+    statusText += "No reward milestones currently defined.";
   } else {
-    statusText += `Book ${4 - totalHours} more hours to unlock your Free Entry Pass.`;
+    const unlocked = incentives.filter(inc => totalHours >= inc.hoursRequired);
+    const nextLocked = incentives.find(inc => totalHours < inc.hoursRequired);
+
+    if (unlocked.length === incentives.length) {
+      const allNames = unlocked.map(inc => inc.name).join(" + ");
+      statusText += `🎉 All rewards unlocked: ${allNames}!`;
+    } else if (unlocked.length > 0) {
+      const unlockedNames = unlocked.map(inc => inc.name).join(" + ");
+      const hoursRemaining = Math.max(0, Math.round((nextLocked.hoursRequired - totalHours) * 10) / 10);
+      statusText += `🎉 Unlocked: ${unlockedNames}! (Book ${hoursRemaining} more hour${hoursRemaining === 1 ? '' : 's'} for ${nextLocked.name})`;
+    } else {
+      const hoursRemaining = Math.max(0, Math.round((nextLocked.hoursRequired - totalHours) * 10) / 10);
+      statusText += `Book ${hoursRemaining} more hour${hoursRemaining === 1 ? '' : 's'} to unlock your ${nextLocked.name}.`;
+    }
   }
   document.getElementById("incentive-status").innerText = statusText;
 
@@ -1764,7 +2534,22 @@ async function updateIncentiveAndMyShifts() {
 // Volunteer Shift Actions
 async function claimShift(shiftId) {
   if (!currentUser) {
+    alert("Please sign in to register for shifts.");
     return;
+  }
+
+  // Pre-check for conflicting shifts on client side
+  const shiftDoc = currentShiftsDocs.find(d => d.id === shiftId);
+  if (shiftDoc) {
+    const shiftData = shiftDoc.data();
+    const conflict = getConflictingRegisteredShift(shiftId, shiftData);
+    if (conflict) {
+      const conflictName = conflict.categoryName || "another area";
+      const conflictStart = formatTime(conflict.startTime);
+      const conflictEnd = formatTime(conflict.endTime);
+      alert(`Cannot register: This shift overlaps with your registered shift for "${conflictName}" (${conflictStart} – ${conflictEnd}).`);
+      return;
+    }
   }
 
   try {
@@ -1798,8 +2583,9 @@ async function cancelShift(shiftId) {
 // REQUIREMENT A: Create New Shifts (Admin)
 // ============================================================================
 function openCreateShiftModal() {
-  if (currentUserRole !== "admin") {
-    alert("Permission denied: Only administrators can create shifts.");
+  if (!isAdminMode()) {
+    console.error("Permission denied: Admin Mode is required to create shifts.");
+    alert("Permission denied: Please enable Admin Mode to create shifts.");
     return;
   }
 
@@ -1881,8 +2667,9 @@ function handleCategorySelectChange(val) {
 
 async function handleCreateShiftSubmit(event) {
   event.preventDefault();
-  if (currentUserRole !== "admin") {
-    alert("Permission denied: Only administrators can create shifts.");
+  if (!isAdminMode()) {
+    console.error("Permission denied: Admin Mode is required to create shifts.");
+    alert("Permission denied: Please enable Admin Mode to create shifts.");
     return;
   }
 
@@ -1948,8 +2735,9 @@ async function handleCreateShiftSubmit(event) {
 // REQUIREMENT: Edit Existing Shifts (Admin)
 // ============================================================================
 function openEditShiftModal(shiftId) {
-  if (currentUserRole !== "admin") {
-    alert("Permission denied: Only administrators can edit shifts.");
+  if (!isAdminMode()) {
+    console.error("Permission denied: Admin Mode is required to edit shifts.");
+    alert("Permission denied: Please enable Admin Mode to edit shifts.");
     return;
   }
 
@@ -1968,6 +2756,7 @@ function openEditShiftModal(shiftId) {
   const capInput = document.getElementById("edit-shift-capacity");
   const startInput = document.getElementById("edit-shift-start");
   const endInput = document.getElementById("edit-shift-end");
+  const mgrSelect = document.getElementById("edit-shift-manager-select");
 
   idInput.value = shiftId;
   capInput.value = shift.capacity || 4;
@@ -2008,6 +2797,11 @@ function openEditShiftModal(shiftId) {
     endInput.value = formatForDateTimeLocal(e);
   }
 
+  if (mgrSelect) {
+    populateManagerDropdowns();
+    mgrSelect.value = shift.managerId || "";
+  }
+
   modal.classList.remove("hidden");
 }
 
@@ -2028,8 +2822,9 @@ function handleEditCategorySelectChange(val) {
 
 async function handleUpdateShiftSubmit(event) {
   event.preventDefault();
-  if (currentUserRole !== "admin") {
-    alert("Permission denied: Only administrators can update shifts.");
+  if (!isAdminMode()) {
+    console.error("Permission denied: Admin Mode is required to edit shifts.");
+    alert("Permission denied: Please enable Admin Mode to edit shifts.");
     return;
   }
 
@@ -2042,12 +2837,17 @@ async function handleUpdateShiftSubmit(event) {
   const capacity = parseInt(document.getElementById("edit-shift-capacity")?.value, 10);
   const startVal = document.getElementById("edit-shift-start")?.value;
   const endVal = document.getElementById("edit-shift-end")?.value;
+  const mgrSelect = document.getElementById("edit-shift-manager-select");
+  const newManagerUserId = mgrSelect ? (mgrSelect.value || null) : null;
   const submitBtn = document.getElementById("btn-submit-edit-shift");
 
   if (!shiftId) {
     alert("Missing shift ID.");
     return;
   }
+
+  const currentDoc = currentShiftsDocs.find(d => d.id === shiftId);
+  const oldManagerUserId = currentDoc ? (currentDoc.data()?.managerId || null) : null;
 
   if (!categoryName) {
     alert("Please provide a bar/area category name.");
@@ -2086,6 +2886,14 @@ async function handleUpdateShiftSubmit(event) {
       sessionId: sessionId,
     });
 
+    if (newManagerUserId !== oldManagerUserId) {
+      const assignFn = functions.httpsCallable("assignShiftManager");
+      await assignFn({
+        shiftId: shiftId,
+        managerUserId: newManagerUserId,
+      });
+    }
+
     closeEditShiftModal();
     alert("Shift updated successfully!");
   } catch (err) {
@@ -2096,13 +2904,38 @@ async function handleUpdateShiftSubmit(event) {
   }
 }
 
+// Handler for the small edit icon on Browse Shifts table
+function handleEditShiftClick(shiftId) {
+  if (isAdminMode()) {
+    openEditShiftModal(shiftId);
+  } else if (currentUserRole === "manager" || currentUserRole === "admin") {
+    const doc = currentShiftsDocs.find(d => d.id === shiftId);
+    if (!doc) return;
+    const shift = doc.data();
+    if (!shift.managerId) {
+      if (confirm(`Do you want to assign yourself as the manager for the ${shift.categoryName || 'Shift'} shift?`)) {
+        managerClaimShift(shiftId);
+      }
+    } else if (currentUser && shift.managerId === currentUser.uid) {
+      if (confirm(`Do you want to step down as manager for the ${shift.categoryName || 'Shift'} shift?`)) {
+        managerUnassignShift(shiftId);
+      }
+    } else {
+      alert(`This shift is managed by ${shift.managerName || 'another manager'}. Switch to Admin Mode to reassign it.`);
+    }
+  }
+}
+
 // ============================================================================
 // REQUIREMENT B: View Roster & Cancel Individual Users' Shifts (Admin)
 // ============================================================================
 async function openShiftRosterModal(shiftId) {
-  if (currentUserRole !== "admin" && currentUserRole !== "manager") {
-    console.error("Permission denied: Manager or Administrator privileges required.");
-    alert("Permission denied: Manager or Administrator privileges required.");
+  if (!currentUser) {
+    if (typeof showAuthModal === "function") {
+      showAuthModal();
+    } else {
+      alert("Please sign in to view shift rosters.");
+    }
     return;
   }
 
@@ -2116,19 +2949,24 @@ async function openShiftRosterModal(shiftId) {
   listEl.innerHTML = `<p class="text-xs text-slate-500 italic py-6 text-center">Loading registrations...</p>`;
 
   let shiftInfo = "";
+  let currentShiftData = null;
   try {
     const shiftDoc = await db.collection("shifts").doc(shiftId).get();
     if (shiftDoc.exists) {
-      const shift = shiftDoc.data();
-      const sTime = formatTime(shift.startTime);
-      const eTime = formatTime(shift.endTime);
-      const sDate = formatDate(shift.startTime);
-      shiftInfo = `${sDate ? `${sDate} &bull; ` : ''}${escapeHtml(shift.categoryName)} (${sTime} &ndash; ${eTime})`;
+      currentShiftData = shiftDoc.data();
+      const sTime = formatTime(currentShiftData.startTime);
+      const eTime = formatTime(currentShiftData.endTime);
+      const sDate = formatDate(currentShiftData.startTime);
+      shiftInfo = `${sDate ? `${sDate} &bull; ` : ''}${escapeHtml(currentShiftData.categoryName)} (${sTime} &ndash; ${eTime})`;
     }
   } catch (e) {
     console.error("Error loading shift for roster:", e);
   }
   titleEl.innerHTML = shiftInfo || "Shift Registrations";
+
+  if (currentShiftData) {
+    renderRosterManagerSection(shiftId, currentShiftData);
+  }
 
   try {
     const regSnapshot = await db.collection("registrations")
@@ -2143,6 +2981,8 @@ async function openShiftRosterModal(shiftId) {
     }
 
     countEl.innerText = `${regSnapshot.size} Volunteer${regSnapshot.size === 1 ? '' : 's'} Registered`;
+
+    const isMgrOrAdmin = currentUserRole === "admin" || currentUserRole === "manager";
 
     const userPromises = regSnapshot.docs.map(async doc => {
       const reg = doc.data();
@@ -2162,8 +3002,10 @@ async function openShiftRosterModal(shiftId) {
         userId: reg.userId,
         registeredAt: reg.registeredAt,
         fullName: user?.fullName || "Volunteer",
-        email: user?.email || "Unknown email",
-        phoneNumber: user?.phoneNumber || "No phone on file",
+        email: user?.email || "",
+        phoneNumber: user?.phoneNumber || "",
+        groupOrClub: user?.groupOrClub || "",
+        profileVisibility: user?.profileVisibility || "public",
         role: user?.role || "volunteer"
       };
     });
@@ -2171,34 +3013,139 @@ async function openShiftRosterModal(shiftId) {
     const volunteers = await Promise.all(userPromises);
 
     listEl.innerHTML = "";
-    volunteers.forEach(v => {
-      const row = document.createElement("div");
-      row.className = "flex items-center justify-between p-3 rounded-lg border border-amber-200 bg-amber-50/50 hover:bg-amber-50 transition gap-3";
 
+    // For volunteer viewers, show helpful privacy reminder banner
+    if (!isMgrOrAdmin) {
+      const notice = document.createElement("div");
+      notice.className = "p-2.5 rounded-xl bg-amber-100/70 border border-amber-300 text-[11px] text-amber-950 flex items-center gap-2 mb-2 shadow-2xs";
+      notice.innerHTML = `
+        <span class="text-sm">ℹ️</span>
+        <span>Volunteers with <strong>Private</strong> profiles appear anonymously. Contact info is protected.</span>
+      `;
+      listEl.appendChild(notice);
+    }
+
+    volunteers.forEach(v => {
+      const isSelf = Boolean(currentUser && currentUser.uid === v.userId);
+      const isPrivate = v.profileVisibility === "private";
       const registeredDateStr = v.registeredAt ? formatDate(v.registeredAt) + " at " + formatTime(v.registeredAt) : "Recently";
 
-      let cancelBtnHtml = "";
-      if (currentUserRole === "admin") {
-        cancelBtnHtml = `
-          <button onclick="adminCancelUserShift('${shiftId}', '${v.userId}', '${escapeJs(v.fullName)}')" class="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 transition shadow-xs flex-shrink-0">
-            Cancel Shift
-          </button>
+      const row = document.createElement("div");
+
+      // CASE A: Viewer is Shift Manager or Admin -> Sees full details, email & phone
+      if (isMgrOrAdmin) {
+        row.className = "flex items-center justify-between p-3 rounded-lg border border-amber-200 bg-amber-50/50 hover:bg-amber-50 transition gap-3";
+
+        let cancelBtnHtml = "";
+        if (isAdminMode()) {
+          cancelBtnHtml = `
+            <button onclick="adminCancelUserShift('${shiftId}', '${v.userId}', '${escapeJs(v.fullName)}')" class="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 transition shadow-xs flex-shrink-0">
+              Cancel Shift
+            </button>
+          `;
+        }
+
+        const visibilityBadge = isPrivate
+          ? '<span class="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-slate-200 text-slate-700 border border-slate-300" title="Volunteer has set profile to Private">🔒 Private</span>'
+          : '<span class="text-[10px] font-semibold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 border border-emerald-300" title="Volunteer has set profile to Public">🌐 Public</span>';
+
+        const groupBadge = v.groupOrClub
+          ? `<span class="text-[10px] font-medium px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300">👥 ${escapeHtml(v.groupOrClub)}</span>`
+          : "";
+
+        row.innerHTML = `
+          <div class="flex items-center space-x-2.5 overflow-hidden">
+            <div class="w-8 h-8 rounded-full bg-amber-200 text-amber-900 font-bold flex items-center justify-center text-xs flex-shrink-0">
+              ${escapeHtml((v.fullName || "V")[0].toUpperCase())}
+            </div>
+            <div class="truncate">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <p class="font-bold text-slate-800 text-xs truncate">${escapeHtml(v.fullName)}</p>
+                ${isSelf ? '<span class="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800 border border-emerald-300">You</span>' : ''}
+                ${groupBadge}
+                ${visibilityBadge}
+              </div>
+              <p class="text-[11px] text-slate-500 truncate">${escapeHtml(v.email || 'No email')} &bull; 📞 ${escapeHtml(v.phoneNumber || 'No phone')}</p>
+              <p class="text-[10px] text-slate-400">Registered: ${registeredDateStr}</p>
+            </div>
+          </div>
+          ${cancelBtnHtml}
+        `;
+      }
+      // CASE B: Viewer is a Volunteer viewing themselves -> Sees self name, group/club, own privacy status & edit link
+      else if (isSelf) {
+        row.className = "flex items-center justify-between p-3 rounded-lg border border-emerald-300 bg-emerald-50/60 transition gap-3";
+
+        const groupBadge = v.groupOrClub
+          ? `<span class="text-[10px] font-medium px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-900 border border-emerald-300">👥 ${escapeHtml(v.groupOrClub)}</span>`
+          : "";
+
+        row.innerHTML = `
+          <div class="flex items-center space-x-2.5 overflow-hidden">
+            <div class="w-8 h-8 rounded-full bg-emerald-200 text-emerald-900 font-bold flex items-center justify-center text-xs flex-shrink-0">
+              ${escapeHtml((v.fullName || "V")[0].toUpperCase())}
+            </div>
+            <div class="truncate">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <p class="font-bold text-slate-900 text-xs truncate">${escapeHtml(v.fullName)}</p>
+                <span class="text-[10px] font-bold px-1.5 py-0.2 rounded bg-emerald-200 text-emerald-900 border border-emerald-400">You</span>
+                ${groupBadge}
+              </div>
+              <div class="flex items-center gap-1 text-[11px] text-emerald-900 mt-0.5">
+                <span>${isPrivate ? '🔒 Private: Hidden from other volunteers' : '🌐 Public: Visible to other volunteers'}</span>
+                <span>&bull;</span>
+                <button type="button" onclick="openUserProfileModal()" class="text-amber-800 font-semibold underline hover:text-amber-950 cursor-pointer">
+                  Edit Privacy
+                </button>
+              </div>
+              <p class="text-[10px] text-slate-400">Registered: ${registeredDateStr}</p>
+            </div>
+          </div>
+        `;
+      }
+      // CASE C: Viewer is a Volunteer viewing a PRIVATE volunteer -> Space / Anonymous placeholder
+      else if (isPrivate) {
+        row.className = "flex items-center justify-between p-3 rounded-lg border border-dashed border-slate-300 bg-slate-50/80 transition gap-3";
+        row.innerHTML = `
+          <div class="flex items-center space-x-2.5 overflow-hidden">
+            <div class="w-8 h-8 rounded-full bg-slate-200 text-slate-500 font-bold flex items-center justify-center text-xs flex-shrink-0">
+              🔒
+            </div>
+            <div class="truncate">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <p class="font-bold text-slate-600 text-xs">Volunteer</p>
+                <span class="text-[10px] font-medium px-1.5 py-0.2 rounded bg-slate-200 text-slate-600 border border-slate-300">Private Profile</span>
+              </div>
+              <p class="text-[11px] text-slate-500 italic mt-0.5">Occupied slot &bull; Name and group hidden by volunteer</p>
+            </div>
+          </div>
+        `;
+      }
+      // CASE D: Viewer is a Volunteer viewing a PUBLIC volunteer -> Name & Group/Club visible; Email & Phone NEVER visible
+      else {
+        row.className = "flex items-center justify-between p-3 rounded-lg border border-amber-200 bg-amber-50/50 hover:bg-amber-50 transition gap-3";
+
+        const groupBadge = v.groupOrClub
+          ? `<span class="text-[10px] font-medium px-1.5 py-0.2 rounded bg-amber-100 text-amber-900 border border-amber-300">👥 ${escapeHtml(v.groupOrClub)}</span>`
+          : "";
+
+        row.innerHTML = `
+          <div class="flex items-center space-x-2.5 overflow-hidden">
+            <div class="w-8 h-8 rounded-full bg-amber-200 text-amber-900 font-bold flex items-center justify-center text-xs flex-shrink-0">
+              ${escapeHtml((v.fullName || "V")[0].toUpperCase())}
+            </div>
+            <div class="truncate">
+              <div class="flex items-center gap-1.5 flex-wrap">
+                <p class="font-bold text-slate-800 text-xs truncate">${escapeHtml(v.fullName)}</p>
+                ${groupBadge}
+              </div>
+              <p class="text-[11px] text-slate-500 mt-0.5">Volunteer Crew Member</p>
+              <p class="text-[10px] text-slate-400">Registered: ${registeredDateStr}</p>
+            </div>
+          </div>
         `;
       }
 
-      row.innerHTML = `
-        <div class="flex items-center space-x-2.5 overflow-hidden">
-          <div class="w-8 h-8 rounded-full bg-amber-200 text-amber-900 font-bold flex items-center justify-center text-xs flex-shrink-0">
-            ${escapeHtml((v.fullName || "V")[0].toUpperCase())}
-          </div>
-          <div class="truncate">
-            <p class="font-bold text-slate-800 text-xs truncate">${escapeHtml(v.fullName)}</p>
-            <p class="text-[11px] text-slate-500 truncate">${escapeHtml(v.email)} &bull; 📞 ${escapeHtml(v.phoneNumber)}</p>
-            <p class="text-[10px] text-slate-400">Registered: ${registeredDateStr}</p>
-          </div>
-        </div>
-        ${cancelBtnHtml}
-      `;
       listEl.appendChild(row);
     });
   } catch (err) {
@@ -2212,10 +3159,190 @@ function closeShiftRosterModal() {
   document.getElementById("shift-roster-modal").classList.add("hidden");
 }
 
-async function adminCancelUserShift(shiftId, targetUserId, userName) {
+/**
+ * Render the Shift Manager management section inside the Shift Roster Modal.
+ * - Allows managers to 'Manage Shift' when shift is currently Unassigned.
+ * - Allows assigned manager to 'Release Shift' and return it to Unassigned status.
+ * - Does not allow manager users to assign/unassign shifts already assigned to other managers.
+ * - Retains ability for admin users to assign any manager or unassign managers.
+ * - Strictly masks manager email from volunteer viewers.
+ */
+function renderRosterManagerSection(shiftId, shift) {
+  const mgrCard = document.getElementById("roster-modal-manager-card");
+  if (!mgrCard) return;
+
+  const isMgrOrAdmin = currentUserRole === "admin" || currentUserRole === "manager";
+  const isCurrentUserManager = Boolean(shift.managerId && currentUser && shift.managerId === currentUser.uid);
+  const isUnassigned = !shift.managerId;
+  const isAssignedToOther = Boolean(shift.managerId && (!currentUser || shift.managerId !== currentUser.uid));
+  const isAdmin = currentUserRole === "admin";
+
+  let actionsHtml = "";
+
+  if (isUnassigned) {
+    // Shift is Unassigned: allow manager to 'Manage Shift'
+    if (isMgrOrAdmin) {
+      actionsHtml += `
+        <button id="btn-roster-manage-shift" type="button" onclick="handleRosterClaimShift('${shiftId}')" class="bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition shadow-xs flex items-center gap-1.5 cursor-pointer">
+          <span>👔</span> Manage Shift
+        </button>
+      `;
+    }
+    // Admin can also assign any manager
+    if (isAdmin) {
+      actionsHtml += `
+        <button type="button" onclick="openAssignManagerModal('${shiftId}')" class="bg-purple-100 hover:bg-purple-200 text-purple-900 border border-purple-300 text-xs font-bold px-2.5 py-1.5 rounded-lg transition shadow-xs flex items-center gap-1 cursor-pointer">
+          <span>👑</span> Assign Manager...
+        </button>
+      `;
+    }
+  } else if (isCurrentUserManager) {
+    // Current user is assigned manager: allow them to release the shift
+    if (isMgrOrAdmin) {
+      actionsHtml += `
+        <button id="btn-roster-release-shift" type="button" onclick="handleRosterReleaseShift('${shiftId}')" class="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 text-xs font-bold px-3 py-1.5 rounded-lg transition shadow-xs flex items-center gap-1.5 cursor-pointer">
+          <span>🚪</span> Release Shift
+        </button>
+      `;
+    }
+    // If admin, also allow reassigning to another manager
+    if (isAdmin) {
+      actionsHtml += `
+        <button type="button" onclick="openAssignManagerModal('${shiftId}')" class="bg-purple-100 hover:bg-purple-200 text-purple-900 border border-purple-300 text-xs font-bold px-2.5 py-1.5 rounded-lg transition shadow-xs flex items-center gap-1 cursor-pointer">
+          <span>👑</span> Reassign...
+        </button>
+      `;
+    }
+  } else if (isAssignedToOther) {
+    // Assigned to another manager
+    if (isAdmin) {
+      // Admin can still reassign or unassign
+      actionsHtml += `
+        <button type="button" onclick="openAssignManagerModal('${shiftId}')" class="bg-purple-100 hover:bg-purple-200 text-purple-900 border border-purple-300 text-xs font-bold px-2.5 py-1.5 rounded-lg transition shadow-xs flex items-center gap-1 cursor-pointer">
+          <span>👑</span> Reassign...
+        </button>
+        <button type="button" onclick="handleAdminReleaseShiftManager('${shiftId}')" class="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-300 text-xs font-bold px-2.5 py-1.5 rounded-lg transition shadow-xs flex items-center gap-1 cursor-pointer">
+          <span>🗑️</span> Release Manager
+        </button>
+      `;
+    } else if (isMgrOrAdmin) {
+      // Manager users cannot assign or unassign other managers
+      actionsHtml += `
+        <span class="text-[11px] text-slate-500 italic bg-amber-100/60 border border-amber-200 px-2 py-1 rounded-md">Assigned to another manager</span>
+      `;
+    }
+  }
+
+  mgrCard.innerHTML = `
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <div class="w-8 h-8 rounded-full ${isUnassigned ? 'bg-amber-200/80 text-amber-900' : isCurrentUserManager ? 'bg-emerald-100 text-emerald-900 border border-emerald-300' : 'bg-blue-100 text-blue-900 border border-blue-300'} flex items-center justify-center font-bold text-sm shrink-0">
+          👔
+        </div>
+        <div class="truncate">
+          <div class="flex items-center gap-1.5 flex-wrap">
+            <span class="text-xs font-bold text-slate-800">Shift Manager</span>
+            ${isUnassigned ? `
+              <span class="text-[10px] font-bold px-1.5 py-0.2 rounded uppercase tracking-wider bg-amber-200/70 text-amber-900 border border-amber-300">Unassigned</span>
+            ` : isCurrentUserManager ? `
+              <span class="text-[10px] font-bold px-1.5 py-0.2 rounded uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-300">You</span>
+            ` : `
+              <span class="text-[10px] font-bold px-1.5 py-0.2 rounded uppercase tracking-wider bg-blue-100 text-blue-800 border border-blue-300">Assigned</span>
+            `}
+          </div>
+          <p class="text-xs ${isUnassigned ? 'text-amber-800/80 italic' : 'text-slate-700 font-semibold'} truncate">
+            ${isUnassigned ? 'No manager assigned to this shift' : escapeHtml(shift.managerName || 'Assigned Manager')}
+            ${shift.managerEmail && isMgrOrAdmin ? `<span class="text-[11px] text-slate-500 font-normal">(${escapeHtml(shift.managerEmail)})</span>` : ''}
+          </p>
+        </div>
+      </div>
+      <div class="flex items-center gap-1.5 flex-wrap shrink-0">
+        ${actionsHtml}
+      </div>
+    </div>
+  `;
+}
+
+async function handleRosterClaimShift(shiftId) {
+  if (currentUserRole !== "manager" && currentUserRole !== "admin") {
+    alert("Permission denied: Manager privileges required.");
+    return;
+  }
+
+  const btn = document.getElementById("btn-roster-manage-shift");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span>⏳</span> Assigning...`;
+  }
+
+  try {
+    const assignFn = functions.httpsCallable("assignShiftManager");
+    await assignFn({ shiftId, managerUserId: currentUser.uid });
+    await openShiftRosterModal(shiftId);
+  } catch (err) {
+    console.error("Error managing shift:", err);
+    alert("Manager assignment failed: " + err.message);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<span>👔</span> Manage Shift`;
+    }
+  }
+}
+
+async function handleRosterReleaseShift(shiftId) {
+  if (currentUserRole !== "manager" && currentUserRole !== "admin") {
+    alert("Permission denied: Manager privileges required.");
+    return;
+  }
+
+  if (!confirm("Are you sure you want to release this shift and return it to Unassigned status?")) {
+    return;
+  }
+
+  const btn = document.getElementById("btn-roster-release-shift");
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span>⏳</span> Releasing...`;
+  }
+
+  try {
+    const assignFn = functions.httpsCallable("assignShiftManager");
+    await assignFn({ shiftId, managerUserId: null });
+    await openShiftRosterModal(shiftId);
+  } catch (err) {
+    console.error("Error releasing shift manager:", err);
+    alert("Failed to release shift: " + err.message);
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = `<span>🚪</span> Release Shift`;
+    }
+  }
+}
+
+async function handleAdminReleaseShiftManager(shiftId) {
   if (currentUserRole !== "admin") {
-    console.error("Permission denied: Only administrators can cancel volunteer shifts.");
-    alert("Permission denied: Only administrators can cancel volunteer shifts.");
+    alert("Permission denied: Administrator privileges required.");
+    return;
+  }
+
+  if (!confirm("Release the assigned manager and return this shift to Unassigned status?")) {
+    return;
+  }
+
+  try {
+    const assignFn = functions.httpsCallable("assignShiftManager");
+    await assignFn({ shiftId, managerUserId: null });
+    await openShiftRosterModal(shiftId);
+  } catch (err) {
+    console.error("Error releasing shift manager:", err);
+    alert("Failed to release manager: " + err.message);
+  }
+}
+
+async function adminCancelUserShift(shiftId, targetUserId, userName) {
+  if (!isAdminMode()) {
+    console.error("Permission denied: Admin Mode is required to cancel volunteer shifts.");
+    alert("Permission denied: Please enable Admin Mode to cancel volunteer shifts.");
     return;
   }
 
@@ -2351,9 +3478,9 @@ function renderAdminUsers() {
 }
 
 async function changeUserRole(targetUserId, newRole, userName, selectEl) {
-  if (currentUserRole !== "admin") {
-    console.error("Permission denied: Only administrators can change user roles.");
-    alert("Permission denied: Only administrators can change user roles.");
+  if (!isAdminMode()) {
+    console.error("Permission denied: Admin Mode is required to change user roles.");
+    alert("Permission denied: Please enable Admin Mode to change user roles.");
     return;
   }
 
@@ -2725,8 +3852,8 @@ async function handleRemoveFestivalSession(sessionId) {
 }
 
 async function handleSaveFestivalConfig() {
-  if (currentUserRole !== "admin") {
-    alert("Permission denied: Only administrators can modify festival configuration.");
+  if (!isAdminMode()) {
+    alert("Permission denied: Admin Mode is required to modify festival configuration.");
     return;
   }
 
@@ -2795,6 +3922,249 @@ async function handleSaveFestivalConfig() {
 }
 
 // ============================================================================
+// REQUIREMENT: Admin Volunteer Incentives & Rewards Configuration (config/incentives)
+// ============================================================================
+function renderAdminIncentivesConfig() {
+  if (currentUserRole !== "admin") return;
+
+  const rawItems = currentIncentivesConfig?.items || defaultIncentivesConfig.items;
+  adminEditingIncentives = sortIncentivesByHours(JSON.parse(JSON.stringify(rawItems)));
+  adminInlineEditingIncentiveId = null;
+  renderAdminIncentivesTable();
+}
+
+function renderAdminIncentivesTable() {
+  const tbody = document.getElementById("admin-incentives-table-body");
+  if (!tbody) return;
+
+  if (!adminEditingIncentives || adminEditingIncentives.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="4" class="p-4 text-center text-slate-500 italic">No incentives configured yet. Use the form below to add a reward milestone.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  adminEditingIncentives.forEach(item => {
+    const isEditing = adminInlineEditingIncentiveId === item.id;
+    const tr = document.createElement("tr");
+    tr.className = "hover:bg-slate-50 transition";
+
+    if (isEditing) {
+      tr.innerHTML = `
+        <td class="p-2">
+          <input type="number" min="0.5" step="0.5" id="inline-incentive-hours-${item.id}" value="${item.hoursRequired ?? item.hours ?? 1}" class="w-24 text-xs p-1.5 rounded border border-slate-300 focus:ring-1 focus:ring-amber-500 focus:outline-none" />
+        </td>
+        <td class="p-2">
+          <input type="text" id="inline-incentive-name-${item.id}" value="${escapeHtml(item.name || item.rewardName || '')}" placeholder="Reward Name" class="w-full text-xs p-1.5 rounded border border-slate-300 focus:ring-1 focus:ring-amber-500 focus:outline-none" />
+        </td>
+        <td class="p-2">
+          <input type="text" id="inline-incentive-desc-${item.id}" value="${escapeHtml(item.description || '')}" placeholder="Description (Optional)" class="w-full text-xs p-1.5 rounded border border-slate-300 focus:ring-1 focus:ring-amber-500 focus:outline-none" />
+        </td>
+        <td class="p-2 text-right whitespace-nowrap">
+          <button type="button" onclick="saveEditIncentive('${item.id}')" class="text-emerald-700 hover:text-emerald-900 font-bold text-xs mr-2" title="Save changes">
+            ✓ Save
+          </button>
+          <button type="button" onclick="cancelEditIncentive()" class="text-slate-500 hover:text-slate-700 text-xs" title="Cancel editing">
+            Cancel
+          </button>
+        </td>
+      `;
+    } else {
+      const hours = Number(item.hoursRequired ?? item.hours ?? 0);
+      const name = item.name || item.rewardName || "Reward";
+      const desc = item.description || "—";
+      tr.innerHTML = `
+        <td class="p-2.5">
+          <span class="inline-flex items-center font-bold px-2 py-0.5 rounded-full text-xs bg-amber-100 text-amber-900">
+            ${hours} hr${hours === 1 ? '' : 's'}
+          </span>
+        </td>
+        <td class="p-2.5 font-bold text-amber-950">${escapeHtml(name)}</td>
+        <td class="p-2.5 text-slate-500 text-[11px]">${escapeHtml(desc)}</td>
+        <td class="p-2.5 text-right whitespace-nowrap">
+          <button type="button" onclick="startEditIncentive('${item.id}')" class="text-amber-800 hover:text-amber-950 font-bold text-xs p-1 mr-2" title="Edit this milestone">
+            ✏️ Edit
+          </button>
+          <button type="button" onclick="handleRemoveIncentive('${item.id}')" class="text-rose-600 hover:text-rose-800 font-bold text-xs p-1" title="Remove this milestone">
+            ✕ Remove
+          </button>
+        </td>
+      `;
+    }
+    tbody.appendChild(tr);
+  });
+}
+
+function startEditIncentive(id) {
+  if (currentUserRole !== "admin") return;
+  adminInlineEditingIncentiveId = id;
+  renderAdminIncentivesTable();
+}
+
+function cancelEditIncentive() {
+  adminInlineEditingIncentiveId = null;
+  renderAdminIncentivesTable();
+}
+
+async function saveEditIncentive(id) {
+  if (currentUserRole !== "admin") return;
+
+  const item = adminEditingIncentives.find(i => i.id === id);
+  if (!item) return;
+
+  const hoursInput = document.getElementById(`inline-incentive-hours-${id}`);
+  const nameInput = document.getElementById(`inline-incentive-name-${id}`);
+  const descInput = document.getElementById(`inline-incentive-desc-${id}`);
+
+  const hours = parseFloat(hoursInput?.value);
+  const name = nameInput?.value?.trim() || "";
+  const desc = descInput?.value?.trim() || "";
+
+  if (isNaN(hours) || hours <= 0) {
+    alert("Please enter a valid number of hours greater than 0.");
+    return;
+  }
+  if (!name) {
+    alert("Reward name cannot be empty.");
+    return;
+  }
+
+  item.hours = hours;
+  item.hoursRequired = hours;
+  item.name = name;
+  item.rewardName = name;
+  item.description = desc;
+
+  adminEditingIncentives = sortIncentivesByHours(adminEditingIncentives);
+  adminInlineEditingIncentiveId = null;
+  renderAdminIncentivesTable();
+  await persistAdminIncentivesToFirestore();
+}
+
+async function handleAddIncentive() {
+  if (currentUserRole !== "admin") return;
+
+  const hoursInput = document.getElementById("admin-new-incentive-hours");
+  const nameInput = document.getElementById("admin-new-incentive-name");
+  const descInput = document.getElementById("admin-new-incentive-desc");
+
+  const hours = parseFloat(hoursInput?.value);
+  const name = nameInput?.value?.trim() || "";
+  const desc = descInput?.value?.trim() || "";
+
+  if (isNaN(hours) || hours <= 0) {
+    alert("Please enter a valid number of hours required (e.g. 4).");
+    return;
+  }
+  if (!name) {
+    alert("Please enter a name for the reward milestone (e.g. 'Free Festival Entry Pass').");
+    return;
+  }
+
+  const newId = "inc_" + Date.now();
+  adminEditingIncentives.push({
+    id: newId,
+    hours: hours,
+    hoursRequired: hours,
+    name: name,
+    rewardName: name,
+    description: desc
+  });
+
+  adminEditingIncentives = sortIncentivesByHours(adminEditingIncentives);
+
+  if (hoursInput) hoursInput.value = "";
+  if (nameInput) nameInput.value = "";
+  if (descInput) descInput.value = "";
+
+  renderAdminIncentivesTable();
+  await persistAdminIncentivesToFirestore();
+}
+
+async function handleRemoveIncentive(id) {
+  if (currentUserRole !== "admin") return;
+
+  const item = adminEditingIncentives.find(i => i.id === id);
+  const itemName = item ? item.name : "this reward milestone";
+
+  if (!confirm(`Are you sure you want to remove "${itemName}"?`)) {
+    return;
+  }
+
+  adminEditingIncentives = adminEditingIncentives.filter(i => i.id !== id);
+  if (adminInlineEditingIncentiveId === id) {
+    adminInlineEditingIncentiveId = null;
+  }
+
+  renderAdminIncentivesTable();
+  await persistAdminIncentivesToFirestore();
+}
+
+async function persistAdminIncentivesToFirestore() {
+  if (currentUserRole !== "admin") return;
+  try {
+    adminEditingIncentives = sortIncentivesByHours(adminEditingIncentives);
+    await db.collection("config").doc("incentives").set({
+      items: adminEditingIncentives,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy: currentUser.uid
+    }, { merge: true });
+
+    currentIncentivesConfig.items = JSON.parse(JSON.stringify(adminEditingIncentives));
+    updateIncentiveAndMyShifts();
+  } catch (err) {
+    console.error("Failed to save incentives to Firestore:", err);
+    alert("Failed to save incentives update to Firestore: " + err.message);
+  }
+}
+
+async function handleSaveIncentivesConfig() {
+  if (currentUserRole !== "admin") {
+    alert("Permission denied: Only administrators can modify incentives configuration.");
+    return;
+  }
+
+  const saveBtn = document.getElementById("btn-save-incentives-config");
+  const alertEl = document.getElementById("admin-incentives-alert");
+
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.innerText = "Saving...";
+  }
+
+  try {
+    adminEditingIncentives = sortIncentivesByHours(adminEditingIncentives);
+    const configData = {
+      items: adminEditingIncentives,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy: currentUser.uid
+    };
+
+    await db.collection("config").doc("incentives").set(configData, { merge: true });
+    currentIncentivesConfig.items = JSON.parse(JSON.stringify(adminEditingIncentives));
+    updateIncentiveAndMyShifts();
+
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-300";
+      alertEl.innerHTML = "✓ Incentives configuration successfully updated!";
+      alertEl.classList.remove("hidden");
+      setTimeout(() => alertEl.classList.add("hidden"), 4000);
+    }
+  } catch (err) {
+    console.error("Error saving incentives configuration:", err);
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-800 border border-rose-300";
+      alertEl.innerHTML = "⚠️ Failed to save incentives: " + err.message;
+      alertEl.classList.remove("hidden");
+    }
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = "<span>💾</span> Save Incentives Configuration";
+    }
+  }
+}
+
+// ============================================================================
 // REQUIREMENT: Admin Broadcast Email to Volunteers
 // ============================================================================
 function updateBroadcastTargetLabel(target) {
@@ -2824,8 +4194,8 @@ function showBroadcastAlert(msg, isSuccess) {
 
 async function handleSendAdminBroadcast(event) {
   event.preventDefault();
-  if (currentUserRole !== "admin") {
-    alert("Permission denied: Only administrators can dispatch broadcast emails.");
+  if (!isAdminMode()) {
+    alert("Permission denied: Admin Mode is required to dispatch broadcast emails.");
     return;
   }
 
@@ -2917,9 +4287,9 @@ async function managerUnassignShift(shiftId) {
 // REQUIREMENT E: Admins Assign Manager Users to Shifts
 // ============================================================================
 async function openAssignManagerModal(shiftId) {
-  if (currentUserRole !== "admin") {
-    console.error("Permission denied: Only administrators can assign shift managers.");
-    alert("Permission denied: Only administrators can assign shift managers.");
+  if (!isAdminMode()) {
+    console.error("Permission denied: Admin Mode is required to assign shift managers.");
+    alert("Permission denied: Please enable Admin Mode to assign shift managers.");
     return;
   }
 
@@ -2957,9 +4327,9 @@ function closeAssignManagerModal() {
 }
 
 async function handleSaveManagerAssignment() {
-  if (currentUserRole !== "admin") {
-    console.error("Permission denied: Only administrators can assign shift managers.");
-    alert("Permission denied: Only administrators can assign shift managers.");
+  if (!isAdminMode()) {
+    console.error("Permission denied: Admin Mode is required to assign shift managers.");
+    alert("Permission denied: Please enable Admin Mode to assign shift managers.");
     return;
   }
 
@@ -2979,6 +4349,9 @@ async function handleSaveManagerAssignment() {
       managerUserId: selectedUserId,
     });
     closeAssignManagerModal();
+    if (activeRosterShiftId) {
+      openShiftRosterModal(activeRosterShiftId);
+    }
     alert("Shift manager updated successfully!");
   } catch (err) {
     alert("Failed to update manager: " + err.message);

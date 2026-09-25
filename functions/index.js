@@ -27,6 +27,20 @@ function getTransporter() {
 }
 
 /**
+ * Safely parses any Firestore timestamp, Date, or date-string into epoch ms.
+ * @param {*} ts Timestamp, Date, or string representation.
+ * @return {number} Milliseconds since epoch, or 0 if invalid.
+ */
+function getTimestampMs(ts) {
+  if (!ts) return 0;
+  if (typeof ts.toMillis === "function") return ts.toMillis();
+  if (typeof ts.seconds === "number") return ts.seconds * 1000;
+  if (typeof ts._seconds === "number") return ts._seconds * 1000;
+  const ms = new Date(ts).getTime();
+  return isNaN(ms) ? 0 : ms;
+}
+
+/**
  * Atomic Shift Registration to Prevent Overbooking (Race Conditions)
  */
 exports.claimShift = onCall(async (request) => {
@@ -65,6 +79,50 @@ exports.claimShift = onCall(async (request) => {
           "already-exists",
           "You are already registered for this shift.",
       );
+    }
+
+    // Safeguard against overlapping or simultaneous shift registrations
+    const targetStartMs = getTimestampMs(shiftData.startTime);
+    const targetEndMs = getTimestampMs(shiftData.endTime);
+
+    if (targetStartMs && targetEndMs && targetStartMs < targetEndMs) {
+      const userRegsSnap = await transaction.get(
+          db.collection("registrations")
+              .where("userId", "==", uid)
+              .where("status", "==", "confirmed"),
+      );
+
+      const otherShiftIds = userRegsSnap.docs
+          .map((d) => d.data().shiftId)
+          .filter((id) => id && id !== shiftId);
+
+      if (otherShiftIds.length > 0) {
+        const otherShiftRefs = otherShiftIds.map((id) =>
+          db.collection("shifts").doc(id),
+        );
+        const otherShiftDocs = await transaction.getAll(...otherShiftRefs);
+
+        for (const otherDoc of otherShiftDocs) {
+          if (!otherDoc.exists) continue;
+          const otherData = otherDoc.data();
+          const otherStartMs = getTimestampMs(otherData.startTime);
+          const otherEndMs = getTimestampMs(otherData.endTime);
+
+          if (
+            otherStartMs &&
+            otherEndMs &&
+            targetStartMs < otherEndMs &&
+            otherStartMs < targetEndMs
+          ) {
+            const conflictName = otherData.categoryName || "another shift";
+            throw new HttpsError(
+                "failed-precondition",
+                `Cannot register: this shift overlaps with your registered ` +
+                `shift for "${conflictName}".`,
+            );
+          }
+        }
+      }
     }
 
     // Execute atomic updates
@@ -132,11 +190,7 @@ exports.cancelShift = onCall(async (request) => {
     // Volunteer can cancel at any point UNTIL 7 days before shift date.
     // E.g. if shift is on 14-May-2027,
     // user can cancel until 7-May-2027 23:59:59.
-    const startTimeMs = typeof shiftData.startTime?.toMillis === "function" ?
-      shiftData.startTime.toMillis() :
-      (shiftData.startTime?.seconds ?
-        shiftData.startTime.seconds * 1000 :
-        new Date(shiftData.startTime).getTime());
+    const startTimeMs = getTimestampMs(shiftData.startTime);
     const nowMs = Date.now();
 
     const shiftDate = new Date(startTimeMs);

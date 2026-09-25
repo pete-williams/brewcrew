@@ -35,8 +35,8 @@ service cloud.firestore {
       );
     }
 
-    // Overall Festival Configuration (Branding, Dates, Contact Info)
-    // Read: Public (so login/landing screen can display festival name and logo)
+    // Configuration Documents (Festival Branding/Sessions: /config/festival, Incentives/Rewards: /config/incentives)
+    // Read: Public (so login/landing screen can display festival name, logo, and reward milestones)
     // Write: Admin only
     match /config/{configId} {
       allow read: if true;

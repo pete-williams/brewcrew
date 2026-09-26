@@ -133,6 +133,12 @@ let incentivesConfigUnsubscribe = null;
 let adminEditingIncentives = [];
 let adminInlineEditingIncentiveId = null;
 
+// Roles Configuration State (Dynamic Firestore config/roles)
+let currentRolesConfig = {}; // areaName -> { icon, summary, description, updatedAt, updatedBy }
+let rolesConfigUnsubscribe = null;
+let currentRosterActiveTab = "volunteers"; // 'volunteers' | 'role'
+let activeRoleEditingArea = "";
+
 function sortIncentivesByHours(items) {
   if (!items || !Array.isArray(items)) return [];
   return [...items].sort((a, b) => {
@@ -203,6 +209,7 @@ window.handleRosterReleaseShift = handleRosterReleaseShift;
 window.handleAdminReleaseShiftManager = handleAdminReleaseShiftManager;
 window.openShiftRosterModal = openShiftRosterModal;
 window.closeShiftRosterModal = closeShiftRosterModal;
+window.switchRosterTab = switchRosterTab;
 window.handleEditShiftClick = handleEditShiftClick;
 
 // User Profile Window Exports (Open to all authenticated users)
@@ -253,6 +260,13 @@ function updateAdminExports(isAdmin) {
     "handleSendAdminBroadcast",
     "updateBroadcastTargetLabel",
     "toggleSessionShiftsAccordion",
+    "openRoleEditorModal",
+    "closeRoleEditorModal",
+    "handleSaveRoleInfo",
+    "updateRoleEditorIconPreview",
+    "formatEditorDoc",
+    "insertEditorLink",
+    "renderAdminRolesSection",
   ];
 
   if (isAdmin) {
@@ -291,6 +305,13 @@ function updateAdminExports(isAdmin) {
     window.handleSendAdminBroadcast = handleSendAdminBroadcast;
     window.updateBroadcastTargetLabel = updateBroadcastTargetLabel;
     window.toggleSessionShiftsAccordion = toggleSessionShiftsAccordion;
+    window.openRoleEditorModal = openRoleEditorModal;
+    window.closeRoleEditorModal = closeRoleEditorModal;
+    window.handleSaveRoleInfo = handleSaveRoleInfo;
+    window.updateRoleEditorIconPreview = updateRoleEditorIconPreview;
+    window.formatEditorDoc = formatEditorDoc;
+    window.insertEditorLink = insertEditorLink;
+    window.renderAdminRolesSection = renderAdminRolesSection;
   } else {
     adminFunctionNames.forEach(fnName => {
       delete window[fnName];
@@ -306,6 +327,8 @@ document.addEventListener("DOMContentLoaded", () => {
   // Immediately subscribe to festival settings (public read document)
   subscribeToFestivalConfig();
   subscribeToIncentivesConfig();
+  subscribeToRolesConfig();
+  checkUrlAreaFilter();
 
   // Initialize schedule filter drawer state from localStorage
   try {
@@ -462,6 +485,10 @@ document.addEventListener("DOMContentLoaded", () => {
         shiftsUnsubscribe();
         shiftsUnsubscribe = null;
       }
+      if (rolesConfigUnsubscribe) {
+        rolesConfigUnsubscribe();
+        rolesConfigUnsubscribe = null;
+      }
 
       availableCategories = [];
       allUsersMap.clear();
@@ -594,6 +621,7 @@ function switchView(viewName) {
     renderAdminUsers();
     renderAdminFestivalConfig();
     renderAdminIncentivesConfig();
+    renderAdminRolesSection();
   } else {
     if (scheduleView) scheduleView.classList.remove("hidden");
     if (navScheduleBtn) navScheduleBtn.className = activeTabClass;
@@ -1790,7 +1818,19 @@ function updateAvailableCategories(newCategories) {
   ).sort((a, b) => a.localeCompare(b));
 
   if (selectedCategory !== "ALL" && !availableCategories.includes(selectedCategory)) {
-    selectedCategory = "ALL";
+    // Preserve if selectedCategory was injected via URL parameter
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const areaParam = params.get("area");
+      if (areaParam && decodeURIComponent(areaParam).trim() === selectedCategory) {
+        availableCategories.push(selectedCategory);
+        availableCategories.sort((a, b) => a.localeCompare(b));
+      } else {
+        selectedCategory = "ALL";
+      }
+    } catch (e) {
+      selectedCategory = "ALL";
+    }
   }
   renderCategoryFilters();
 }
@@ -1921,6 +1961,53 @@ function subscribeToIncentivesConfig() {
     };
     updateIncentiveAndMyShifts();
   });
+}
+
+// Volunteer Roles Configuration Dynamic Listener (config/roles)
+function subscribeToRolesConfig() {
+  if (rolesConfigUnsubscribe) return;
+
+  rolesConfigUnsubscribe = db.collection("config").doc("roles").onSnapshot(doc => {
+    if (doc.exists && doc.data()?.roles) {
+      currentRolesConfig = doc.data().roles;
+    } else {
+      currentRolesConfig = {};
+    }
+
+    if (currentUserRole === "admin" && currentView === "admin") {
+      renderAdminRolesSection();
+    }
+    // If active shift roster modal is currently open, refresh the role tab content
+    if (activeRosterShiftId) {
+      updateRosterRoleTab(activeRosterShiftId);
+    }
+  }, err => {
+    console.warn("Roles config listener error:", err);
+  });
+}
+
+function checkUrlAreaFilter() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const areaParam = params.get("area");
+    if (areaParam) {
+      const decodedArea = decodeURIComponent(areaParam).trim();
+      if (decodedArea) {
+        selectedCategory = decodedArea;
+        if (!availableCategories.includes(decodedArea)) {
+          availableCategories.push(decodedArea);
+          availableCategories.sort((a, b) => a.localeCompare(b));
+        }
+        renderCategoryFilters();
+        if (currentShiftsDocs && currentShiftsDocs.length > 0) {
+          renderShifts(currentShiftsDocs);
+        }
+        updateFilterDrawerBadges();
+      }
+    }
+  } catch (err) {
+    console.warn("Could not parse area query parameter:", err);
+  }
 }
 
 function applyFestivalBranding() {
@@ -2539,48 +2626,47 @@ function renderDayTabs() {
     selectedSessionId = singleSession.id;
 
     // Single session scheduled for this day:
-    // Remove the sessions selector (session-chips), replacing it with the details of the session to save space.
+    // Keep sessionHeaderRow visible so the 'Filters & Options' button remains accessible,
+    // displaying the single session details cleanly on the left and hiding the chips selector.
     if (sessionChipsContainer) {
       sessionChipsContainer.innerHTML = "";
       sessionChipsContainer.classList.add("hidden");
+    }
+    if (singleDetailContainer) {
+      singleDetailContainer.classList.add("hidden");
+      singleDetailContainer.innerHTML = "";
     }
     if (sessionStepper) {
       sessionStepper.classList.add("hidden");
       sessionStepper.classList.remove("flex");
     }
     if (sessionHeaderRow) {
-      sessionHeaderRow.classList.add("hidden");
-      sessionHeaderRow.classList.remove("flex");
+      sessionHeaderRow.classList.remove("hidden");
+      sessionHeaderRow.classList.add("flex");
     }
     if (sessionTierCard) {
       sessionTierCard.className = "bg-amber-100/70 p-2.5 sm:px-3 sm:py-2 rounded-2xl border border-amber-300/90 shadow-xs";
     }
 
-    if (singleDetailContainer) {
-      singleDetailContainer.classList.remove("hidden");
+    if (dayLabelEl) {
       const activeDayInfo = getDayInfoFromDateStr(selectedDayDate);
       const timeRange = singleSession.startTime && singleSession.endTime ? `${singleSession.startTime} – ${singleSession.endTime}` : "";
-      singleDetailContainer.innerHTML = `
-        <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
-          <div class="flex items-center gap-2 flex-wrap min-w-0">
-            <span class="text-[11px] font-extrabold uppercase tracking-wide text-amber-900 flex items-center gap-1.5 shrink-0">
-              <span>🍺</span> ${escapeHtml(singleSession.name || "Session")}
-            </span>
-            ${timeRange ? `
-              <span class="px-2 py-0.5 rounded-md bg-white border border-amber-300/80 text-amber-950 font-bold text-[11px] shrink-0 shadow-2xs">
-                ⏰ ${escapeHtml(timeRange)}
-              </span>
-            ` : ''}
-            ${singleSession.description ? `
-              <span class="text-slate-600 text-[11px] truncate hidden md:inline">
-                &bull; ${escapeHtml(singleSession.description)}
-              </span>
-            ` : ''}
-          </div>
-          <span class="text-[10px] font-semibold text-amber-800 bg-amber-200/60 px-2 py-0.5 rounded-full border border-amber-300 shrink-0">
-            ${escapeHtml(activeDayInfo.fullName)}
+      dayLabelEl.className = "text-xs font-extrabold text-amber-950 flex items-center gap-1.5 min-w-0";
+      dayLabelEl.innerHTML = `
+        <span class="text-xs font-extrabold uppercase tracking-wide text-amber-900 flex items-center gap-1 min-w-0 truncate">
+          <span class="shrink-0">🍺</span>
+          <span class="truncate">${escapeHtml(singleSession.name || "Session")}</span>
+        </span>
+        ${timeRange ? `
+          <span class="px-1.5 py-0.5 rounded-md bg-white border border-amber-300/80 text-amber-950 font-bold text-2xs sm:text-xs shrink-0 shadow-2xs whitespace-nowrap">
+            ⏰ ${escapeHtml(timeRange)}
           </span>
-        </div>
+        ` : ''}
+        ${singleSession.description ? `
+          <span class="text-slate-600 text-xs font-normal truncate hidden lg:inline">
+            &bull; ${escapeHtml(singleSession.description)}
+          </span>
+        ` : ''}
       `;
     }
   } else {
@@ -2593,6 +2679,11 @@ function renderDayTabs() {
       sessionHeaderRow.classList.remove("hidden");
       sessionHeaderRow.classList.add("flex");
     }
+    if (dayLabelEl) {
+      const activeDayInfo = getDayInfoFromDateStr(selectedDayDate);
+      dayLabelEl.className = "text-xs font-extrabold text-amber-950 flex items-center gap-1 min-w-0 truncate";
+      dayLabelEl.textContent = `${activeDayInfo.fullName} Sessions:`;
+    }
     if (sessionStepper) {
       if (activeDaySessions.length > 1) {
         sessionStepper.classList.remove("hidden");
@@ -2603,7 +2694,7 @@ function renderDayTabs() {
       }
     }
     if (sessionTierCard) {
-      sessionTierCard.className = "bg-amber-100/70 p-3 rounded-2xl border border-amber-300/90 shadow-xs";
+      sessionTierCard.className = "bg-amber-100/70 p-2.5 sm:p-3 rounded-2xl border border-amber-300/90 shadow-xs";
     }
 
     if (sessionChipsContainer) {
@@ -3020,24 +3111,24 @@ function renderShifts(docs) {
       const totalSlots = shift.capacity || 0;
       const spotsLeft = totalSlots - bookedCount;
 
-      // Action button
+      // Action button with touch-friendly 44px min-height target
       let actionBtnHtml = "";
       if (!currentUser) {
         actionBtnHtml = `
-          <button disabled class="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 bg-slate-100 cursor-not-allowed">
+          <button disabled class="min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed flex items-center justify-center">
             Sign In
           </button>
         `;
       } else if (isRegistered) {
         if (isLocked) {
           actionBtnHtml = `
-            <button disabled class="px-2.5 py-1 rounded-lg text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed" title="Shift locked within 7 days">
+            <button disabled class="min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed flex items-center justify-center" title="Shift locked within 7 days">
               🔒 Locked
             </button>
           `;
         } else {
           actionBtnHtml = `
-            <button onclick="cancelShift('${s.id}')" class="px-2.5 py-1 rounded-lg text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 transition shadow-xs">
+            <button onclick="cancelShift('${s.id}')" class="min-h-[44px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 transition shadow-2xs flex items-center justify-center active:scale-95 cursor-pointer touch-manipulation">
               Cancel
             </button>
           `;
@@ -3047,84 +3138,112 @@ function renderShifts(docs) {
         const conflictStart = formatTime(conflict.startTime);
         const conflictEnd = formatTime(conflict.endTime);
         actionBtnHtml = `
-          <button disabled class="px-2 py-1 rounded-lg text-[11px] sm:text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 cursor-not-allowed inline-flex items-center gap-1 shadow-xs" title="Time Clash: You are already registered for ${escapeHtml(conflictName)} (${conflictStart} &ndash; ${conflictEnd})">
+          <button disabled class="min-h-[44px] px-3 py-2 rounded-xl text-[11px] sm:text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 cursor-not-allowed inline-flex items-center gap-1 shadow-2xs" title="Time Clash: You are already registered for ${escapeHtml(conflictName)} (${conflictStart} &ndash; ${conflictEnd})">
             <span>⚠️</span> Clash
           </button>
         `;
       } else if (isFull) {
         actionBtnHtml = `
-          <button disabled class="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 bg-slate-100 cursor-not-allowed">
+          <button disabled class="min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed flex items-center justify-center">
             Full
           </button>
         `;
       } else {
         actionBtnHtml = `
-          <button onclick="claimShift('${s.id}')" class="px-2.5 py-1 rounded-lg text-xs font-bold text-white bg-amber-700 hover:bg-amber-600 transition shadow-xs">
+          <button onclick="claimShift('${s.id}')" class="min-h-[44px] px-4 py-2 rounded-xl text-xs sm:text-sm font-bold text-white bg-amber-700 hover:bg-amber-600 transition shadow-xs flex items-center justify-center active:scale-95 cursor-pointer touch-manipulation">
             Register
           </button>
         `;
       }
 
-      // Slots indicator
-      let slotsHtml = "";
-      if (currentUser) {
-        slotsHtml = `
-          <div class="flex items-center gap-1">
-            <button type="button" onclick="openShiftRosterModal('${s.id}')" title="View volunteer roster (${bookedCount} booked)" class="group font-bold text-slate-700 hover:text-amber-900 inline-flex items-center gap-0.5 text-xs sm:text-sm transition cursor-pointer">
-              <span class="underline decoration-amber-300 underline-offset-2">${bookedCount}/${totalSlots}</span>
-              <span class="text-[10px] text-amber-700 group-hover:scale-110 transition-transform">👥</span>
-            </button>
-            ${isRegistered ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">Booked</span>' : isFull ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-500">Full</span>' : `<span class="text-[10px] text-emerald-700 font-medium hidden sm:inline">(${spotsLeft} left)</span>`}
-          </div>
-        `;
+      // Touch-safe Roster Trigger (Placed on secondary metadata line, separated from Register CTA)
+      const rosterBtnHtml = currentUser ? `
+        <button type="button" 
+                onclick="openShiftRosterModal('${s.id}')" 
+                title="View volunteer roster (${bookedCount} booked)" 
+                class="group inline-flex items-center gap-1 font-bold text-slate-700 hover:text-amber-900 transition cursor-pointer text-xs sm:text-sm py-0.5 touch-manipulation">
+          <span class="underline decoration-amber-300 underline-offset-2 tabular-nums">${bookedCount}/${totalSlots}</span>
+          <span class="text-xs text-amber-700 group-hover:scale-110 transition-transform">👥</span>
+        </button>
+      ` : `
+        <span class="inline-flex items-center gap-1 font-bold text-slate-700 text-xs sm:text-sm tabular-nums">
+          <span>${bookedCount}/${totalSlots}</span>
+          <span class="text-xs text-slate-400">👥</span>
+        </span>
+      `;
+
+      // Status / Urgency description
+      let urgencyHtml = "";
+      if (isRegistered) {
+        urgencyHtml = `<span class="inline-flex items-center text-emerald-800 font-bold text-xs"><span class="text-emerald-600 mr-1">✓</span> Confirmed</span>`;
+      } else if (isFull) {
+        urgencyHtml = `<span class="inline-flex items-center text-slate-500 font-medium text-xs">All spots filled</span>`;
+      } else if (spotsLeft === 1) {
+        urgencyHtml = `<span class="inline-flex items-center text-amber-800 font-bold text-xs"><span class="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1.5 animate-pulse"></span>1 spot left &bull; Needed</span>`;
       } else {
-        slotsHtml = `
-          <div class="flex items-center gap-1">
-            <span class="font-bold text-slate-700 text-xs sm:text-sm">${bookedCount}/${totalSlots}</span>
-            ${isRegistered ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">Booked</span>' : isFull ? '<span class="text-[9px] sm:text-[10px] font-bold px-1.5 py-0.2 rounded-full bg-slate-100 text-slate-500">Full</span>' : `<span class="text-[10px] text-emerald-700 font-medium hidden sm:inline">(${spotsLeft} left)</span>`}
-          </div>
-        `;
+        urgencyHtml = `<span class="inline-flex items-center text-emerald-700 font-medium text-xs"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span>${spotsLeft} spots available</span>`;
       }
 
       // Admin Edit Button
       let adminEditBtn = "";
       if (isAdminMode()) {
         adminEditBtn = `
-          <button type="button" onclick="openEditShiftModal('${s.id}')" title="Edit Shift Details & Assign Manager" class="p-1 rounded-md text-amber-900 hover:bg-amber-100 border border-transparent hover:border-amber-300 transition text-xs inline-flex items-center justify-center">
+          <button type="button" onclick="openEditShiftModal('${s.id}')" title="Edit Shift Details & Assign Manager" class="min-h-[44px] min-w-[38px] p-2 rounded-xl text-amber-900 hover:bg-amber-100 border border-amber-300/80 transition text-sm inline-flex items-center justify-center cursor-pointer active:scale-95 touch-manipulation">
             ✏️
           </button>
         `;
       }
 
-      // Column 1 content depends on grouping mode
-      let col1Content = "";
-      if (scheduleGroupingMode === "time") {
-        col1Content = `
-          <span class="inline-block px-2.5 py-0.5 rounded-md text-[11px] sm:text-xs font-bold bg-amber-100/90 text-amber-950 border border-amber-200">
-            ${escapeHtml(shift.categoryName || 'General Area')}
-          </span>
-        `;
-      } else {
-        col1Content = `
-          <span class="font-bold text-slate-800 text-xs sm:text-sm tracking-tight">${startTime} &ndash; ${endTime}</span>
-        `;
+      // Primary Title depending on grouping mode
+      const primaryTitle = scheduleGroupingMode === "time"
+        ? escapeHtml(shift.categoryName || 'General Area')
+        : `${startTime} &ndash; ${endTime}`;
+
+      // Left border accent & background
+      let borderLeftClass = "border-l-4 border-l-transparent";
+      let rowBgClass = "hover:bg-amber-50/40";
+      if (isRegistered) {
+        borderLeftClass = "border-l-4 border-l-emerald-500";
+        rowBgClass = "bg-emerald-50/40 hover:bg-emerald-50/60";
+      } else if (conflict) {
+        borderLeftClass = "border-l-4 border-l-amber-400";
+        rowBgClass = "bg-amber-50/20 hover:bg-amber-50/40";
       }
 
       return `
-        <tr class="transition hover:bg-amber-50/40 ${isRegistered ? 'bg-emerald-50/50 border-l-4 border-l-emerald-500' : conflict ? 'bg-amber-50/20 border-l-4 border-l-amber-400' : 'border-l-4 border-l-transparent'}">
-          <td class="py-2.5 px-3 sm:px-4">
-            ${col1Content}
-          </td>
-          <td class="py-2.5 px-2 sm:px-3 whitespace-nowrap">
-            ${slotsHtml}
-          </td>
-          <td class="py-2.5 px-2.5 sm:px-4 whitespace-nowrap text-right">
-            <div class="flex items-center justify-end gap-1">
-              ${adminEditBtn}
-              ${actionBtnHtml}
+        <div role="listitem" class="p-3 sm:px-4 sm:py-3.5 transition-colors flex items-center justify-between gap-3 ${borderLeftClass} ${rowBgClass}">
+          <!-- Left: Stacked Typography (Title on top, Quota/Urgency underneath) -->
+          <div class="min-w-0 flex-1 space-y-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <h4 class="font-bold text-slate-900 text-sm sm:text-base tracking-tight leading-snug truncate">
+                ${primaryTitle}
+              </h4>
+              ${isRegistered ? `
+                <span class="inline-flex items-center px-2 py-0.2 rounded-full text-2xs font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                  Booked
+                </span>
+              ` : ''}
+              ${conflict ? `
+                <span class="inline-flex items-center px-1.5 py-0.2 rounded-md text-2xs font-bold bg-amber-100 text-amber-900 border border-amber-300/80" title="Time Clash: You are already registered for ${escapeHtml(conflict.categoryName || 'another shift')}">
+                  ⚠️ Clash
+                </span>
+              ` : ''}
             </div>
-          </td>
-        </tr>
+
+            <!-- Quota & Urgency Subline -->
+            <div class="flex items-center gap-2 text-xs text-slate-500 flex-wrap">
+              ${rosterBtnHtml}
+              <span class="text-slate-300 select-none">&bull;</span>
+              ${urgencyHtml}
+            </div>
+          </div>
+
+          <!-- Right: Dedicated Touch Target (min-h-[44px] for ergonomic thumb tap) -->
+          <div class="shrink-0 flex items-center justify-end gap-1.5 sm:gap-2">
+            ${adminEditBtn}
+            ${actionBtnHtml}
+          </div>
+        </div>
       `;
     }).join("");
 
@@ -3146,13 +3265,11 @@ function renderShifts(docs) {
           </div>
         </button>
 
-        <!-- Section Collapsible Table -->
+        <!-- Section Collapsible Shift List (Replaced 3-column table with responsive list items) -->
         <div class="${isExpanded ? 'block' : 'hidden'} border-t border-amber-100">
-          <table class="w-full divide-y divide-amber-100 text-left text-xs sm:text-sm">
-            <tbody class="divide-y divide-amber-100 bg-white">
-              ${rowsHtml}
-            </tbody>
-          </table>
+          <div role="list" class="divide-y divide-amber-100/80 bg-white">
+            ${rowsHtml}
+          </div>
         </div>
       </div>
     `;
@@ -4175,6 +4292,10 @@ async function openShiftRosterModal(shiftId) {
   const titleEl = document.getElementById("roster-modal-shift-title");
   const listEl = document.getElementById("roster-modal-list");
   const countEl = document.getElementById("roster-modal-count");
+  const tabBadgeCount = document.getElementById("roster-tab-badge-count");
+
+  switchRosterTab("volunteers");
+  if (tabBadgeCount) tabBadgeCount.innerText = "0";
 
   modal.classList.remove("hidden");
   listEl.innerHTML = `<p class="text-xs text-slate-500 italic py-6 text-center">Loading registrations...</p>`;
@@ -4197,6 +4318,7 @@ async function openShiftRosterModal(shiftId) {
 
   if (currentShiftData) {
     renderRosterManagerSection(shiftId, currentShiftData);
+    updateRosterRoleTab(shiftId, currentShiftData);
   }
 
   try {
@@ -4204,6 +4326,10 @@ async function openShiftRosterModal(shiftId) {
       .where("shiftId", "==", shiftId)
       .where("status", "==", "confirmed")
       .get();
+
+    if (tabBadgeCount) {
+      tabBadgeCount.innerText = `${regSnapshot.size}`;
+    }
 
     if (regSnapshot.empty) {
       listEl.innerHTML = `<p class="text-xs text-slate-500 italic py-6 text-center">No volunteers are currently registered for this shift.</p>`;
@@ -5443,6 +5569,355 @@ async function handleSaveIncentivesConfig() {
       saveBtn.disabled = false;
       saveBtn.innerHTML = "<span>💾</span> Save Incentives Configuration";
     }
+  }
+}
+
+// ============================================================================
+// REQUIREMENT: Volunteer Role Guides & WYSIWYG Popout Editor
+// ============================================================================
+function switchRosterTab(tab) {
+  currentRosterActiveTab = tab;
+  const btnVolunteers = document.getElementById("tab-btn-roster-volunteers");
+  const btnRole = document.getElementById("tab-btn-roster-role");
+  const panelVolunteers = document.getElementById("roster-tab-panel-volunteers");
+  const panelRole = document.getElementById("roster-tab-panel-role");
+  const headingEl = document.getElementById("roster-modal-heading");
+  const iconEl = document.getElementById("roster-modal-icon");
+
+  const activeBtnClass = "flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all shadow-xs bg-amber-800 text-white flex items-center justify-center gap-1.5 cursor-pointer";
+  const inactiveBtnClass = "flex-1 py-1.5 px-3 rounded-lg text-xs font-bold transition-all text-amber-900 hover:bg-white/60 flex items-center justify-center gap-1.5 cursor-pointer";
+
+  if (tab === "role") {
+    if (btnVolunteers) {
+      btnVolunteers.className = inactiveBtnClass;
+      btnVolunteers.setAttribute("aria-selected", "false");
+    }
+    if (btnRole) {
+      btnRole.className = activeBtnClass;
+      btnRole.setAttribute("aria-selected", "true");
+    }
+    if (panelVolunteers) panelVolunteers.classList.add("hidden");
+    if (panelRole) panelRole.classList.remove("hidden");
+    if (headingEl) headingEl.innerText = "Role Information & Briefing";
+    if (iconEl) iconEl.innerText = "📋";
+  } else {
+    if (btnVolunteers) {
+      btnVolunteers.className = activeBtnClass;
+      btnVolunteers.setAttribute("aria-selected", "true");
+    }
+    if (btnRole) {
+      btnRole.className = inactiveBtnClass;
+      btnRole.setAttribute("aria-selected", "false");
+    }
+    if (panelVolunteers) panelVolunteers.classList.remove("hidden");
+    if (panelRole) panelRole.classList.add("hidden");
+    if (headingEl) headingEl.innerText = "Registered Volunteers Roster";
+    if (iconEl) iconEl.innerText = "👥";
+  }
+}
+
+async function updateRosterRoleTab(shiftId, shiftData = null) {
+  const container = document.getElementById("roster-modal-role-content");
+  if (!container) return;
+
+  let currentShift = shiftData;
+  if (!currentShift) {
+    try {
+      const doc = await db.collection("shifts").doc(shiftId).get();
+      if (doc.exists) currentShift = doc.data();
+    } catch (e) {
+      console.warn("Could not fetch shift for role tab:", e);
+    }
+  }
+
+  const areaName = (currentShift?.categoryName || "General Area").trim();
+  const role = (currentRolesConfig && currentRolesConfig[areaName]) ? currentRolesConfig[areaName] : {};
+  const icon = role.icon || "🍺";
+  const summary = role.summary || "";
+  const description = role.description || "";
+  const isAdmin = currentUserRole === "admin";
+
+  let html = `
+    <div class="space-y-3.5">
+      <!-- Role Header -->
+      <div class="flex items-start justify-between gap-3 pb-3 border-b border-slate-100">
+        <div class="flex items-center gap-2.5">
+          <span class="text-3xl p-2 rounded-xl bg-amber-50 border border-amber-200/80 shrink-0">${icon}</span>
+          <div>
+            <h3 class="font-bold text-base text-slate-900 leading-tight">${escapeHtml(areaName)}</h3>
+            <p class="text-2xs text-amber-900 font-semibold uppercase tracking-wider">Area Briefing &amp; Role Guide</p>
+          </div>
+        </div>
+        ${isAdmin ? `
+          <button type="button" onclick="openRoleEditorModal('${escapeJs(areaName)}')" class="shrink-0 text-xs font-bold px-2.5 py-1.5 rounded-lg bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition flex items-center gap-1 cursor-pointer" title="Edit this role guide">
+            <span>✏️</span> Edit Info
+          </button>
+        ` : ''}
+      </div>
+  `;
+
+  if (summary) {
+    html += `
+      <!-- Summary Callout -->
+      <div class="bg-amber-50/70 border border-amber-200/80 rounded-xl p-3 text-xs text-amber-950 font-medium leading-relaxed">
+        ${escapeHtml(summary)}
+      </div>
+    `;
+  }
+
+  if (description) {
+    html += `
+      <!-- Rich Content Body -->
+      <div class="prose prose-amber max-w-none text-xs sm:text-sm text-slate-700 leading-relaxed space-y-2">
+        ${description}
+      </div>
+    `;
+  } else {
+    html += `
+      <!-- Unconfigured Fallback Notice -->
+      <div class="p-4 bg-stone-50 rounded-xl border border-dashed border-amber-300/80 text-center space-y-2">
+        <span class="text-2xl block">📋</span>
+        <p class="text-xs text-slate-700 font-medium">
+          Role guidance for <strong class="text-amber-950">${escapeHtml(areaName)}</strong> will be provided directly by your shift manager upon arrival.
+        </p>
+        ${isAdmin ? `
+          <p class="text-2xs text-slate-500">As an administrator, you can publish responsibilities and briefing notes for this area.</p>
+          <button type="button" onclick="openRoleEditorModal('${escapeJs(areaName)}')" class="mt-1 inline-flex items-center gap-1 px-3 py-1.5 bg-amber-700 hover:bg-amber-800 text-white font-bold text-xs rounded-lg transition shadow-2xs cursor-pointer">
+            <span>+ Add Role Briefing</span>
+          </button>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  html += `
+      <!-- Catalog Link -->
+      <div class="pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+        <span class="text-2xs text-slate-400">Festival Volunteer Guide</span>
+        <a href="roles.html" target="_blank" class="font-bold text-amber-800 hover:text-amber-950 flex items-center gap-1">
+          <span>Explore All Roles</span>
+          <span>&rarr;</span>
+        </a>
+      </div>
+    </div>
+  `;
+
+  container.innerHTML = html;
+}
+
+function renderAdminRolesSection() {
+  if (currentUserRole !== "admin") return;
+
+  const tbody = document.getElementById("admin-roles-table-body");
+  if (!tbody) return;
+
+  // Derive unique categories from availableCategories, shifts, and configured roles
+  const allDerivedAreas = new Set();
+  availableCategories.forEach(c => { if (c) allDerivedAreas.add(c); });
+  (currentShiftsDocs || []).forEach(doc => {
+    const s = doc.data();
+    if (s.categoryName && s.categoryName.trim()) {
+      allDerivedAreas.add(s.categoryName.trim());
+    }
+  });
+  Object.keys(currentRolesConfig || {}).forEach(k => { if (k) allDerivedAreas.add(k); });
+
+  const sortedAreas = Array.from(allDerivedAreas).sort((a, b) => a.localeCompare(b));
+
+  if (sortedAreas.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="5" class="p-4 text-center text-slate-500 italic">No shift areas detected yet. Create shifts to derive volunteer areas.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = "";
+  sortedAreas.forEach(areaName => {
+    const role = currentRolesConfig[areaName] || {};
+    const icon = role.icon || "🍺";
+    const summary = role.summary || "";
+    const hasDesc = !!(role.description && role.description.trim());
+    const isConfigured = hasDesc || !!summary;
+
+    const tr = document.createElement("tr");
+    tr.className = "hover:bg-amber-50/40 transition";
+    tr.innerHTML = `
+      <td class="p-2.5 text-center text-xl">${icon}</td>
+      <td class="p-2.5 font-bold text-amber-950">${escapeHtml(areaName)}</td>
+      <td class="p-2.5 text-slate-600 text-xs">${summary ? escapeHtml(summary) : '<span class="text-slate-400 italic">No summary blurb provided</span>'}</td>
+      <td class="p-2.5 text-center">
+        <span class="inline-flex items-center font-bold px-2 py-0.5 rounded-full text-2xs uppercase tracking-wider ${isConfigured ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-slate-100 text-slate-600 border border-slate-300'}">
+          ${isConfigured ? '✓ Configured' : 'Pending Briefing'}
+        </span>
+      </td>
+      <td class="p-2.5 text-right whitespace-nowrap">
+        <button type="button" onclick="openRoleEditorModal('${escapeJs(areaName)}')" class="text-amber-800 hover:text-amber-950 font-bold text-xs p-1 cursor-pointer" title="Edit information for this role">
+          ✏️ Edit Info
+        </button>
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+}
+
+function openRoleEditorModal(areaName) {
+  if (!isAdminMode() && currentUserRole !== "admin") {
+    alert("Permission denied: Admin privileges required to edit role information.");
+    return;
+  }
+
+  activeRoleEditingArea = areaName;
+  const modal = document.getElementById("admin-role-editor-modal");
+  const areaNameEl = document.getElementById("role-editor-area-name");
+  const iconInput = document.getElementById("role-editor-icon-input");
+  const iconPreview = document.getElementById("role-editor-icon-preview");
+  const summaryInput = document.getElementById("role-editor-summary-input");
+  const contentEl = document.getElementById("role-editor-content");
+  const alertEl = document.getElementById("role-editor-alert");
+
+  if (alertEl) alertEl.classList.add("hidden");
+
+  const existing = currentRolesConfig[areaName] || {};
+
+  if (areaNameEl) areaNameEl.innerText = areaName;
+  if (iconInput) iconInput.value = existing.icon || "";
+  if (iconPreview) iconPreview.innerText = existing.icon || "🍺";
+  if (summaryInput) summaryInput.value = existing.summary || "";
+  if (contentEl) contentEl.innerHTML = existing.description || "";
+
+  if (modal) modal.classList.remove("hidden");
+}
+
+function closeRoleEditorModal() {
+  activeRoleEditingArea = "";
+  const modal = document.getElementById("admin-role-editor-modal");
+  if (modal) modal.classList.add("hidden");
+}
+
+function updateRoleEditorIconPreview(val) {
+  const iconPreview = document.getElementById("role-editor-icon-preview");
+  if (iconPreview) {
+    iconPreview.innerText = (val && val.trim()) ? val.trim() : "🍺";
+  }
+}
+
+function formatEditorDoc(command, value = null) {
+  const editor = document.getElementById("role-editor-content");
+  if (editor) {
+    editor.focus();
+    document.execCommand(command, false, value);
+  }
+}
+
+function insertEditorLink() {
+  const url = prompt("Enter hyperlink URL (e.g. https://example.com):");
+  if (!url) return;
+  const validUrl = url.trim().startsWith("http") ? url.trim() : `https://${url.trim()}`;
+  formatEditorDoc("createLink", validUrl);
+
+  const editor = document.getElementById("role-editor-content");
+  if (editor) {
+    const links = editor.querySelectorAll("a");
+    links.forEach(a => {
+      a.setAttribute("target", "_blank");
+      a.setAttribute("rel", "noopener noreferrer");
+    });
+  }
+}
+
+function sanitizeRoleHtml(dirtyHtml) {
+  if (!dirtyHtml) return "";
+  const temp = document.createElement("div");
+  temp.innerHTML = dirtyHtml;
+
+  const forbidden = temp.querySelectorAll("script, style, iframe, object, embed, input, button, form, textarea");
+  forbidden.forEach(el => el.remove());
+
+  const allElements = temp.querySelectorAll("*");
+  allElements.forEach(el => {
+    el.removeAttribute("style");
+    el.removeAttribute("color");
+    el.removeAttribute("bgcolor");
+
+    const tag = el.tagName.toLowerCase();
+    if (tag === "a") {
+      const href = el.getAttribute("href");
+      if (href && (href.startsWith("http://") || href.startsWith("https://") || href.startsWith("mailto:"))) {
+        el.setAttribute("target", "_blank");
+        el.setAttribute("rel", "noopener noreferrer");
+      } else {
+        el.replaceWith(...el.childNodes);
+      }
+    }
+  });
+
+  return temp.innerHTML.trim();
+}
+
+async function handleSaveRoleInfo() {
+  if (!isAdminMode() && currentUserRole !== "admin") {
+    alert("Permission denied: Admin privileges required to save role information.");
+    return;
+  }
+
+  if (!activeRoleEditingArea) return;
+
+  const iconInput = document.getElementById("role-editor-icon-input");
+  const summaryInput = document.getElementById("role-editor-summary-input");
+  const contentEl = document.getElementById("role-editor-content");
+  const saveBtn = document.getElementById("btn-save-role-editor");
+  const saveText = document.getElementById("btn-save-role-text");
+  const alertEl = document.getElementById("role-editor-alert");
+
+  const icon = (iconInput?.value || "").trim() || "🍺";
+  const summary = (summaryInput?.value || "").trim();
+  const rawHtml = contentEl?.innerHTML || "";
+  const cleanedHtml = sanitizeRoleHtml(rawHtml);
+
+  if (saveBtn) saveBtn.disabled = true;
+  if (saveText) saveText.innerText = "Saving...";
+
+  try {
+    const updatedRoleData = {
+      icon: icon,
+      summary: summary,
+      description: cleanedHtml,
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy: currentUser.uid
+    };
+
+    await db.collection("config").doc("roles").set({
+      roles: {
+        [activeRoleEditingArea]: updatedRoleData
+      },
+      updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+      updatedBy: currentUser.uid
+    }, { merge: true });
+
+    if (!currentRolesConfig) currentRolesConfig = {};
+    currentRolesConfig[activeRoleEditingArea] = updatedRoleData;
+
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs font-medium bg-emerald-50 text-emerald-800 border border-emerald-300";
+      alertEl.innerHTML = "✓ Role information saved successfully!";
+      alertEl.classList.remove("hidden");
+    }
+
+    setTimeout(() => {
+      closeRoleEditorModal();
+      renderAdminRolesSection();
+      if (activeRosterShiftId) {
+        updateRosterRoleTab(activeRosterShiftId);
+      }
+    }, 800);
+  } catch (err) {
+    console.error("Failed to save role info:", err);
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-800 border border-rose-300";
+      alertEl.innerHTML = "⚠️ Failed to save: " + err.message;
+      alertEl.classList.remove("hidden");
+    }
+  } finally {
+    if (saveBtn) saveBtn.disabled = false;
+    if (saveText) saveText.innerText = "Save Role Information";
   }
 }
 

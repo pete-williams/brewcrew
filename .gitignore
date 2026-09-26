@@ -70,3 +70,6 @@ node_modules/
 .dataconnect
 AGENTS.md
 GEMINI.md
+
+# temp folder
+.temp

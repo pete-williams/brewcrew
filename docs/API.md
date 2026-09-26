@@ -24,8 +24,9 @@ This document provides a comprehensive technical reference for all backend Cloud
 - [Firestore Data Models & Schemas](#firestore-data-models--schemas)
   - [1. `/config/festival`](#1-configfestival)
   - [2. `/config/incentives`](#2-configincentives)
-  - [3. `/shifts/{shiftId}`](#3-shiftsshiftid)
-  - [4. `/users/{userId}`](#4-usersuserid)
+  - [3. `/config/roles`](#3-configroles)
+  - [4. `/shifts/{shiftId}`](#4-shiftsshiftid)
+  - [5. `/users/{userId}`](#5-usersuserid)
 - [Firestore Security Rules Overview](#firestore-security-rules-overview)
 - [Maintenance & Documentation Maintenance Policy](#maintenance--documentation-maintenance-policy)
 
@@ -482,7 +483,25 @@ Global volunteer incentives and milestone rewards configuration document definin
 | `updatedAt` | `timestamp` | Server timestamp when incentives were last updated. |
 | `updatedBy` | `string` | UID of administrator who committed the update. |
 
-### 3. `/shifts/{shiftId}`
+### 3. `/config/roles`
+
+Global volunteer role guides and area briefings configuration document. Defines role metadata, summaries, emoji icons, and rich-text briefings for shift areas (derived dynamically from active shift `categoryName`s).
+
+- **Read Access:** Public (`allow read: if true;`), allowing prospective volunteers to browse roles on `roles.html` without authenticating.
+- **Write Access:** `admin` only (`allow write: if isAdmin();`).
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `roles` | `map` | Map of area/role names (e.g. `"Cask Bar"`, `"Tokens & Merch"`, `"Gate"`) to role profile objects. |
+| `roles.{area}.icon` | `string` | Optional emoji icon (e.g. `"🍺"`, `"🎟️"`, `"🚪"`). |
+| `roles.{area}.summary` | `string` | Concise 1–2 sentence summary blurb for card badges and roster previews. |
+| `roles.{area}.description` | `string` | Sanitized rich HTML content containing section headings (`<h2>`, `<h3>`), paragraphs, bold formatting, bulleted lists, numbered lists, and off-site hyperlinks. |
+| `roles.{area}.updatedAt` | `timestamp` | Server timestamp when this role guide was last saved. |
+| `roles.{area}.updatedBy` | `string` | UID of administrator who last updated this role. |
+| `updatedAt` | `timestamp` | Server timestamp when the roles configuration document was last modified. |
+| `updatedBy` | `string` | UID of administrator who committed the update. |
+
+### 4. `/shifts/{shiftId}`
 
 Festival shift documents defining individual working slots.
 
@@ -502,7 +521,7 @@ Festival shift documents defining individual working slots.
 | `updatedAt` | `timestamp` | Server timestamp when shift was last edited. |
 | `updatedBy` | `string` | UID of administrator who last edited the shift. |
 
-### 4. `/users/{userId}`
+### 5. `/users/{userId}`
 
 User profile document created upon initial registration or OAuth sign-in, manageable by volunteers via the "My Profile" modal.
 
@@ -536,7 +555,7 @@ While Cloud Functions execute using the Firebase Admin SDK (which bypasses secur
 
 | Collection | Path | Read Rule | Write / Mutation Rule |
 | :--- | :--- | :--- | :--- |
-| `config` | `/config/{configId}` | **Public** (`allow read: if true;`) | `admin` only (`isAdmin()`). Enables unauthenticated login screen branding (`/config/festival`) and volunteer reward milestone configuration (`/config/incentives`) while guarding writes. |
+| `config` | `/config/{configId}` | **Public** (`allow read: if true;`) | `admin` only (`isAdmin()`). Enables unauthenticated login screen branding (`/config/festival`), volunteer reward milestone configuration (`/config/incentives`), and public volunteer role guides (`/config/roles`) while guarding writes. |
 | `users` | `/users/{userId}` | Authenticated users | Create only as `volunteer`; update profile only; only `admin` can mutate `role`. |
 | `shifts` | `/shifts/{shiftId}` | Authenticated users | Create/Delete: `admin` only. Update: `admin` or assigned `manager` (manager fields only). |
 | `registrations` | `/registrations/{regId}` | Authenticated users | `admin` only. Client writes disabled to prevent race conditions; mutations routed through `claimShift` / `cancelShift`. |

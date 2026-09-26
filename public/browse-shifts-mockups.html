@@ -7,11 +7,23 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+          }
+        }
+      }
+    };
+  </script>
   <style>
-    body {
-      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
-    }
+    h1 { font-size: 2rem; line-height: 1.2; letter-spacing: -0.025em; }
+    h2 { font-size: 1.5rem; line-height: 1.25; letter-spacing: -0.02em; }
+    h3 { font-size: 1.25rem; line-height: 1.35; letter-spacing: -0.015em; }
+    h4 { font-size: 1rem; line-height: 1.4; letter-spacing: -0.01em; }
     /* Hide scrollbars but allow scrolling */
     .no-scrollbar::-webkit-scrollbar {
       display: none;

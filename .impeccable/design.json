@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-25T22:00:00Z",
+  "title": "Design System: BrewCrew Volunteer Platform",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Malt Amber",
+        "canonical": "#b45309",
+        "tonalRamp": ["#451a03", "#78350f", "#92400e", "#b45309", "#d97706", "#f59e0b", "#fbbf24", "#fde68a"]
+      },
+      "primary-dark": {
+        "role": "primary",
+        "displayName": "Deep Brew Malt",
+        "canonical": "#78350f",
+        "tonalRamp": ["#451a03", "#78350f", "#92400e", "#b45309", "#d97706", "#f59e0b", "#fbbf24", "#fde68a"]
+      },
+      "neutral-bg": {
+        "role": "neutral",
+        "displayName": "Stone Ground",
+        "canonical": "#f5f5f4",
+        "tonalRamp": ["#1c1917", "#292524", "#44403c", "#78716c", "#a8a29e", "#d6d3d1", "#e7e5e4", "#f5f5f4"]
+      }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display", "purpose": "Main headers and hero portal titles." },
+      "headline": { "displayName": "Headline", "purpose": "Section views and modal dialog headers." },
+      "title": { "displayName": "Title", "purpose": "Card headers and settings groups." },
+      "body": { "displayName": "Body", "purpose": "Primary readable prose and descriptions." },
+      "label": { "displayName": "Label", "purpose": "Badges, metadata pills, and micro-tags." }
+    },
+    "shadows": [
+      { "name": "card-rest", "value": "0 1px 2px 0 rgba(0, 0, 0, 0.05)", "purpose": "Card and container surface grounding." },
+      { "name": "interactive-lift", "value": "0 4px 6px -1px rgba(180, 83, 9, 0.15)", "purpose": "Hover elevation for buttons and cards." },
+      { "name": "dialog-overlay", "value": "0 25px 50px -12px rgba(0, 0, 0, 0.25)", "purpose": "Modal dialogs and popovers." }
+    ],
+    "motion": [
+      { "name": "ease-standard", "value": "cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Standard snappy easing for popover and sheet transitions." }
+    ],
+    "breakpoints": [
+      { "name": "xs", "value": "400px" },
+      { "name": "sm", "value": "640px" },
+      { "name": "md", "value": "768px" },
+      { "name": "lg", "value": "1024px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Primary action button in malt amber.",
+      "html": "<button class=\"ds-btn-primary\">Book Shift</button>",
+      "css": ".ds-btn-primary { background: #b45309; color: #ffffff; padding: 8px 16px; font-weight: 700; font-size: 14px; border: none; border-radius: 8px; cursor: pointer; transition: background 0.15s, transform 0.15s; } .ds-btn-primary:hover { background: #92400e; transform: translateY(-1px); }"
+    },
+    {
+      "name": "Status Pill",
+      "kind": "chip",
+      "refersTo": "badge-status",
+      "description": "High-contrast status pill badge.",
+      "html": "<span class=\"ds-badge-confirmed\">Confirmed</span>",
+      "css": ".ds-badge-confirmed { display: inline-flex; align-items: center; background: #dcfce7; color: #14532d; border: 1px solid #86efac; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 8px; border-radius: 9999px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Festival Taproom & Workshop",
+    "overview": "BrewCrew's visual identity balances the warm, celebratory spirit of a craft beer festival with the operational clarity of an industrial shift board.",
+    "keyCharacteristics": [
+      "Warm Operational Palette: malt amber and stone-100 ground",
+      "Disciplined Typographic Hierarchy with Inter and tabular numerics",
+      "Surface Layering with delicate amber borders",
+      "Gamified Progress Motif via pint glass FAB"
+    ],
+    "rules": [
+      { "name": "The Craft Ground Rule", "body": "The base page background is strictly warm stone (stone-100), never pure white or cool grey.", "section": "colors" },
+      { "name": "The Tabular Numerics Rule", "body": "All hour counters, volunteer quotas, and shift times must use tabular-nums.", "section": "typography" },
+      { "name": "The Tonal Border Rule", "body": "White cards must carry a subtle border rather than relying on shadow alone.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do preserve the warm amber, malt brown, and stone-100 color relationships.",
+      "Do use tabular-nums for all numeric metrics, timestamps, and hours counters.",
+      "Do enforce min-h-[44px] touch targets for all interactive mobile controls."
+    ],
+    "donts": [
+      "Don't use generic cold blue or purple primary buttons—the core identity is malt amber.",
+      "Don't reintroduce nested sub-cards inside cards; use semantic section dividers.",
+      "Don't introduce ad-hoc pixel typography sizes; use scale tokens."
+    ]
+  }
+}

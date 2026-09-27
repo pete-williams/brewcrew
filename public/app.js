@@ -41,8 +41,10 @@ let scheduleGroupingMode = (() => {
     return "time";
   }
 })();
-const sectionExpansionOverrides = new Map(); // sectionId -> boolean
-let allSectionsExpanded = null; // null = smart default, true = all expanded, false = all collapsed
+const sectionExpansionOverrides = new Map(); // Legacy compatibility
+let activeExpandedSectionId = null; // null = smart default (single upcoming/active), "__NONE__" = all collapsed, string = specific group id
+let allSectionsExpanded = null; // null = single accordion mode, true = all expanded, false = all collapsed
+let hasInitializedInitialShiftFocus = false; // Flag to ensure auto-focus Day -> Session -> Time Slot runs on first load
 
 // Festival Configuration State (Default fallback + dynamic Firestore config/festival)
 const defaultFestivalConfig = {
@@ -441,6 +443,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // 3. Sync User Profile & Initialize Authenticated Realtime Listeners
       adminModeActive = false; // Default to Manager view upon login as requested
+      hasInitializedInitialShiftFocus = false;
       syncUserProfile(user);
       subscribeToCurrentUserProfile(user.uid);
       subscribeToUserRegistrations(user.uid);
@@ -455,6 +458,7 @@ document.addEventListener("DOMContentLoaded", () => {
       currentUserProfile = null;
       currentUserRole = "volunteer";
       adminModeActive = false;
+      hasInitializedInitialShiftFocus = false;
 
       // 1. Hide Authenticated App, Show Login Prompt Screen
       if (authenticatedApp) {
@@ -2179,10 +2183,10 @@ function updateFilterOpenOnlyButton() {
   const btn = document.getElementById("toggle-open-only");
   if (!btn) return;
   if (filterOpenOnly) {
-    btn.className = "shrink-0 text-xs font-bold px-3 py-1.5 rounded-xl border transition flex items-center gap-1.5 bg-emerald-600 text-white border-emerald-700 shadow-xs";
-    btn.innerHTML = `<span>⚡</span> Open Only ✓`;
+    btn.className = "px-2.5 py-1 text-xs font-bold rounded-lg border transition-all duration-150 flex items-center gap-1 bg-emerald-600 text-white border-emerald-700 shadow-2xs cursor-pointer touch-manipulation active:scale-95";
+    btn.innerHTML = `<span>✓</span> Open Only`;
   } else {
-    btn.className = "shrink-0 text-xs font-bold px-3 py-1.5 rounded-xl border transition flex items-center gap-1.5 bg-white border-amber-300 text-amber-950 hover:bg-amber-50 shadow-xs";
+    btn.className = "px-2.5 py-1 text-xs font-bold rounded-lg border transition-all duration-150 flex items-center gap-1 bg-white border-amber-300 text-amber-950 hover:bg-amber-50 shadow-2xs cursor-pointer touch-manipulation active:scale-95";
     btn.innerHTML = `<span>⚡</span> Open Only`;
   }
 }
@@ -2206,6 +2210,7 @@ function stepSession(direction) {
   selectedSessionId = nextSession.id;
   selectedDayDate = nextSession.date || selectedDayDate;
   sectionExpansionOverrides.clear();
+  activeExpandedSectionId = null;
   allSectionsExpanded = null;
   renderDayTabs();
   renderShifts(currentShiftsDocs);
@@ -2220,6 +2225,7 @@ function setScheduleGroupingMode(mode) {
     console.warn("Could not save grouping mode to localStorage", e);
   }
   sectionExpansionOverrides.clear();
+  activeExpandedSectionId = null;
   allSectionsExpanded = null;
   updateScheduleGroupingButtons();
   updateFilterDrawerBadges();
@@ -2229,42 +2235,49 @@ function setScheduleGroupingMode(mode) {
 function updateScheduleGroupingButtons() {
   const btnTime = document.getElementById("btn-group-time");
   const btnArea = document.getElementById("btn-group-area");
-  const timeJumpContainer = document.getElementById("time-jump-container");
 
   if (btnTime && btnArea) {
     if (scheduleGroupingMode === "time") {
-      btnTime.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all shadow-xs bg-amber-800 text-white flex items-center gap-1.5";
-      btnArea.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all text-amber-900 hover:bg-white/60 flex items-center gap-1.5";
-      if (timeJumpContainer) timeJumpContainer.classList.remove("hidden");
+      btnTime.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all duration-150 shadow-xs bg-amber-800 text-white flex items-center gap-1.5 cursor-pointer touch-manipulation active:scale-95";
+      btnArea.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all duration-150 text-amber-900 hover:bg-white/60 flex items-center gap-1.5 cursor-pointer touch-manipulation active:scale-95";
     } else {
-      btnArea.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all shadow-xs bg-amber-800 text-white flex items-center gap-1.5";
-      btnTime.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all text-amber-900 hover:bg-white/60 flex items-center gap-1.5";
-      if (timeJumpContainer) timeJumpContainer.classList.add("hidden");
+      btnArea.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all duration-150 shadow-xs bg-amber-800 text-white flex items-center gap-1.5 cursor-pointer touch-manipulation active:scale-95";
+      btnTime.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all text-amber-900 hover:bg-white/60 flex items-center gap-1.5 cursor-pointer touch-manipulation active:scale-95";
     }
   }
 }
 
 function isSectionExpanded(sectionId, smartDefault) {
-  if (sectionExpansionOverrides.has(sectionId)) {
-    return sectionExpansionOverrides.get(sectionId);
-  }
   if (allSectionsExpanded !== null) {
     return allSectionsExpanded;
+  }
+  if (activeExpandedSectionId !== null) {
+    if (activeExpandedSectionId === "__NONE__") {
+      return false;
+    }
+    return sectionId === activeExpandedSectionId;
   }
   return !!smartDefault;
 }
 
 function toggleSectionCollapse(sectionId, smartDefault) {
   const currentExpanded = isSectionExpanded(sectionId, smartDefault);
-  sectionExpansionOverrides.set(sectionId, !currentExpanded);
+  allSectionsExpanded = null;
+  if (currentExpanded) {
+    activeExpandedSectionId = "__NONE__";
+  } else {
+    activeExpandedSectionId = sectionId;
+  }
   renderShifts(currentShiftsDocs);
 }
 
 function toggleExpandAllSections() {
   if (allSectionsExpanded === true) {
     allSectionsExpanded = false;
+    activeExpandedSectionId = "__NONE__";
   } else {
     allSectionsExpanded = true;
+    activeExpandedSectionId = null;
   }
   sectionExpansionOverrides.clear();
   renderShifts(currentShiftsDocs);
@@ -2282,17 +2295,34 @@ function updateExpandAllButton(hasAnyCollapsed) {
   }
 }
 
-function scrollToTimeSection(sectionId) {
-  sectionExpansionOverrides.set(sectionId, true);
+function scrollToTimeSection(timeStr) {
+  const targetTimeStr = String(timeStr).trim();
+  let matchedGroup = null;
+  currentVisibleGroups.forEach(g => {
+    if (g.key.startsWith(targetTimeStr) || g.title.startsWith(targetTimeStr) || g.id.includes(targetTimeStr.replace(/[^a-zA-Z0-9]/g, ''))) {
+      if (!matchedGroup) matchedGroup = g;
+    }
+  });
+  if (matchedGroup) {
+    activeExpandedSectionId = matchedGroup.id;
+    allSectionsExpanded = null;
+  }
   renderShifts(currentShiftsDocs);
   setTimeout(() => {
-    const el = document.getElementById(sectionId);
+    const safeTargetId = `time-jump-target-${targetTimeStr.replace(/[^a-zA-Z0-9]/g, '')}`;
+    let el = document.getElementById(safeTargetId);
+    if (!el && matchedGroup) {
+      el = document.getElementById(matchedGroup.id);
+    }
     if (el) {
       el.scrollIntoView({ behavior: "smooth", block: "start" });
-      el.classList.add("ring-2", "ring-amber-400");
-      setTimeout(() => {
-        el.classList.remove("ring-2", "ring-amber-400");
-      }, 1500);
+      const cardEl = matchedGroup ? document.getElementById(matchedGroup.id) : el;
+      if (cardEl) {
+        cardEl.classList.add("ring-2", "ring-amber-400");
+        setTimeout(() => {
+          cardEl.classList.remove("ring-2", "ring-amber-400");
+        }, 1500);
+      }
     }
   }, 60);
 }
@@ -2309,11 +2339,11 @@ function toggleScheduleFilterDrawer(forceState) {
 
   if (shouldOpen) {
     drawer.classList.remove("hidden");
-    if (arrow) arrow.classList.add("rotate-180");
+    if (arrow) arrow.classList.add("rotate-90");
     if (btn) btn.classList.add("bg-amber-100", "border-amber-400");
   } else {
     drawer.classList.add("hidden");
-    if (arrow) arrow.classList.remove("rotate-180");
+    if (arrow) arrow.classList.remove("rotate-90");
     if (btn) btn.classList.remove("bg-amber-100", "border-amber-400");
   }
 
@@ -2588,15 +2618,15 @@ function renderDayTabs() {
 
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = `py-2 px-2.5 rounded-xl text-center flex flex-col items-center justify-center transition border shrink-0 min-w-[62px] sm:min-w-0 ${
+      btn.className = `py-1.5 px-2 sm:py-2 sm:px-2.5 rounded-xl text-center flex flex-col items-center justify-center transition-all duration-150 border shrink-0 min-w-[54px] sm:min-w-0 min-h-[50px] cursor-pointer touch-manipulation active:scale-95 ${
         isSelected
           ? "bg-amber-800 text-white border-amber-950 shadow-sm"
-          : "bg-amber-50/70 text-amber-950 border-amber-200 hover:bg-amber-100"
+          : "bg-amber-50/70 text-amber-950 border-amber-200 hover:bg-amber-100 active:bg-amber-200"
       }`;
       btn.innerHTML = `
         <span class="text-[10px] font-bold uppercase tracking-wider ${isSelected ? 'text-amber-300' : 'text-slate-500'}">${escapeHtml(dayInfo.label)}</span>
-        <span class="text-sm font-black leading-tight">${escapeHtml(dayInfo.dayNum || dateStr)}</span>
-        <span class="text-[9px] ${isSelected ? 'text-amber-200' : 'text-slate-400'}">${sessionCount} sess</span>
+        <span class="text-sm font-black leading-tight tabular-nums">${escapeHtml(dayInfo.dayNum || dateStr)}</span>
+        <span class="text-[9px] tabular-nums ${isSelected ? 'text-amber-200' : 'text-slate-400'}">${sessionCount} sess</span>
       `;
       btn.onclick = () => {
         selectedDayDate = dateStr;
@@ -2605,6 +2635,7 @@ function renderDayTabs() {
           selectedSessionId = firstSessionOfDay.id;
         }
         sectionExpansionOverrides.clear();
+        activeExpandedSectionId = null;
         allSectionsExpanded = null;
         renderDayTabs();
         renderShifts(currentShiftsDocs);
@@ -2645,7 +2676,7 @@ function renderDayTabs() {
       sessionHeaderRow.classList.add("flex");
     }
     if (sessionTierCard) {
-      sessionTierCard.className = "bg-amber-100/70 p-2.5 sm:px-3 sm:py-2 rounded-2xl border border-amber-300/90 shadow-xs";
+      sessionTierCard.className = "pt-2.5 border-t border-slate-100 space-y-2";
     }
 
     if (dayLabelEl) {
@@ -2658,7 +2689,7 @@ function renderDayTabs() {
           <span class="truncate">${escapeHtml(singleSession.name || "Session")}</span>
         </span>
         ${timeRange ? `
-          <span class="px-1.5 py-0.5 rounded-md bg-white border border-amber-300/80 text-amber-950 font-bold text-2xs sm:text-xs shrink-0 shadow-2xs whitespace-nowrap">
+          <span class="px-1.5 py-0.5 rounded-md bg-white border border-amber-300/80 text-amber-950 font-bold text-2xs sm:text-xs shrink-0 shadow-2xs whitespace-nowrap tabular-nums">
             ⏰ ${escapeHtml(timeRange)}
           </span>
         ` : ''}
@@ -2694,7 +2725,7 @@ function renderDayTabs() {
       }
     }
     if (sessionTierCard) {
-      sessionTierCard.className = "bg-amber-100/70 p-2.5 sm:p-3 rounded-2xl border border-amber-300/90 shadow-xs";
+      sessionTierCard.className = "pt-2.5 border-t border-slate-100 space-y-2";
     }
 
     if (sessionChipsContainer) {
@@ -2708,20 +2739,20 @@ function renderDayTabs() {
           const isSelected = session.id === selectedSessionId;
           const chip = document.createElement("button");
           chip.type = "button";
-          chip.className = `p-2.5 rounded-xl text-left transition flex items-center justify-between border ${
+          chip.className = `p-2.5 rounded-xl text-left transition-all duration-150 flex items-center justify-between border cursor-pointer touch-manipulation active:scale-[0.98] ${
             isSelected
               ? "bg-amber-700 text-white border-amber-800 shadow-sm ring-2 ring-amber-400/50"
-              : "bg-white text-slate-800 border-amber-200 hover:bg-amber-50 shadow-xs"
+              : "bg-white text-slate-800 border-amber-200 hover:bg-amber-50 active:bg-amber-100 shadow-xs"
           }`;
 
           const timeRange = session.startTime && session.endTime ? `${session.startTime} – ${session.endTime}` : "";
           chip.innerHTML = `
             <div class="truncate mr-2">
               <span class="text-xs font-bold block truncate">${escapeHtml(session.name || "Session")}</span>
-              ${timeRange ? `<span class="text-[11px] ${isSelected ? 'text-amber-100' : 'text-slate-500'} block">${escapeHtml(timeRange)}</span>` : ''}
+              ${timeRange ? `<span class="text-[11px] tabular-nums ${isSelected ? 'text-amber-100' : 'text-slate-500'} block">${escapeHtml(timeRange)}</span>` : ''}
               ${session.description ? `<span class="text-[10px] ${isSelected ? 'text-amber-200/90' : 'text-slate-400'} block truncate">${escapeHtml(session.description)}</span>` : ''}
             </div>
-            <span class="text-[11px] font-extrabold shrink-0 px-2 py-0.5 rounded-md ${
+            <span class="text-[11px] font-extrabold shrink-0 px-2 py-0.5 rounded-md tabular-nums ${
               isSelected ? 'bg-amber-900/60 text-amber-200' : 'bg-amber-50 text-amber-900 border border-amber-200'
             }">
               ${isSelected ? '● Active' : 'Select'}
@@ -2731,6 +2762,7 @@ function renderDayTabs() {
             selectedSessionId = session.id;
             selectedDayDate = session.date || selectedDayDate;
             sectionExpansionOverrides.clear();
+            activeExpandedSectionId = null;
             allSectionsExpanded = null;
             renderDayTabs();
             renderShifts(currentShiftsDocs);
@@ -2764,6 +2796,127 @@ function renderDayTabs() {
   }
 }
 
+/**
+ * On first load, automatically finds the next available shift based on current time
+ * and displays it as expanded and in focus following strict hierarchy:
+ * Day --> Session --> Time Slot.
+ * Shifts that have already elapsed are excluded (e.g. if the shift is 13:00-15:00 on 27-Sep-2026
+ * and current time is 14:00 the shift is displayed, but if current time is 15:00 it shows the next shift).
+ */
+function findAndFocusNextAvailableShift(docs) {
+  if (!docs || docs.length === 0) return;
+
+  const sessionsList = sortSessionsChronologically(currentFestivalConfig.sessions || defaultFestivalConfig.sessions);
+  const nowMs = Date.now();
+
+  // 1. Gather all shifts with start/end timestamps and validity
+  const shiftsWithMeta = docs.map(doc => {
+    const shift = doc.data() || {};
+    const startMs = getShiftStartTimeMs(shift.startTime);
+    const endMs = getShiftStartTimeMs(shift.endTime);
+    const cap = shift.capacity || 0;
+    const booked = shift.assignedCount || 0;
+    const hasOpenSpots = cap > booked;
+    // A shift has elapsed if its end time is <= current time (or start time if no end time)
+    const isElapsed = endMs ? (endMs <= nowMs) : (startMs <= nowMs);
+
+    return {
+      id: doc.id,
+      data: shift,
+      startMs,
+      endMs,
+      hasOpenSpots,
+      isElapsed
+    };
+  }).filter(s => s.startMs > 0);
+
+  if (shiftsWithMeta.length === 0) {
+    renderDayTabs();
+    renderShifts(docs);
+    return;
+  }
+
+  // 2. Filter to non-elapsed shifts
+  let candidateShifts = shiftsWithMeta.filter(s => !s.isElapsed);
+
+  // If all festival shifts have already elapsed (e.g. archive or test data),
+  // fallback to all shifts chronologically so the schedule remains accessible
+  if (candidateShifts.length === 0) {
+    candidateShifts = shiftsWithMeta.slice();
+  }
+
+  // 3. Sort candidates to identify the next available shift:
+  // Order: startMs ascending, then endMs ascending, prioritizing open spots
+  candidateShifts.sort((a, b) => {
+    if (a.startMs !== b.startMs) return a.startMs - b.startMs;
+    if (a.endMs !== b.endMs) return a.endMs - b.endMs;
+    if (a.hasOpenSpots && !b.hasOpenSpots) return -1;
+    if (!a.hasOpenSpots && b.hasOpenSpots) return 1;
+    return 0;
+  });
+
+  const nextShift = candidateShifts[0];
+  if (!nextShift) {
+    renderDayTabs();
+    renderShifts(docs);
+    return;
+  }
+
+  // 4. Resolve Day --> Session --> Time Slot
+  const shiftDateStr = formatForDateTimeLocal(new Date(nextShift.startMs)).split("T")[0];
+
+  let targetSession = null;
+  if (nextShift.data.sessionId) {
+    targetSession = sessionsList.find(s => s.id === nextShift.data.sessionId);
+  }
+  if (!targetSession) {
+    targetSession = sessionsList.find(s => {
+      if (s.date !== shiftDateStr) return false;
+      const sessStart = getSessionStartMs(s);
+      const sessEnd = getSessionEndMs(s);
+      return sessStart <= nextShift.startMs && sessEnd >= nextShift.endMs;
+    }) || sessionsList.find(s => s.date === shiftDateStr);
+  }
+  if (!targetSession && sessionsList.length > 0) {
+    targetSession = sessionsList[0];
+  }
+
+  const targetDayDate = (targetSession && targetSession.date) ? targetSession.date : shiftDateStr;
+  const targetSessionId = targetSession ? targetSession.id : selectedSessionId;
+
+  // Determine target accordion group ID based on current grouping mode
+  let targetGroupId = "";
+  if (scheduleGroupingMode === "time") {
+    const startTimeStr = formatTime(nextShift.data.startTime);
+    const endTimeStr = formatTime(nextShift.data.endTime);
+    targetGroupId = `sec-time-${startTimeStr.replace(/[^a-zA-Z0-9]/g, '')}-${endTimeStr.replace(/[^a-zA-Z0-9]/g, '')}`;
+  } else {
+    const areaName = (nextShift.data.categoryName || 'General Area').trim();
+    targetGroupId = `sec-area-${areaName.replace(/[^a-zA-Z0-9]/g, '')}`;
+  }
+
+  // 5. Update State: Day --> Session --> Time Slot expanded
+  selectedDayDate = targetDayDate;
+  selectedSessionId = targetSessionId;
+  activeExpandedSectionId = targetGroupId;
+  allSectionsExpanded = null;
+
+  renderDayTabs();
+  renderShifts(docs);
+
+  // 6. Put in focus: smooth scroll & gentle amber highlight ring
+  setTimeout(() => {
+    const targetCard = document.getElementById(targetGroupId);
+    if (targetCard) {
+      targetCard.scrollIntoView({ behavior: "smooth", block: "start" });
+      targetCard.classList.add("ring-2", "ring-amber-500", "ring-offset-2");
+      setTimeout(() => {
+        targetCard.classList.remove("ring-2", "ring-amber-500", "ring-offset-2");
+      }, 2500);
+    }
+  }, 150);
+}
+
 // Real-Time Shifts Listener
 function subscribeToShifts() {
   if (shiftsUnsubscribe) {
@@ -2791,7 +2944,13 @@ function subscribeToShifts() {
         })
         .filter(Boolean);
       updateAvailableCategories(shiftCats);
-      renderShifts(currentShiftsDocs);
+
+      if (!hasInitializedInitialShiftFocus && currentShiftsDocs.length > 0) {
+        hasInitializedInitialShiftFocus = true;
+        findAndFocusNextAvailableShift(currentShiftsDocs);
+      } else {
+        renderShifts(currentShiftsDocs);
+      }
     }, err => {
       console.error("Error listening to shifts:", err);
       if (grid) {
@@ -2847,12 +3006,15 @@ function renderShifts(docs) {
 
   const currentSession = (currentFestivalConfig.sessions || defaultFestivalConfig.sessions).find(s => s.id === selectedSessionId);
   const sessionName = currentSession ? currentSession.name : "this session";
-  const timeJumpChipsContainer = document.getElementById("time-jump-chips");
-  const timeJumpContainer = document.getElementById("time-jump-container");
+  const summaryEl = document.getElementById("schedule-metrics-summary");
+
+  const shiftsScrollContainer = document.getElementById("shifts-table-container");
+  if (shiftsScrollContainer && activeExpandedSectionId === null) {
+    shiftsScrollContainer.scrollTop = 0;
+  }
 
   if (!docs || docs.length === 0) {
-    if (timeJumpChipsContainer) timeJumpChipsContainer.innerHTML = "";
-    if (timeJumpContainer) timeJumpContainer.classList.add("hidden");
+    if (summaryEl) summaryEl.innerHTML = "<span class='text-slate-400 italic'>0 shifts</span>";
     currentVisibleGroups = [];
     grid.innerHTML = `<div class="p-6 text-center bg-white rounded-2xl border border-amber-200 shadow-xs"><p class='text-slate-500 italic text-sm'>No shifts scheduled for ${escapeHtml(sessionName)}.</p></div>`;
     return;
@@ -2884,8 +3046,7 @@ function renderShifts(docs) {
   });
 
   if (filteredDocs.length === 0) {
-    if (timeJumpChipsContainer) timeJumpChipsContainer.innerHTML = "";
-    if (timeJumpContainer) timeJumpContainer.classList.add("hidden");
+    if (summaryEl) summaryEl.innerHTML = "<span class='text-slate-400 italic'>0 shifts</span>";
     currentVisibleGroups = [];
     let emptyMsg = `No shifts scheduled for ${escapeHtml(sessionName)}`;
     if (selectedCategory !== 'ALL') emptyMsg += ` under "${escapeHtml(selectedCategory)}"`;
@@ -2905,33 +3066,17 @@ function renderShifts(docs) {
     return;
   }
 
-  // Build Time Jump chips (sorted unique start times)
-  if (timeJumpChipsContainer && timeJumpContainer) {
-    if (scheduleGroupingMode === "time") {
-      timeJumpContainer.classList.remove("hidden");
-      const startTimesMap = new Map();
-      filteredDocs.forEach(doc => {
-        const shift = doc.data();
-        const startMs = getShiftStartTimeMs(shift.startTime);
-        const timeStr = formatTime(shift.startTime);
-        if (!startTimesMap.has(timeStr) || startTimesMap.get(timeStr) > startMs) {
-          startTimesMap.set(timeStr, startMs);
-        }
-      });
-
-      const sortedStartTimes = Array.from(startTimesMap.entries()).sort((a, b) => a[1] - b[1]);
-      timeJumpChipsContainer.innerHTML = sortedStartTimes.map(([timeStr]) => {
-        const safeTargetId = `time-jump-target-${timeStr.replace(/[^a-zA-Z0-9]/g, '')}`;
-        return `
-          <button type="button" onclick="scrollToTimeSection('${safeTargetId}')" class="px-2.5 py-1 text-xs font-bold rounded-lg bg-white hover:bg-amber-100/90 border border-amber-200 text-amber-900 transition shrink-0 shadow-2xs cursor-pointer">
-            ${escapeHtml(timeStr)}
-          </button>
-        `;
-      }).join("");
-    } else {
-      timeJumpContainer.classList.add("hidden");
-      timeJumpChipsContainer.innerHTML = "";
-    }
+  // Update Live Metrics Summary in Utility Bar
+  if (summaryEl) {
+    const totalFilteredShifts = filteredDocs.length;
+    let totalFilteredOpenSpots = 0;
+    filteredDocs.forEach(d => {
+      const s = d.data();
+      totalFilteredOpenSpots += Math.max(0, (s.capacity || 0) - (s.assignedCount || 0));
+    });
+    const shiftWord = totalFilteredShifts === 1 ? "shift" : "shifts";
+    const openWord = totalFilteredOpenSpots === 1 ? "open spot" : "open spots";
+    summaryEl.innerHTML = `<span class="tabular-nums font-bold text-slate-800">${totalFilteredShifts}</span> ${shiftWord} &bull; <span class="tabular-nums font-bold text-emerald-700">${totalFilteredOpenSpots}</span> ${openWord}`;
   }
 
   // Group shifts according to scheduleGroupingMode ('time' vs 'area')
@@ -3020,7 +3165,37 @@ function renderShifts(docs) {
   currentVisibleGroups = groupList;
   let anySectionCollapsed = false;
 
-  const sectionsHtml = groupList.map(group => {
+  // Determine active/next slot index to expand by default
+  const nowMs = Date.now();
+  let defaultActiveGroupIndex = -1;
+
+  // 1. If user is booked in a shift, default to expanding that shift's group
+  defaultActiveGroupIndex = groupList.findIndex(g => g.shifts.some(s => userRegistrations.has(s.id)));
+
+  // 2. If unbooked, find first upcoming non-elapsed group with open spots (endMs > nowMs)
+  if (defaultActiveGroupIndex === -1) {
+    defaultActiveGroupIndex = groupList.findIndex(g => {
+      const hasOpen = g.shifts.some(s => (s.data.capacity || 0) > (s.data.assignedCount || 0));
+      return hasOpen && (g.endMs ? g.endMs > nowMs : true);
+    });
+  }
+
+  // 3. Fallback: find first upcoming non-elapsed group (even if all spots filled)
+  if (defaultActiveGroupIndex === -1) {
+    defaultActiveGroupIndex = groupList.findIndex(g => (g.endMs ? g.endMs > nowMs : true));
+  }
+
+  // 4. Fallback: find the first group that has any open spots
+  if (defaultActiveGroupIndex === -1) {
+    defaultActiveGroupIndex = groupList.findIndex(g => g.shifts.some(s => (s.data.capacity || 0) > (s.data.assignedCount || 0)));
+  }
+
+  // 5. Fallback: first group
+  if (defaultActiveGroupIndex === -1 && groupList.length > 0) {
+    defaultActiveGroupIndex = 0;
+  }
+
+  const sectionsHtml = groupList.map((group, groupIndex) => {
     // Aggregate metrics
     const totalShifts = group.shifts.length;
     let totalCapacity = 0;
@@ -3045,9 +3220,8 @@ function renderShifts(docs) {
 
     const isGroupAllFull = openSpots === 0;
 
-    // Smart default: Collapse if user is already booked in this section, OR if section is completely full.
-    // Auto-expand if there are open spots and user is not booked yet.
-    const smartDefaultExpanded = !userBookedShift && !isGroupAllFull;
+    // Smart default: Expand ONLY the single active/next time slot; collapse all other slots
+    const smartDefaultExpanded = (groupIndex === defaultActiveGroupIndex);
     group.smartDefault = smartDefaultExpanded;
     const isExpanded = isSectionExpanded(group.id, smartDefaultExpanded);
     group.isExpanded = isExpanded;
@@ -3076,7 +3250,7 @@ function renderShifts(docs) {
       headerBorderClass = "border-slate-200 opacity-80";
       headerBgClass = "bg-slate-50/80 hover:bg-slate-100/70";
       statusBadgeHtml = `
-        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-200/80 text-slate-600">
+        <span class="text-xs text-slate-500 font-medium">
           Full (${totalShifts} ${totalShifts === 1 ? 'shift' : 'shifts'})
         </span>
       `;
@@ -3084,8 +3258,10 @@ function renderShifts(docs) {
       headerBgClass = "bg-gradient-to-r from-amber-50/70 via-white to-amber-50/30 hover:bg-amber-50/90";
       const groupUnit = scheduleGroupingMode === "time" ? "areas" : "shifts";
       statusBadgeHtml = `
-        <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-100 text-amber-950 border border-amber-200">
-          ${totalShifts} ${groupUnit} &middot; <span class="text-emerald-700 font-extrabold ml-1">${openSpots} open</span>
+        <span class="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
+          <span class="tabular-nums">${totalShifts}</span> <span>${groupUnit}</span>
+          <span class="text-slate-300">&bull;</span>
+          <span class="text-emerald-700 font-bold tabular-nums">${openSpots} open</span>
         </span>
       `;
       if (hasClashes) {
@@ -3111,24 +3287,24 @@ function renderShifts(docs) {
       const totalSlots = shift.capacity || 0;
       const spotsLeft = totalSlots - bookedCount;
 
-      // Action button with touch-friendly 44px min-height target
+      // Action button with compact height (h-8.5 / 34px) & uniform width for tabular alignment
       let actionBtnHtml = "";
       if (!currentUser) {
         actionBtnHtml = `
-          <button disabled class="min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed flex items-center justify-center">
+          <button disabled class="h-8.5 sm:h-9 min-h-[34px] w-[80px] sm:w-[88px] px-2 py-1 rounded-xl text-xs font-semibold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed flex items-center justify-center shrink-0">
             Sign In
           </button>
         `;
       } else if (isRegistered) {
         if (isLocked) {
           actionBtnHtml = `
-            <button disabled class="min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed flex items-center justify-center" title="Shift locked within 7 days">
+            <button disabled class="h-8.5 sm:h-9 min-h-[34px] w-[80px] sm:w-[88px] px-2 py-1 rounded-xl text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed flex items-center justify-center shrink-0" title="Shift locked within 7 days">
               🔒 Locked
             </button>
           `;
         } else {
           actionBtnHtml = `
-            <button onclick="cancelShift('${s.id}')" class="min-h-[44px] px-3.5 py-2 rounded-xl text-xs sm:text-sm font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-300 transition shadow-2xs flex items-center justify-center active:scale-95 cursor-pointer touch-manipulation">
+            <button onclick="cancelShift('${s.id}')" class="h-8.5 sm:h-9 min-h-[34px] w-[80px] sm:w-[88px] px-2 py-1 rounded-xl text-xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 active:bg-rose-200 border border-rose-300 transition-all duration-150 shadow-2xs flex items-center justify-center active:scale-95 cursor-pointer touch-manipulation shrink-0">
               Cancel
             </button>
           `;
@@ -3138,68 +3314,68 @@ function renderShifts(docs) {
         const conflictStart = formatTime(conflict.startTime);
         const conflictEnd = formatTime(conflict.endTime);
         actionBtnHtml = `
-          <button disabled class="min-h-[44px] px-3 py-2 rounded-xl text-[11px] sm:text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 cursor-not-allowed inline-flex items-center gap-1 shadow-2xs" title="Time Clash: You are already registered for ${escapeHtml(conflictName)} (${conflictStart} &ndash; ${conflictEnd})">
+          <button disabled class="h-8.5 sm:h-9 min-h-[34px] w-[80px] sm:w-[88px] px-1 py-1 rounded-xl text-[11px] sm:text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 cursor-not-allowed inline-flex items-center justify-center gap-1 shadow-2xs shrink-0" title="Time Clash: You are already registered for ${escapeHtml(conflictName)} (${conflictStart} &ndash; ${conflictEnd})">
             <span>⚠️</span> Clash
           </button>
         `;
       } else if (isFull) {
         actionBtnHtml = `
-          <button disabled class="min-h-[44px] px-3.5 py-2 rounded-xl text-xs font-semibold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed flex items-center justify-center">
+          <button disabled class="h-8.5 sm:h-9 min-h-[34px] w-[80px] sm:w-[88px] px-2 py-1 rounded-xl text-xs font-semibold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed flex items-center justify-center shrink-0">
             Full
           </button>
         `;
       } else {
+        // Calm, accessible tonal Register CTA - treats all available shifts equally without visual shouting
         actionBtnHtml = `
-          <button onclick="claimShift('${s.id}')" class="min-h-[44px] px-4 py-2 rounded-xl text-xs sm:text-sm font-bold text-white bg-amber-700 hover:bg-amber-600 transition shadow-xs flex items-center justify-center active:scale-95 cursor-pointer touch-manipulation">
+          <button onclick="claimShift('${s.id}')" class="h-8.5 sm:h-9 min-h-[34px] w-[80px] sm:w-[88px] px-2 py-1 rounded-xl text-xs font-semibold text-amber-950 bg-amber-50/70 hover:bg-amber-100 active:bg-amber-200 border border-amber-200/90 hover:border-amber-300 active:scale-95 transition-all duration-150 shadow-2xs flex items-center justify-center cursor-pointer touch-manipulation shrink-0">
             Register
           </button>
         `;
       }
 
-      // Touch-safe Roster Trigger (Placed on secondary metadata line, separated from Register CTA)
+      // Compact Roster Trigger with tight vertical footprint
       const rosterBtnHtml = currentUser ? `
         <button type="button" 
                 onclick="openShiftRosterModal('${s.id}')" 
                 title="View volunteer roster (${bookedCount} booked)" 
-                class="group inline-flex items-center gap-1 font-bold text-slate-700 hover:text-amber-900 transition cursor-pointer text-xs sm:text-sm py-0.5 touch-manipulation">
+                class="group inline-flex items-center gap-1 font-bold text-slate-700 hover:text-amber-900 active:text-amber-950 transition-colors cursor-pointer text-[11px] sm:text-xs py-0.5 px-1 -mx-0.5 rounded hover:bg-amber-100/70 active:bg-amber-200/70 touch-manipulation focus-visible:ring-1 focus-visible:ring-amber-500">
           <span class="underline decoration-amber-300 underline-offset-2 tabular-nums">${bookedCount}/${totalSlots}</span>
           <span class="text-xs text-amber-700 group-hover:scale-110 transition-transform">👥</span>
         </button>
       ` : `
-        <span class="inline-flex items-center gap-1 font-bold text-slate-700 text-xs sm:text-sm tabular-nums">
+        <span class="inline-flex items-center gap-1 font-bold text-slate-700 text-[11px] sm:text-xs tabular-nums py-0.5">
           <span>${bookedCount}/${totalSlots}</span>
           <span class="text-xs text-slate-400">👥</span>
         </span>
       `;
 
-      // Status / Urgency description
+      // Status / Availability description - compact & calm
       let urgencyHtml = "";
       if (isRegistered) {
-        urgencyHtml = `<span class="inline-flex items-center text-emerald-800 font-bold text-xs"><span class="text-emerald-600 mr-1">✓</span> Confirmed</span>`;
+        urgencyHtml = `<span class="inline-flex items-center text-emerald-800 font-bold text-[11px] sm:text-xs"><span class="text-emerald-600 mr-1">✓</span> Confirmed</span>`;
       } else if (isFull) {
-        urgencyHtml = `<span class="inline-flex items-center text-slate-500 font-medium text-xs">All spots filled</span>`;
-      } else if (spotsLeft === 1) {
-        urgencyHtml = `<span class="inline-flex items-center text-amber-800 font-bold text-xs"><span class="w-1.5 h-1.5 rounded-full bg-amber-500 mr-1.5 animate-pulse"></span>1 spot left &bull; Needed</span>`;
+        urgencyHtml = `<span class="inline-flex items-center text-slate-500 font-medium text-[11px] sm:text-xs">All spots filled</span>`;
       } else {
-        urgencyHtml = `<span class="inline-flex items-center text-emerald-700 font-medium text-xs"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span>${spotsLeft} spots available</span>`;
+        const spotLabel = spotsLeft === 1 ? "spot available" : "spots available";
+        urgencyHtml = `<span class="inline-flex items-center text-emerald-700 font-medium text-[11px] sm:text-xs"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span><span class="tabular-nums">${spotsLeft}</span> ${spotLabel}</span>`;
       }
 
-      // Admin Edit Button
+      // Compact Admin Edit Button
       let adminEditBtn = "";
       if (isAdminMode()) {
         adminEditBtn = `
-          <button type="button" onclick="openEditShiftModal('${s.id}')" title="Edit Shift Details & Assign Manager" class="min-h-[44px] min-w-[38px] p-2 rounded-xl text-amber-900 hover:bg-amber-100 border border-amber-300/80 transition text-sm inline-flex items-center justify-center cursor-pointer active:scale-95 touch-manipulation">
+          <button type="button" onclick="openEditShiftModal('${s.id}')" title="Edit Shift Details & Assign Manager" class="h-8.5 w-8.5 sm:h-9 sm:w-9 min-h-[34px] min-w-[34px] p-1.5 rounded-xl text-amber-900 hover:bg-amber-100 active:bg-amber-200 border border-amber-300/80 transition-all duration-150 text-xs inline-flex items-center justify-center cursor-pointer active:scale-95 touch-manipulation shrink-0">
             ✏️
           </button>
         `;
       }
 
-      // Primary Title depending on grouping mode
+      // Primary Title depending on grouping mode - clean typography
       const primaryTitle = scheduleGroupingMode === "time"
         ? escapeHtml(shift.categoryName || 'General Area')
-        : `${startTime} &ndash; ${endTime}`;
+        : `<span class="tabular-nums">${startTime} &ndash; ${endTime}</span>`;
 
-      // Left border accent & background
+      // Left border accent & background - equal treatment for open shifts
       let borderLeftClass = "border-l-4 border-l-transparent";
       let rowBgClass = "hover:bg-amber-50/40";
       if (isRegistered) {
@@ -3211,15 +3387,15 @@ function renderShifts(docs) {
       }
 
       return `
-        <div role="listitem" class="p-3 sm:px-4 sm:py-3.5 transition-colors flex items-center justify-between gap-3 ${borderLeftClass} ${rowBgClass}">
-          <!-- Left: Stacked Typography (Title on top, Quota/Urgency underneath) -->
-          <div class="min-w-0 flex-1 space-y-1">
-            <div class="flex items-center gap-2 flex-wrap">
-              <h4 class="font-bold text-slate-900 text-sm sm:text-base tracking-tight leading-snug truncate">
+        <div role="listitem" class="py-2 px-3 sm:py-2.5 sm:px-4 transition-colors flex items-center justify-between gap-2.5 sm:gap-3 ${borderLeftClass} ${rowBgClass}">
+          <!-- Left: Compact Stacked Typography (~50px row height) -->
+          <div class="min-w-0 flex-1 space-y-0.5">
+            <div class="flex items-center gap-1.5 flex-wrap">
+              <h4 class="font-bold text-slate-900 text-sm leading-tight tracking-tight truncate">
                 ${primaryTitle}
               </h4>
               ${isRegistered ? `
-                <span class="inline-flex items-center px-2 py-0.2 rounded-full text-2xs font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-300">
+                <span class="inline-flex items-center px-1.5 py-0.2 rounded-full text-2xs font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-300">
                   Booked
                 </span>
               ` : ''}
@@ -3230,16 +3406,16 @@ function renderShifts(docs) {
               ` : ''}
             </div>
 
-            <!-- Quota & Urgency Subline -->
-            <div class="flex items-center gap-2 text-xs text-slate-500 flex-wrap">
+            <!-- Quota & Availability Subline -->
+            <div class="flex items-center gap-1.5 text-[11px] sm:text-xs text-slate-500 flex-wrap">
               ${rosterBtnHtml}
               <span class="text-slate-300 select-none">&bull;</span>
               ${urgencyHtml}
             </div>
           </div>
 
-          <!-- Right: Dedicated Touch Target (min-h-[44px] for ergonomic thumb tap) -->
-          <div class="shrink-0 flex items-center justify-end gap-1.5 sm:gap-2">
+          <!-- Right: Compact Dedicated Touch Target (h-8.5 / 34px) -->
+          <div class="shrink-0 flex items-center justify-end gap-1.5">
             ${adminEditBtn}
             ${actionBtnHtml}
           </div>
@@ -3248,13 +3424,13 @@ function renderShifts(docs) {
     }).join("");
 
     return `
-      <div class="section-accordion-card bg-white rounded-2xl shadow-xs border transition-all overflow-hidden ${headerBorderClass}" id="${group.id}">
+      <div class="section-accordion-card bg-white rounded-2xl shadow-xs border transition-all overflow-hidden scroll-mt-2 ${headerBorderClass}" id="${group.id}">
         ${group.isFirstOfStartTime ? `<div id="${group.anchorId}"></div>` : ''}
 
-        <!-- Section Accordion Header -->
-        <button type="button" onclick="toggleSectionCollapse('${group.id}', ${smartDefaultExpanded})" class="w-full text-left p-3 sm:px-4 flex items-center justify-between gap-2 transition cursor-pointer select-none ${headerBgClass}">
+        <!-- Section Accordion Header with SVG chevron and active touch feedback -->
+        <button type="button" onclick="toggleSectionCollapse('${group.id}', ${smartDefaultExpanded})" class="w-full text-left p-3 sm:px-4 flex items-center justify-between gap-2 transition-colors duration-150 active:bg-amber-100/50 cursor-pointer select-none touch-manipulation ${headerBgClass}">
           <div class="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-wrap">
-            <span class="text-xs text-amber-800 transition-transform shrink-0 font-bold ${isExpanded ? 'rotate-90 inline-block' : 'inline-block'}">▶</span>
+            <svg class="w-4 h-4 text-amber-800 transition-transform duration-200 ease-out shrink-0 ${isExpanded ? 'rotate-90' : ''}"><use href="#icon-chevron-right"/></svg>
             <span class="font-extrabold text-slate-900 text-xs sm:text-sm tracking-tight flex items-center gap-1.5">
               <span>${group.icon}</span> ${escapeHtml(group.title)}
             </span>
@@ -3545,11 +3721,11 @@ async function updateIncentiveAndMyShifts() {
         row.innerHTML = `
           <div class="space-y-1.5 min-w-0">
             <div class="flex items-center gap-2 flex-wrap">
-              <span class="bg-amber-800 text-amber-50 text-[11px] font-bold px-2.5 py-0.5 rounded-md shadow-2xs tracking-wide">
+              <h4 class="font-bold text-slate-900 text-sm sm:text-base tracking-tight">
                 ${escapeHtml(shift.categoryName || 'General Area')}
-              </span>
+              </h4>
               ${sessionName ? `
-                <span class="bg-amber-100 text-amber-900 text-[11px] font-bold px-2 py-0.5 rounded-md border border-amber-300/80">
+                <span class="bg-amber-100 text-amber-900 text-2xs font-bold px-2 py-0.5 rounded-md border border-amber-300/80">
                   ${escapeHtml(sessionName)}
                 </span>
               ` : ''}

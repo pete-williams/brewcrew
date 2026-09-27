@@ -4,6 +4,7 @@ target_fingerprint: "sha256:90532cc47ae2f98b3e1ee25386432de3677796a869eb0d6e843f
 target_path: "C:\\Users\\pete\\Dev\\brewcrew-platform\\public\\index.html"
 timestamp: 2026-09-26T21-00-34Z
 slug: public-index-html
+closed: true
 ---
 # Mobile Schedule View Critique Report
 

@@ -19,6 +19,9 @@ This document provides a comprehensive technical reference for all backend Cloud
   - [7. `sendAdminBroadcast`](#7-sendadminbroadcast)
   - [8. `deleteFestivalSession`](#8-deletefestivalsession)
   - [9. `getShiftCategories`](#9-getshiftcategories)
+  - [10. `setUserDisabledStatus`](#10-setuserdisabledstatus)
+  - [11. `deleteAndBlockUser`](#11-deleteandblockuser)
+  - [12. `unblockUserEmail`](#12-unblockuseremail)
 - [Firestore Background Triggers](#firestore-background-triggers)
   - [1. `onRegistrationCreated` (Retired)](#1-onregistrationcreated-retired)
 - [Firestore Data Models & Schemas](#firestore-data-models--schemas)
@@ -27,6 +30,7 @@ This document provides a comprehensive technical reference for all backend Cloud
   - [3. `/config/roles`](#3-configroles)
   - [4. `/shifts/{shiftId}`](#4-shiftsshiftid)
   - [5. `/users/{userId}`](#5-usersuserid)
+  - [6. `/blockedEmails/{emailId}`](#6-blockedemailsemailid)
 - [Firestore Security Rules Overview](#firestore-security-rules-overview)
 - [Maintenance & Documentation Maintenance Policy](#maintenance--documentation-maintenance-policy)
 
@@ -87,47 +91,58 @@ All callable Cloud Functions throw `HttpsError` from `firebase-functions/v2/http
 
 ### 1. `claimShift`
 
-Registers an authenticated volunteer for an open festival shift atomically, ensuring no capacity overbooking occurs under concurrent requests and preventing concurrent/overlapping shift bookings for the same volunteer.
+Registers an authenticated volunteer for an open festival shift atomically, ensuring no capacity overbooking occurs under concurrent requests and preventing concurrent/overlapping shift bookings for the same volunteer. Also supports administrators directly assigning shifts to registered volunteers.
 
 - **Trigger**: `onCall`
-- **Permissions**: Authenticated user (`volunteer`, `manager`, or `admin`).
+- **Permissions**:
+  - **Self-registration**: Any authenticated user (`volunteer`, `manager`, or `admin`).
+  - **Admin assignment**: Administrator only (`role === "admin"`). Can assign any registered volunteer via `targetUserId`.
 
 #### Request Parameters (`data`)
 
 | Field | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
 | `shiftId` | `string` | **Yes** | Firestore document ID of the shift in `/shifts`. |
+| `targetUserId` | `string` | No | Target volunteer UID to register/assign (Admin only). Defaults to caller UID. |
 
 #### Response (`result`)
 
 ```json
 {
-  "success": true
+  "success": true,
+  "assignedUserId": "user456"
 }
 ```
 
 #### Business Logic & Concurrency
-1. Executes within a Firestore transaction (`db.runTransaction`).
-2. Reads `/shifts/{shiftId}`. Throws `not-found` if the shift does not exist.
-3. Compares `shift.assignedCount >= shift.capacity`. If full, throws `failed-precondition` (`"This shift is already full."`).
-4. Checks `/registrations/{shiftId}_{uid}`. If a registration exists with `status: "confirmed"`, throws `already-exists` (`"You are already registered for this shift."`).
-5. **Overlapping & Simultaneous Shift Registration Safeguard**:
-   - Parses target shift `startTime` and `endTime` into epoch timestamps.
-   - Queries caller's active registrations (`/registrations` where `userId == uid` and `status == "confirmed"`).
-   - Within the transaction, fetches all other registered shift documents (`transaction.getAll`).
-   - Validates for time conflicts using interval intersection: `targetStart < otherEnd && otherStart < targetEnd`.
-   - If an overlapping shift is detected (same start/end times, partial overlap, or nested shifts), aborts the transaction and throws `failed-precondition` (`"Cannot register: this shift overlaps with your registered shift for \"<conflictName>\"."`).
-6. Atomically executes:
-   - Increments `/shifts/{shiftId}.assignedCount` by `1`.
-   - Writes `/registrations/{shiftId}_{uid}`:
-     ```json
-     {
-       "shiftId": "shift123",
-       "userId": "user456",
-       "registeredAt": "FieldValue.serverTimestamp()",
-       "status": "confirmed"
-     }
-     ```
+1. Inspects caller role in `/users/{callerUid}`:
+   - Throws `permission-denied` if caller account has `disabled: true`.
+   - If `targetUserId` is specified and `targetUserId !== callerUid` and caller is **not** an admin, throws `permission-denied` (`"Only administrators can assign shifts to other volunteers."`).
+2. Determines `assignedUid = (targetUserId && isAdmin) ? targetUserId : callerUid`.
+3. Executes within a Firestore transaction (`db.runTransaction`):
+   - Reads `/shifts/{shiftId}`. Throws `not-found` if the shift does not exist.
+   - If `assignedUid !== callerUid`, verifies `/users/{assignedUid}` exists and does not have `disabled: true`. Throws `failed-precondition` if the target volunteer account is disabled.
+   - Compares `shift.assignedCount >= shift.capacity`. If full, throws `failed-precondition` (`"This shift is already full."`).
+   - Checks `/registrations/{shiftId}_{assignedUid}`. If a registration exists with `status: "confirmed"`, throws `already-exists` (`"You are already registered for this shift."` or `"This volunteer is already registered for this shift."`).
+   - **Overlapping & Simultaneous Shift Registration Safeguard**:
+     - Parses target shift `startTime` and `endTime` into epoch timestamps.
+     - Queries assigned volunteer's active registrations (`/registrations` where `userId == assignedUid` and `status == "confirmed"`).
+     - Within the transaction, fetches all other registered shift documents (`transaction.getAll`).
+     - Validates for time conflicts using interval intersection: `targetStart < otherEnd && otherStart < targetEnd`.
+     - If an overlapping shift is detected, aborts the transaction and throws `failed-precondition` with shift conflict details.
+   - Atomically executes:
+     - Increments `/shifts/{shiftId}.assignedCount` by `1`.
+     - Writes `/registrations/{shiftId}_{assignedUid}`:
+       ```json
+       {
+         "shiftId": "shift123",
+         "userId": "user456",
+         "registeredAt": "FieldValue.serverTimestamp()",
+         "status": "confirmed",
+         "assignedBy": "adminUid123"
+       }
+       ```
+       *(Note: `assignedBy` is recorded only when assigned by an administrator).*
 
 ---
 
@@ -445,6 +460,126 @@ Retrieves all unique, active category/area names from active documents in the `/
 
 ---
 
+### 10. `setUserDisabledStatus`
+
+Disables or re-enables a crew member's user account, immediately revoking refresh tokens and blocking login and operations across the platform.
+
+- **Trigger**: `onCall`
+- **Permissions**: Administrator only (`role === "admin"`).
+
+#### Request Parameters (`data`)
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `targetUserId` | `string` | **Yes** | Firestore document ID in `/users`. |
+| `disabled` | `boolean` | **Yes** | `true` to disable/deactivate account; `false` to reactivate. |
+| `reason` | `string` | No | Optional administrative rationale for disabling the account. |
+
+#### Response (`result`)
+
+```json
+{
+  "success": true,
+  "userId": "user123",
+  "disabled": true
+}
+```
+
+#### Business Logic & Safeguards
+1. Verifies caller is authenticated and has `role === "admin"`.
+2. Validates caller account is not disabled.
+3. Validates `targetUserId` is provided and target document exists in `/users/{targetUserId}`.
+4. **Self-Lockout Safeguard**: Throws `failed-precondition` if `targetUserId === callerUid`.
+5. Updates `/users/{targetUserId}` with `disabled`, `status: disabled ? "disabled" : "active"`, `disabledAt`, `disabledBy`, and `disabledReason`.
+6. Invokes Firebase Admin Auth `admin.auth().updateUser(targetUserId, { disabled: disabled })`.
+7. When disabling, immediately revokes active refresh tokens via `admin.auth().revokeRefreshTokens(targetUserId)`.
+
+---
+
+### 11. `deleteAndBlockUser`
+
+Permanently deletes a user's account from Firebase Auth and Firestore, automatically releases all festival shifts currently allocated to the user (decrementing shift capacity counts), clears any manager assignments, and permanently blacklists their email address in `/blockedEmails` to prevent re-registration.
+
+- **Trigger**: `onCall`
+- **Permissions**: Administrator only (`role === "admin"`).
+
+#### Request Parameters (`data`)
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `targetUserId` | `string` | **Yes** | Firestore document ID in `/users`. |
+| `reason` | `string` | No | Optional administrative justification for deleting and blocking. |
+
+#### Response (`result`)
+
+```json
+{
+  "success": true,
+  "deletedUserId": "user123",
+  "blockedEmail": "volunteer@example.com",
+  "releasedShiftsCount": 3
+}
+```
+
+#### Business Logic & Safeguards
+1. Verifies caller is authenticated and has `role === "admin"`.
+2. Validates caller account is not disabled.
+3. **Self-Deletion Safeguard**: Throws `failed-precondition` if `targetUserId === callerUid`.
+4. Reads `/users/{targetUserId}` to retrieve user profile and registered email address. Throws `not-found` if user does not exist.
+5. Queries all active confirmed shift registrations for the user (`/registrations` where `userId == targetUserId` and `status == "confirmed"`).
+6. Queries all shifts where the user is assigned as Shift Manager (`/shifts` where `managerId == targetUserId`).
+7. Executes an atomic batch mutation:
+   - For each shift registration: decrements `/shifts/{shiftId}.assignedCount` by `1` and deletes the `/registrations/{shiftId}_{targetUserId}` document.
+   - For each managed shift: resets `managerId: null`, `managerName: null`, `managerEmail: null`.
+   - Writes record to `/blockedEmails/{normalizedEmail}`:
+     ```json
+     {
+       "email": "volunteer@example.com",
+       "originalUserId": "user123",
+       "fullName": "John Doe",
+       "reason": "Administrative removal & block",
+       "blockedAt": "FieldValue.serverTimestamp()",
+       "blockedBy": "adminUid",
+       "blockedByEmail": "admin@festival.org"
+     }
+     ```
+   - Deletes `/users/{targetUserId}` profile document.
+8. Deletes the user account from Firebase Authentication (`admin.auth().deleteUser(targetUserId)`).
+9. Returns confirmation payload including `releasedShiftsCount`.
+
+---
+
+### 12. `unblockUserEmail`
+
+Removes an email address from the `/blockedEmails` blacklist, restoring the ability for the email to register or log in with festival administrator consent.
+
+- **Trigger**: `onCall`
+- **Permissions**: Administrator only (`role === "admin"`).
+
+#### Request Parameters (`data`)
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `email` | `string` | **Yes** | Email address to unblock (case-insensitive). |
+
+#### Response (`result`)
+
+```json
+{
+  "success": true,
+  "unblockedEmail": "volunteer@example.com"
+}
+```
+
+#### Business Logic & Safeguards
+1. Verifies caller is authenticated and has `role === "admin"`.
+2. Validates caller account is not disabled.
+3. Normalizes input email (trimmed, lowercase).
+4. Verifies `/blockedEmails/{normalizedEmail}` exists. Throws `not-found` if missing.
+5. Deletes `/blockedEmails/{normalizedEmail}` document.
+
+---
+
 ## Firestore Background Triggers
 
 ### 1. `onRegistrationCreated` (Retired)
@@ -534,18 +669,41 @@ User profile document created upon initial registration or OAuth sign-in, manage
 | `profileVisibility` | `string` | Profile privacy setting: `"public"` (default) or `"private"`. When `"public"`, user name and group/club are displayed on volunteer shift rosters. When `"private"`, other volunteers see only an anonymous placeholder space. Shift managers and admins can always view full roster details. |
 | `photoURL` | `string` | Optional custom profile avatar stored as a client-compressed (128x128 JPEG) Data URL. When `profileVisibility` is `"public"`, displayed in shift rosters to volunteers. When `"private"`, masked with an anonymous lock placeholder to volunteer viewers. Shift managers and admins always see avatars. |
 | `role` | `string` | Access tier: `"volunteer"`, `"manager"`, or `"admin"`. |
+| `disabled` | `boolean` | Account operational status. When `true`, user cannot sign in or invoke callable API endpoints. Defaults to `false`. |
+| `status` | `string` | Indexed status string: `"active"` (default) or `"disabled"`. |
+| `disabledAt` | `timestamp` \| `null` | Timestamp when account was deactivated by an administrator. |
+| `disabledBy` | `string` \| `null` | Administrator UID who deactivated the account. |
+| `disabledReason` | `string` \| `null` | Optional reason recorded when the account was disabled. |
 | `createdAt` | `timestamp` | Server timestamp when the user profile was initialized. |
 | `updatedAt` | `timestamp` | Server timestamp when the user profile was last updated. |
 
 #### Shift Roster Privacy & Access Control Rules
 
 The Shift Roster Modal (`shift-roster-modal`) allows participants to view roster occupancy while enforcing privacy boundaries:
-- **Shift Managers & Admins**: Can view all registered volunteers' full names, custom avatar photos, group/club affiliations, email addresses, phone numbers, and privacy badges (`🌐 Public` / `🔒 Private`). In Admin Mode, administrators can cancel individual registrations.
+- **Shift Managers & Admins**: Can view all registered volunteers' full names, custom avatar photos, group/club affiliations, email addresses, phone numbers, and privacy badges (`🌐 Public` / `🔒 Private`). In Admin Mode, administrators can cancel individual registrations or directly allocate open shift slots to registered volunteers.
 - **Volunteers Viewing Roster**:
   - **Self Row**: Volunteers see their own registration marked with a `You` badge, their avatar photo, their group/club affiliation, their privacy status, and an inline link to edit profile settings.
   - **Public Profiles**: Volunteers see other registered crew members' names, custom avatar photos (or letter initials), and optional group/club affiliations. Contact details (email and mobile phone) are **never** exposed to volunteer viewers.
   - **Private Profiles**: Volunteers see an anonymous space (`🔒 Volunteer - Private Profile`) indicating that the shift slot is occupied, without revealing the volunteer's name, avatar photo, group, email, or phone.
   - **Shift Manager**: Volunteers see the assigned shift manager's name and avatar photo (or "Unassigned"); the manager's personal email is hidden from volunteer viewers.
+
+### 6. `/blockedEmails/{emailId}`
+
+Blacklist collection storing email addresses permanently blocked from registering or accessing the BrewCrew platform following administrative removal.
+
+- **Document ID**: Normalized lowercase email address (e.g. `volunteer@example.com`).
+- **Read Access**: Public (`allow read: if true;`), allowing the client-side pre-registration validator to check whether an email address is permitted to register.
+- **Write Access**: `admin` only (`allow write: if isAdmin();`).
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `email` | `string` | Lowercase email address permanently blacklisted from registration. |
+| `originalUserId` | `string` | UID of the user account at the time it was deleted. |
+| `fullName` | `string` | Volunteer display name at time of account deletion. |
+| `reason` | `string` | Administrative justification recorded for the block. |
+| `blockedAt` | `timestamp` | Server timestamp when the account was deleted and blocked. |
+| `blockedBy` | `string` | UID of administrator who committed the block action. |
+| `blockedByEmail` | `string` \| `null` | Email of administrator who committed the block action. |
 
 ---
 
@@ -555,8 +713,9 @@ While Cloud Functions execute using the Firebase Admin SDK (which bypasses secur
 
 | Collection | Path | Read Rule | Write / Mutation Rule |
 | :--- | :--- | :--- | :--- |
+| `blockedEmails` | `/blockedEmails/{emailId}` | **Public** (`allow read: if true;`) | `admin` only (`isAdmin()`). Client registration checks blocked list; modifications restricted to administrators. |
 | `config` | `/config/{configId}` | **Public** (`allow read: if true;`) | `admin` only (`isAdmin()`). Enables unauthenticated login screen branding (`/config/festival`), volunteer reward milestone configuration (`/config/incentives`), and public volunteer role guides (`/config/roles`) while guarding writes. |
-| `users` | `/users/{userId}` | Authenticated users | Create only as `volunteer`; update profile only; only `admin` can mutate `role`. |
+| `users` | `/users/{userId}` | Authenticated users | Create: `volunteer` role only, `disabled == false`, and email must NOT exist in `/blockedEmails`. Update: profile fields only; only `admin` can mutate `role`, `disabled`, `disabledAt`, `disabledBy`, `disabledReason`, or `status`. |
 | `shifts` | `/shifts/{shiftId}` | Authenticated users | Create/Delete: `admin` only. Update: `admin` or assigned `manager` (manager fields only). |
 | `registrations` | `/registrations/{regId}` | Authenticated users | `admin` only. Client writes disabled to prevent race conditions; mutations routed through `claimShift` / `cancelShift`. |
 | `incentives` | `/incentives/{incId}` | Authenticated users | `admin` only. (Legacy fallback path; active incentive configuration stored in `/config/incentives`). |

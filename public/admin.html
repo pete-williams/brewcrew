@@ -1,0 +1,1103 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Festival Administration &amp; Crew Management | BrewCrew</title>
+  <meta name="description"
+    content="BrewCrew Festival Administrator Console — volunteer directory, schedule sessions, shift allocations, role permissions, and broadcast coordination.">
+
+  <!-- Inter typography -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          screens: {
+            'xs': '400px',
+          },
+          fontFamily: {
+            sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+          },
+          fontSize: {
+            '2xs': ['0.625rem', { lineHeight: '0.875rem' }],
+          },
+        }
+      }
+    };
+  </script>
+
+  <!-- Firebase Compat SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-firestore-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-functions-compat.js"></script>
+
+  <style>
+    /* ── Surface Theming (Impeccable Craft Guidelines) ────────── */
+    body {
+      color: #1e293b;
+      background-color: #f5f5f4; /* Warm stone-100 base ground */
+    }
+
+    ::selection {
+      background-color: #fde68a; /* amber-200 */
+      color: #451a03; /* amber-950 */
+    }
+
+    input, textarea, select {
+      caret-color: #b45309; /* amber-700 */
+    }
+
+    /* Tabular numeric alignment */
+    .tabular-nums {
+      font-variant-numeric: tabular-nums;
+      -webkit-font-feature-settings: "tnum";
+      font-feature-settings: "tnum";
+    }
+
+    /* Custom amber scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background-color: #fcd34d;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background-color: #f59e0b;
+    }
+
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: #fcd34d transparent;
+    }
+
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      scrollbar-width: none;
+    }
+
+    .focus-ring:focus-visible {
+      outline: none;
+      box-shadow: 0 0 0 2px #fde68a, 0 0 0 4px #b45309;
+    }
+
+    h1 { font-size: 1.5rem; line-height: 2rem; font-weight: 700; letter-spacing: -0.02em; }
+    h2 { font-size: 1.25rem; line-height: 1.75rem; font-weight: 600; letter-spacing: -0.015em; }
+    h3 { font-size: 1rem; line-height: 1.5rem; font-weight: 600; }
+    h4 { font-size: 0.75rem; line-height: 1rem; font-weight: 600; }
+  </style>
+</head>
+
+<body class="min-h-screen flex flex-col font-sans antialiased bg-stone-100 text-slate-800">
+
+  <!-- SVG Icon Symbol Sprite (Authored crisp vector iconography) -->
+  <svg xmlns="http://www.w3.org/2000/svg" class="hidden">
+    <symbol id="icon-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+    </symbol>
+    <symbol id="icon-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="9" cy="7" r="4" />
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+    </symbol>
+    <symbol id="icon-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </symbol>
+    <symbol id="icon-clipboard" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+      <rect x="8" y="2" width="8" height="4" rx="1" ry="1" />
+    </symbol>
+    <symbol id="icon-trophy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6" />
+      <path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18" />
+      <path d="M4 22h16" />
+      <path d="M10 14.66V17c0 .55-.45 1-1 1H8c-.55 0-1 .45-1 1v1c0 .55.45 1 1 1h8c.55 0 1-.45 1-1v-1c0-.55-.45-1-1-1h-1c-.55 0-1-.45-1-1v-2.34" />
+      <path d="M18 4H6v7a6 6 0 0 0 12 0V4z" />
+    </symbol>
+    <symbol id="icon-book" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+    </symbol>
+    <symbol id="icon-mail" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
+      <polyline points="22,6 12,13 2,6" />
+    </symbol>
+    <symbol id="icon-slash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+    </symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="11" cy="11" r="8" />
+      <line x1="21" y1="21" x2="16.65" y2="16.65" />
+    </symbol>
+    <symbol id="icon-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </symbol>
+    <symbol id="icon-edit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+    </symbol>
+    <symbol id="icon-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="3 6 5 6 21 6" />
+      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+      <line x1="10" y1="11" x2="10" y2="17" />
+      <line x1="14" y1="11" x2="14" y2="17" />
+    </symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <polyline points="20 6 9 17 4 12" />
+    </symbol>
+    <symbol id="icon-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </symbol>
+    <symbol id="icon-user-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="8.5" cy="7" r="4" />
+      <line x1="18" y1="8" x2="23" y2="13" />
+      <line x1="23" y1="8" x2="18" y2="13" />
+    </symbol>
+    <symbol id="icon-user-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="8.5" cy="7" r="4" />
+      <polyline points="17 11 19 13 23 9" />
+    </symbol>
+    <symbol id="icon-user-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+      <circle cx="8.5" cy="7" r="4" />
+      <line x1="20" y1="8" x2="20" y2="14" />
+      <line x1="23" y1="11" x2="17" y2="11" />
+    </symbol>
+    <symbol id="icon-save" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </symbol>
+    <symbol id="icon-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <line x1="19" y1="12" x2="5" y2="12" />
+      <polyline points="12 19 5 12 12 5" />
+    </symbol>
+    <symbol id="icon-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </symbol>
+  </svg>
+
+  <!-- Loading & Authentication Gate Screen -->
+  <div id="admin-auth-gate" class="fixed inset-0 z-50 flex items-center justify-center bg-stone-100 p-4">
+    <div class="bg-white border border-amber-200 rounded-xl p-6 sm:p-8 max-w-md w-full shadow-md text-center space-y-4">
+      <div class="w-12 h-12 mx-auto rounded-full bg-amber-100 text-amber-800 flex items-center justify-center text-xl font-bold">
+        <svg class="w-6 h-6 text-amber-700 animate-spin">
+          <use href="#icon-shield" />
+        </svg>
+      </div>
+      <div>
+        <h2 id="gate-title" class="text-lg font-bold text-slate-800">Verifying Administrator Access</h2>
+        <p id="gate-message" class="text-xs text-slate-500 mt-1">Connecting to BrewCrew security service...</p>
+      </div>
+      <div id="gate-action" class="hidden pt-2">
+        <a href="index.html" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold transition shadow-xs">
+          <svg class="w-3.5 h-3.5"><use href="#icon-arrow-left" /></svg> Return to Volunteer Portal
+        </a>
+      </div>
+    </div>
+  </div>
+
+  <!-- Authenticated Admin Interface (Initially hidden until auth verified) -->
+  <div id="admin-app" class="hidden flex-col min-h-screen">
+
+    <!-- Top Navigation Bar -->
+    <header class="sticky top-0 z-40 bg-amber-900 border-b border-amber-950 text-white shadow-md">
+      <div class="max-w-6xl mx-auto px-3 sm:px-4 py-2.5 sm:py-3 flex items-center justify-between gap-3">
+        <!-- Brand & Return Link -->
+        <div class="flex items-center gap-3">
+          <a href="index.html" class="flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-amber-950/80 hover:bg-amber-950 border border-amber-700/60 text-amber-100 hover:text-white text-xs font-semibold transition group min-h-[44px]">
+            <svg class="w-3.5 h-3.5 text-amber-300 group-hover:-translate-x-0.5 transition-transform"><use href="#icon-arrow-left" /></svg>
+            <span class="hidden sm:inline">Volunteer Portal</span>
+            <span class="sm:hidden">Exit</span>
+          </a>
+          <div class="flex items-center gap-2">
+            <span class="w-8 h-8 rounded-lg bg-amber-700 border border-amber-500 flex items-center justify-center text-amber-100 shadow-xs shrink-0">
+              <svg class="w-4 h-4"><use href="#icon-shield" /></svg>
+            </span>
+            <div>
+              <h1 class="text-sm sm:text-base font-bold text-white tracking-tight leading-tight flex items-center gap-1.5">
+                <span id="header-festival-name">BrewCrew</span>
+                <span class="text-2xs font-bold uppercase tracking-wider px-1.5 py-0.5 rounded bg-amber-800 text-amber-200 border border-amber-600">Admin</span>
+              </h1>
+              <p class="text-2xs text-amber-200/80 hidden xs:block">Management &amp; Operations Portal</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Current Admin Identity & Logout -->
+        <div class="flex items-center gap-2 sm:gap-3">
+          <div class="flex items-center gap-2 text-right">
+            <div class="hidden sm:block">
+              <p id="admin-user-name" class="text-xs font-bold text-white leading-tight">Admin</p>
+              <p id="admin-user-email" class="text-2xs text-amber-200/80 font-mono">admin@example.org</p>
+            </div>
+            <div id="admin-avatar-box" class="w-8 h-8 rounded-full bg-amber-700 text-amber-100 font-bold flex items-center justify-center text-xs border border-amber-500 overflow-hidden shadow-xs shrink-0">
+              <span id="admin-avatar-initials">A</span>
+              <img id="admin-avatar-img" class="hidden w-full h-full object-cover" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" alt="Avatar">
+            </div>
+          </div>
+          <button type="button" onclick="adminSignOut()" title="Sign out"
+            class="p-2 rounded-lg bg-amber-950/80 hover:bg-rose-900/80 border border-amber-700/60 hover:border-rose-700 text-amber-200 hover:text-white transition min-h-[44px] min-w-[44px] flex items-center justify-center">
+            <svg class="w-4 h-4"><use href="#icon-logout" /></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Tabbed Navigation Bar (Mobile touch scrollable, desktop flex segmented control) -->
+      <div class="bg-amber-950/90 border-t border-amber-900/80 px-2 sm:px-4 py-1.5">
+        <nav id="admin-nav-tabs" aria-label="Admin Navigation Tabs"
+          class="max-w-6xl mx-auto flex items-center gap-1.5 sm:gap-2 overflow-x-auto no-scrollbar scroll-smooth">
+          <button type="button" onclick="switchAdminTab('crew')" id="tab-btn-crew"
+            class="admin-tab-btn flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition min-h-[44px]">
+            <svg class="w-3.5 h-3.5 shrink-0"><use href="#icon-users" /></svg>
+            <span>Crew Directory</span>
+            <span id="badge-crew-count" class="tabular-nums px-1.5 py-0.2 rounded-full text-2xs font-bold bg-amber-900/80 text-amber-200">0</span>
+          </button>
+
+          <button type="button" onclick="switchAdminTab('sessions')" id="tab-btn-sessions"
+            class="admin-tab-btn flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition min-h-[44px]">
+            <svg class="w-3.5 h-3.5 shrink-0"><use href="#icon-calendar" /></svg>
+            <span>Sessions &amp; Brand</span>
+          </button>
+
+          <button type="button" onclick="switchAdminTab('shifts')" id="tab-btn-shifts"
+            class="admin-tab-btn flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition min-h-[44px]">
+            <svg class="w-3.5 h-3.5 shrink-0"><use href="#icon-clipboard" /></svg>
+            <span>Shifts &amp; Coverage</span>
+            <span id="badge-shifts-count" class="tabular-nums px-1.5 py-0.2 rounded-full text-2xs font-bold bg-amber-900/80 text-amber-200">0</span>
+          </button>
+
+          <button type="button" onclick="switchAdminTab('incentives')" id="tab-btn-incentives"
+            class="admin-tab-btn flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition min-h-[44px]">
+            <svg class="w-3.5 h-3.5 shrink-0"><use href="#icon-trophy" /></svg>
+            <span>Incentives &amp; Rewards</span>
+          </button>
+
+          <button type="button" onclick="switchAdminTab('roles')" id="tab-btn-roles"
+            class="admin-tab-btn flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition min-h-[44px]">
+            <svg class="w-3.5 h-3.5 shrink-0"><use href="#icon-book" /></svg>
+            <span>Role Guides &amp; Areas</span>
+          </button>
+
+          <button type="button" onclick="switchAdminTab('broadcast')" id="tab-btn-broadcast"
+            class="admin-tab-btn flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition min-h-[44px]">
+            <svg class="w-3.5 h-3.5 shrink-0"><use href="#icon-mail" /></svg>
+            <span>Email Broadcast</span>
+          </button>
+
+          <button type="button" onclick="switchAdminTab('blocked')" id="tab-btn-blocked"
+            class="admin-tab-btn flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition min-h-[44px]">
+            <svg class="w-3.5 h-3.5 shrink-0 text-rose-400"><use href="#icon-slash" /></svg>
+            <span class="text-rose-200">Blocked Accounts</span>
+            <span id="badge-blocked-count" class="tabular-nums px-1.5 py-0.2 rounded-full text-2xs font-bold bg-rose-950 text-rose-300">0</span>
+          </button>
+        </nav>
+      </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="flex-grow max-w-6xl mx-auto w-full px-3 sm:px-4 py-5 space-y-6">
+
+      <!-- ==================================================================== -->
+      <!-- TAB 1: CREW & VOLUNTEER DIRECTORY (Scalable for 50-100 Volunteers)   -->
+      <!-- ==================================================================== -->
+      <section id="panel-crew" class="admin-panel space-y-5">
+        <!-- Stat Cards -->
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <div class="bg-white p-3.5 rounded-xl border border-amber-200 shadow-sm text-center">
+            <span class="text-2xs text-slate-500 font-bold uppercase tracking-wider block">Total Crew</span>
+            <span id="stat-total-crew" class="text-xl font-extrabold text-slate-800 tabular-nums">0</span>
+          </div>
+          <div class="bg-white p-3.5 rounded-xl border border-amber-200 shadow-sm text-center">
+            <span class="text-2xs text-amber-700 font-bold uppercase tracking-wider block">Volunteers</span>
+            <span id="stat-volunteers" class="text-xl font-extrabold text-amber-700 tabular-nums">0</span>
+          </div>
+          <div class="bg-white p-3.5 rounded-xl border border-amber-200 shadow-sm text-center">
+            <span class="text-2xs text-blue-700 font-bold uppercase tracking-wider block">Managers</span>
+            <span id="stat-managers" class="text-xl font-extrabold text-blue-800 tabular-nums">0</span>
+          </div>
+          <div class="bg-white p-3.5 rounded-xl border border-amber-200 shadow-sm text-center">
+            <span class="text-2xs text-purple-700 font-bold uppercase tracking-wider block">Admins</span>
+            <span id="stat-admins" class="text-xl font-extrabold text-purple-800 tabular-nums">0</span>
+          </div>
+          <div class="col-span-2 sm:col-span-1 bg-white p-3.5 rounded-xl border border-rose-200 shadow-sm text-center">
+            <span class="text-2xs text-rose-700 font-bold uppercase tracking-wider block">Disabled</span>
+            <span id="stat-disabled" class="text-xl font-extrabold text-rose-700 tabular-nums">0</span>
+          </div>
+        </div>
+
+        <!-- Directory Toolbar (Search, Filter, Sort, Pagination Size) -->
+        <div class="bg-white p-4 rounded-xl border border-amber-200 shadow-sm space-y-3">
+          <div class="flex flex-col md:flex-row md:items-center justify-between gap-3">
+            <!-- Search Input -->
+            <div class="relative flex-grow max-w-md">
+              <svg class="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+                <use href="#icon-search" />
+              </svg>
+              <input type="text" id="crew-search-input" oninput="handleCrewSearch(this.value)"
+                placeholder="Search by name, email, phone, or group..."
+                class="w-full text-xs pl-9 pr-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 focus-ring" />
+            </div>
+
+            <!-- Sort & Page Size Controls -->
+            <div class="flex flex-wrap items-center gap-2">
+              <div class="flex items-center gap-1.5">
+                <label for="crew-sort-select" class="text-2xs font-bold text-slate-500 uppercase tracking-wider">Sort</label>
+                <select id="crew-sort-select" onchange="handleCrewSortChange(this.value)"
+                  class="text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+                  <option value="name-asc">Name (A &rarr; Z)</option>
+                  <option value="name-desc">Name (Z &rarr; A)</option>
+                  <option value="role">Role (Admin first)</option>
+                  <option value="shifts-desc">Shifts (Most first)</option>
+                  <option value="status">Status (Active first)</option>
+                </select>
+              </div>
+
+              <div class="flex items-center gap-1.5">
+                <label for="crew-page-size" class="text-2xs font-bold text-slate-500 uppercase tracking-wider">Show</label>
+                <select id="crew-page-size" onchange="handleCrewPageSizeChange(this.value)"
+                  class="text-xs px-2 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 tabular-nums">
+                  <option value="15">15</option>
+                  <option value="25" selected>25</option>
+                  <option value="50">50</option>
+                  <option value="100">All</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Filter Pills (Role & Status) -->
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+            <div class="flex flex-wrap items-center gap-1.5" id="crew-role-filters">
+              <button type="button" onclick="setCrewRoleFilter('ALL')" id="role-pill-ALL"
+                class="crew-role-pill px-2.5 py-1 rounded-full text-2xs font-bold transition bg-amber-700 text-white">All Roles</button>
+              <button type="button" onclick="setCrewRoleFilter('volunteer')" id="role-pill-volunteer"
+                class="crew-role-pill px-2.5 py-1 rounded-full text-2xs font-bold transition bg-stone-100 text-slate-600 hover:bg-stone-200">Volunteers</button>
+              <button type="button" onclick="setCrewRoleFilter('manager')" id="role-pill-manager"
+                class="crew-role-pill px-2.5 py-1 rounded-full text-2xs font-bold transition bg-stone-100 text-slate-600 hover:bg-stone-200">Shift Managers</button>
+              <button type="button" onclick="setCrewRoleFilter('admin')" id="role-pill-admin"
+                class="crew-role-pill px-2.5 py-1 rounded-full text-2xs font-bold transition bg-stone-100 text-slate-600 hover:bg-stone-200">Administrators</button>
+            </div>
+
+            <div class="flex items-center gap-1.5" id="crew-status-filters">
+              <button type="button" onclick="setCrewStatusFilter('ALL')" id="status-pill-ALL"
+                class="crew-status-pill px-2 py-0.5 rounded-md text-2xs font-bold transition bg-slate-800 text-white">All Status</button>
+              <button type="button" onclick="setCrewStatusFilter('active')" id="status-pill-active"
+                class="crew-status-pill px-2 py-0.5 rounded-md text-2xs font-bold transition bg-emerald-50 text-emerald-800 border border-emerald-300">Active</button>
+              <button type="button" onclick="setCrewStatusFilter('disabled')" id="status-pill-disabled"
+                class="crew-status-pill px-2 py-0.5 rounded-md text-2xs font-bold transition bg-rose-50 text-rose-800 border border-rose-300">Disabled</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Crew Member Table (Desktop) / Cards (Mobile) -->
+        <div class="bg-white rounded-xl border border-amber-200 shadow-sm overflow-hidden">
+          <!-- Desktop Table (Hidden on small screens) -->
+          <div class="hidden md:block overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-stone-50 border-b border-amber-200 text-slate-500 uppercase tracking-wider text-2xs font-semibold">
+                <tr>
+                  <th class="p-3">Volunteer / Crew Member</th>
+                  <th class="p-3">Email Address</th>
+                  <th class="p-3">Contact Phone</th>
+                  <th class="p-3 text-center">Current Role</th>
+                  <th class="p-3 text-center">Shifts</th>
+                  <th class="p-3 text-center">Status</th>
+                  <th class="p-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="crew-table-body" class="divide-y divide-slate-100">
+                <tr>
+                  <td colspan="7" class="p-6 text-center text-slate-400 italic">Loading crew members...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Mobile Cards Container (Shown on screens < 768px) -->
+          <div id="crew-cards-container" class="md:hidden divide-y divide-slate-100 p-2 space-y-2">
+            <!-- Populated via JS -->
+          </div>
+
+          <!-- Pagination Bar -->
+          <div class="p-3 bg-stone-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div id="crew-pagination-info" class="text-slate-500 text-2xs sm:text-xs">
+              Showing 0 to 0 of 0 crew members
+            </div>
+            <div id="crew-pagination-controls" class="flex items-center gap-1">
+              <!-- Populated via JS -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================================================================== -->
+      <!-- TAB 2: FESTIVAL CONFIGURATION & SCHEDULE SESSIONS                    -->
+      <!-- ==================================================================== -->
+      <section id="panel-sessions" class="admin-panel hidden space-y-5">
+        <div class="bg-white p-5 rounded-xl border border-amber-200 shadow-sm space-y-4">
+          <div class="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                <svg class="w-4 h-4 text-amber-700 shrink-0"><use href="#icon-calendar" /></svg>
+                Festival Identity &amp; Sessions
+              </h2>
+              <p class="text-xs text-slate-500">Configure global festival branding, manager contacts, and schedule sessions.</p>
+            </div>
+            <button onclick="handleSaveFestivalConfig()" id="btn-save-sessions-cfg"
+              class="text-xs bg-amber-700 hover:bg-amber-800 text-white font-bold px-4 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5 min-h-[44px]">
+              <svg class="w-3.5 h-3.5"><use href="#icon-save" /></svg> Save Festival Settings
+            </button>
+          </div>
+
+          <div id="admin-config-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+          <!-- Branding Form -->
+          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-cfg-festival-name">Festival Name</label>
+              <input type="text" id="admin-cfg-festival-name" placeholder="e.g. Manchester Beer &amp; Cider Festival"
+                class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-cfg-festival-website">Festival Website</label>
+              <input type="url" id="admin-cfg-festival-website" placeholder="https://festival.example.org"
+                class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-cfg-festival-logo">Logo Image URL</label>
+              <div class="flex gap-2">
+                <input type="url" id="admin-cfg-festival-logo" oninput="previewFestivalLogo(this.value)" placeholder="https://example.com/logo.png"
+                  class="flex-grow text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                <div id="admin-cfg-logo-preview-box" class="w-9 h-9 shrink-0 flex items-center justify-center text-slate-700 border border-slate-200 rounded-lg overflow-hidden bg-stone-50">
+                  <span id="admin-cfg-logo-preview-emoji" class="text-xs text-slate-400">Logo</span>
+                  <img id="admin-cfg-logo-preview-img" class="hidden w-full h-full object-contain" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" alt="Preview" />
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Coordinator Contact Form -->
+          <div class="pt-3 border-t border-slate-100">
+            <h3 class="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Volunteer Coordinator Contact Details</h3>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1" for="admin-cfg-manager-name">Coordinator Name</label>
+                <input type="text" id="admin-cfg-manager-name" placeholder="e.g. Jane Doe"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1" for="admin-cfg-manager-email">Coordinator Email</label>
+                <input type="email" id="admin-cfg-manager-email" placeholder="volunteer@example.org"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1" for="admin-cfg-manager-phone">Coordinator Phone</label>
+                <input type="tel" id="admin-cfg-manager-phone" placeholder="+44 7123 456789"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+            </div>
+          </div>
+
+          <!-- Festival Sessions List & Schedule Builder -->
+          <div class="pt-3 border-t border-slate-100 space-y-3">
+            <div>
+              <h3 class="text-xs font-bold text-slate-700 uppercase tracking-wider">Festival Sessions &amp; Days</h3>
+              <p class="text-xs text-slate-500">Each session groups festival working shifts by date and times.</p>
+            </div>
+
+            <div class="overflow-x-auto">
+              <table class="w-full text-left text-xs">
+                <thead class="bg-stone-50 border-b border-slate-200 text-slate-500 uppercase tracking-wider text-2xs font-semibold">
+                  <tr>
+                    <th class="p-2.5 w-44">Session Name</th>
+                    <th class="p-2.5 w-28">Date</th>
+                    <th class="p-2.5 w-32">Times</th>
+                    <th class="p-2.5">Description</th>
+                    <th class="p-2.5 w-24 text-center">Shifts</th>
+                    <th class="p-2.5 text-right w-24">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="admin-sessions-table-body" class="divide-y divide-slate-100">
+                  <!-- Populated via JS -->
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Add Session Row Form -->
+            <div class="pt-3 border-t border-slate-100 bg-stone-50/70 p-3.5 rounded-xl border border-slate-200">
+              <h4 class="text-xs font-bold text-amber-950 mb-2">+ Add New Festival Session</h4>
+              <div class="grid grid-cols-1 sm:grid-cols-5 gap-2.5 items-end">
+                <div>
+                  <label class="block text-2xs font-bold text-slate-600 mb-1" for="admin-new-session-name">Session Name</label>
+                  <input type="text" id="admin-new-session-name" placeholder="e.g. Afternoon Tasting"
+                    class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                </div>
+                <div>
+                  <label class="block text-2xs font-bold text-slate-600 mb-1" for="admin-new-session-date">Date</label>
+                  <input type="date" id="admin-new-session-date"
+                    class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                </div>
+                <div>
+                  <label class="block text-2xs font-bold text-slate-600 mb-1" for="admin-new-session-start">Start Time</label>
+                  <input type="time" id="admin-new-session-start" value="12:00"
+                    class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                </div>
+                <div>
+                  <label class="block text-2xs font-bold text-slate-600 mb-1" for="admin-new-session-end">End Time</label>
+                  <input type="time" id="admin-new-session-end" value="17:00"
+                    class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                </div>
+                <div>
+                  <button type="button" onclick="handleAddFestivalSession()"
+                    class="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2 px-3 rounded-lg transition shadow-xs min-h-[38px]">
+                    + Add Session
+                  </button>
+                </div>
+              </div>
+              <div class="mt-2">
+                <label class="block text-2xs font-bold text-slate-600 mb-1" for="admin-new-session-desc">Description (Optional)</label>
+                <input type="text" id="admin-new-session-desc" placeholder="e.g. Opening session and trade tasting"
+                  class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================================================================== -->
+      <!-- TAB 3: SHIFTS & COVERAGE MANAGEMENT                                  -->
+      <!-- ==================================================================== -->
+      <section id="panel-shifts" class="admin-panel hidden space-y-5">
+        <div class="bg-white p-5 rounded-xl border border-amber-200 shadow-sm space-y-4">
+          <div class="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                <svg class="w-4 h-4 text-amber-700 shrink-0"><use href="#icon-clipboard" /></svg>
+                Shift Schedule &amp; Coverage
+              </h2>
+              <p class="text-xs text-slate-500">Monitor volunteer coverage across bars, areas, and sessions. Directly assign volunteers or managers.</p>
+            </div>
+            <button type="button" onclick="openCreateShiftModal()"
+              class="text-xs bg-amber-700 hover:bg-amber-800 text-white font-bold px-4 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5 min-h-[44px]">
+              <svg class="w-3.5 h-3.5"><use href="#icon-plus" /></svg> Create New Shift
+            </button>
+          </div>
+
+          <!-- Session Filter Selector -->
+          <div class="flex items-center gap-2 overflow-x-auto no-scrollbar py-1" id="shifts-session-filter-pills">
+            <!-- Populated via JS -->
+          </div>
+
+          <!-- Shifts Grid -->
+          <div id="admin-shifts-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            <!-- Populated via JS -->
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================================================================== -->
+      <!-- TAB 4: INCENTIVES & MILESTONE REWARDS                                -->
+      <!-- ==================================================================== -->
+      <section id="panel-incentives" class="admin-panel hidden space-y-5">
+        <div class="bg-white p-5 rounded-xl border border-amber-200 shadow-sm space-y-4">
+          <div class="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                <svg class="w-4 h-4 text-amber-700 shrink-0"><use href="#icon-trophy" /></svg>
+                Volunteer Incentives &amp; Milestone Rewards
+              </h2>
+              <p class="text-xs text-slate-500">Configure reward thresholds earned as volunteers accumulate shift hours.</p>
+            </div>
+            <button onclick="handleSaveIncentivesConfig()" id="btn-save-incentives"
+              class="text-xs bg-amber-700 hover:bg-amber-800 text-white font-bold px-4 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5 min-h-[44px]">
+              <svg class="w-3.5 h-3.5"><use href="#icon-save" /></svg> Save Incentives Settings
+            </button>
+          </div>
+
+          <div id="admin-incentives-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+          <!-- Existing Incentives Table -->
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-stone-50 border-b border-slate-200 text-slate-500 uppercase tracking-wider text-2xs font-semibold">
+                <tr>
+                  <th class="p-2.5 w-32">Hours Required</th>
+                  <th class="p-2.5 w-60">Reward Name</th>
+                  <th class="p-2.5">Description</th>
+                  <th class="p-2.5 text-right w-24">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="admin-incentives-table-body" class="divide-y divide-slate-100">
+                <!-- Populated via JS -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Add Incentive Row Form -->
+          <div class="pt-3 border-t border-slate-100 bg-stone-50/70 p-3.5 rounded-xl border border-slate-200">
+            <h3 class="text-xs font-bold text-amber-950 mb-2">+ Add Reward Milestone</h3>
+            <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
+              <div class="sm:col-span-3">
+                <label class="block text-2xs font-bold text-slate-600 mb-1" for="admin-new-incentive-hours">Hours Required</label>
+                <input type="number" id="admin-new-incentive-hours" min="0.5" step="0.5" placeholder="e.g. 4"
+                  class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+              <div class="sm:col-span-4">
+                <label class="block text-2xs font-bold text-slate-600 mb-1" for="admin-new-incentive-name">Reward Name</label>
+                <input type="text" id="admin-new-incentive-name" placeholder="e.g. Festival T-Shirt"
+                  class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+              <div class="sm:col-span-3">
+                <label class="block text-2xs font-bold text-slate-600 mb-1" for="admin-new-incentive-desc">Description (Optional)</label>
+                <input type="text" id="admin-new-incentive-desc" placeholder="e.g. Official crew shirt"
+                  class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+              <div class="sm:col-span-2">
+                <button type="button" onclick="handleAddIncentive()"
+                  class="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-2 px-3 rounded-lg transition shadow-xs min-h-[38px]">
+                  + Add Reward
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Welcome Message Form -->
+          <div class="pt-3 border-t border-slate-100 space-y-2.5">
+            <h3 class="text-xs font-bold text-slate-700 uppercase tracking-wider">Guest Welcome &amp; Rewards Explanation (Shown in Pint Popover)</h3>
+            <div class="space-y-2">
+              <div>
+                <label class="block text-2xs font-bold text-slate-600 mb-1" for="admin-incentive-welcome-title">Welcome Title</label>
+                <input type="text" id="admin-incentive-welcome-title" placeholder="e.g. Welcome to BrewCrew!"
+                  class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+              <div>
+                <label class="block text-2xs font-bold text-slate-600 mb-1" for="admin-incentive-welcome-text">Perks Explanation</label>
+                <textarea id="admin-incentive-welcome-text" rows="3" placeholder="Explain what BrewCrew is and how volunteers earn rewards..."
+                  class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"></textarea>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================================================================== -->
+      <!-- TAB 5: ROLE GUIDES & AREA BRIEFINGS                                  -->
+      <!-- ==================================================================== -->
+      <section id="panel-roles" class="admin-panel hidden space-y-5">
+        <div class="bg-white p-5 rounded-xl border border-amber-200 shadow-sm space-y-4">
+          <div class="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                <svg class="w-4 h-4 text-amber-700 shrink-0"><use href="#icon-book" /></svg>
+                Volunteer Role Guides &amp; Area Briefings
+              </h2>
+              <p class="text-xs text-slate-500">Provide role descriptions, responsibilities, and guidelines for each shift area. Sourced dynamically from shift categories.</p>
+            </div>
+            <a href="roles.html" target="_blank"
+              class="text-xs font-semibold text-amber-900 bg-amber-100 hover:bg-amber-200 px-3 py-2 rounded-lg border border-amber-300 transition flex items-center gap-1.5 min-h-[44px]">
+              <span>Preview Roles Page &rarr;</span>
+            </a>
+          </div>
+
+          <div id="admin-roles-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+          <!-- Roles Table -->
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-stone-50 border-b border-slate-200 text-slate-500 uppercase tracking-wider text-2xs font-semibold">
+                <tr>
+                  <th class="p-2.5 w-16 text-center">Icon</th>
+                  <th class="p-2.5 w-48">Role / Area Name</th>
+                  <th class="p-2.5">Summary Blurb</th>
+                  <th class="p-2.5 w-28 text-center">Status</th>
+                  <th class="p-2.5 text-right w-24">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="admin-roles-table-body" class="divide-y divide-slate-100">
+                <!-- Populated via JS -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ==================================================================== -->
+      <!-- TAB 6: EMAIL ANNOUNCEMENTS & BROADCAST                               -->
+      <!-- ==================================================================== -->
+      <section id="panel-broadcast" class="admin-panel hidden space-y-5">
+        <div class="bg-white p-5 rounded-xl border border-amber-200 shadow-sm space-y-4">
+          <div class="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-slate-100">
+            <div>
+              <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
+                <svg class="w-4 h-4 text-amber-700 shrink-0"><use href="#icon-mail" /></svg>
+                Email Announcements &amp; Broadcast
+              </h2>
+              <p class="text-xs text-slate-500">Dispatch mass notification emails directly to volunteers and managers via backend Cloud Functions.</p>
+            </div>
+            <span class="text-xs font-semibold px-2.5 py-1 bg-amber-100 text-amber-900 rounded-full flex items-center gap-1">
+              <svg class="w-3 h-3"><use href="#icon-users" /></svg>
+              <span id="admin-broadcast-recipient-preview">Target: All Volunteers</span>
+            </span>
+          </div>
+
+          <div id="admin-broadcast-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+          <form id="admin-broadcast-form" onsubmit="handleSendAdminBroadcast(event)" class="space-y-4">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div class="sm:col-span-2">
+                <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-broadcast-subject">
+                  Email Subject <span class="text-rose-500">*</span>
+                </label>
+                <input type="text" id="admin-broadcast-subject" required placeholder="e.g. Festival Shift Arrival Briefing &amp; Parking"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              </div>
+              <div>
+                <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-broadcast-target">
+                  Recipients
+                </label>
+                <select id="admin-broadcast-target" onchange="updateBroadcastTargetLabel(this.value)"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 min-h-[38px]">
+                  <option value="volunteer">All Volunteers</option>
+                  <option value="manager">Shift Managers</option>
+                  <option value="all">All Crew (Volunteers, Managers &amp; Admins)</option>
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-broadcast-body">
+                Message Body <span class="text-rose-500">*</span>
+              </label>
+              <textarea id="admin-broadcast-body" required rows="6"
+                placeholder="Write your announcement here. Line breaks are converted into formatted paragraphs automatically."
+                class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 font-sans"></textarea>
+            </div>
+
+            <div class="flex flex-wrap items-center justify-between gap-3 pt-2">
+              <p class="text-2xs text-slate-500 italic">Dispatched via festival email relay. Disabled accounts are automatically excluded.</p>
+              <button type="submit" id="btn-submit-broadcast"
+                class="bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition shadow-sm flex items-center gap-2 min-h-[44px]">
+                <svg class="w-4 h-4 shrink-0"><use href="#icon-mail" /></svg>
+                <span id="btn-broadcast-text">Send Announcement Email</span>
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- ==================================================================== -->
+      <!-- TAB 7: BLOCKED ACCOUNTS & BLACKLIST                                  -->
+      <!-- ==================================================================== -->
+      <section id="panel-blocked" class="admin-panel hidden space-y-5">
+        <div class="bg-white p-5 rounded-xl border border-rose-200 shadow-sm space-y-4">
+          <div class="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-rose-100">
+            <div>
+              <h2 class="text-base font-bold text-rose-950 flex items-center gap-2">
+                <svg class="w-4 h-4 text-rose-600 shrink-0"><use href="#icon-slash" /></svg>
+                Blocked Accounts &amp; Email Blacklist
+              </h2>
+              <p class="text-xs text-slate-500">
+                These email addresses were deleted and blocked by administrators. Users with blocked emails cannot re-register or sign in.
+              </p>
+            </div>
+            <span class="text-xs font-bold px-3 py-1 bg-rose-100 text-rose-900 border border-rose-300 rounded-full tabular-nums">
+              <span id="stat-blocked-count">0</span> Blocked Emails
+            </span>
+          </div>
+
+          <div id="admin-blocked-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+          <!-- Blocked Emails Table -->
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs">
+              <thead class="bg-stone-50 border-b border-rose-200 text-slate-500 uppercase tracking-wider text-2xs font-semibold">
+                <tr>
+                  <th class="p-3">Blocked Email Address</th>
+                  <th class="p-3">Volunteer Name</th>
+                  <th class="p-3">Reason / Justification</th>
+                  <th class="p-3">Blocked Date</th>
+                  <th class="p-3">Blocked By</th>
+                  <th class="p-3 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="admin-blocked-table-body" class="divide-y divide-slate-100">
+                <tr>
+                  <td colspan="6" class="p-6 text-center text-slate-400 italic">No blocked accounts on file.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Footer -->
+    <footer class="mt-auto py-4 bg-stone-100 border-t border-stone-200 text-center text-2xs text-slate-400">
+      BrewCrew Volunteer Management Platform &bull; Administrative Operations Console
+    </footer>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- MODAL: ASSIGN VOLUNTEER TO SHIFT                                     -->
+  <!-- ==================================================================== -->
+  <div id="modal-assign-volunteer" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 hidden">
+    <div class="bg-white border border-amber-200 rounded-xl max-w-lg w-full p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+          <svg class="w-4 h-4 text-amber-700"><use href="#icon-user-plus" /></svg>
+          <span id="assign-volunteer-modal-title">Assign Volunteer to Shift</span>
+        </h3>
+        <button type="button" onclick="closeAssignVolunteerModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <svg class="w-4 h-4"><use href="#icon-x" /></svg>
+        </button>
+      </div>
+
+      <div id="assign-volunteer-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+      <form id="form-assign-volunteer" onsubmit="handleAssignVolunteerSubmit(event)" class="space-y-4">
+        <input type="hidden" id="assign-vol-shift-id" value="">
+        <input type="hidden" id="assign-vol-user-id" value="">
+
+        <!-- Shift Details Summary Box -->
+        <div id="assign-vol-shift-details" class="p-3 bg-amber-50/70 border border-amber-200 rounded-lg text-xs space-y-1">
+          <!-- Populated via JS -->
+        </div>
+
+        <!-- Volunteer Selection (if opening from shift) -->
+        <div id="assign-vol-user-select-wrap">
+          <label class="block text-xs font-bold text-slate-700 mb-1" for="assign-vol-user-select">Select Registered Volunteer</label>
+          <select id="assign-vol-user-select" class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+            <!-- Populated via JS -->
+          </select>
+          <p class="text-2xs text-slate-500 mt-1">Only active, registered crew members are eligible for assignment.</p>
+        </div>
+
+        <!-- Shift Selection (if opening from user row) -->
+        <div id="assign-vol-shift-select-wrap" class="hidden">
+          <label class="block text-xs font-bold text-slate-700 mb-1" for="assign-vol-shift-select">Select Available Shift</label>
+          <select id="assign-vol-shift-select" class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+            <!-- Populated via JS -->
+          </select>
+          <p class="text-2xs text-slate-500 mt-1">Only shifts with remaining open capacity are listed.</p>
+        </div>
+
+        <div class="flex justify-end items-center gap-2 pt-3 border-t border-slate-100">
+          <button type="button" onclick="closeAssignVolunteerModal()"
+            class="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 transition min-h-[40px]">
+            Cancel
+          </button>
+          <button type="submit" id="btn-submit-assign-vol"
+            class="px-4 py-2 rounded-lg text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white transition shadow-xs min-h-[40px] flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5"><use href="#icon-check" /></svg>
+            <span id="btn-submit-assign-vol-text">Confirm Shift Assignment</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- MODAL: DISABLE / RE-ENABLE ACCOUNT                                   -->
+  <!-- ==================================================================== -->
+  <div id="modal-toggle-disable" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 hidden">
+    <div class="bg-white border border-amber-200 rounded-xl max-w-md w-full p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <h3 id="toggle-disable-title" class="text-sm font-bold text-slate-800 flex items-center gap-2">
+          <svg class="w-4 h-4 text-amber-700"><use href="#icon-user-x" /></svg>
+          Deactivate User Account
+        </h3>
+        <button type="button" onclick="closeToggleDisableModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <svg class="w-4 h-4"><use href="#icon-x" /></svg>
+        </button>
+      </div>
+
+      <div id="toggle-disable-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+      <form id="form-toggle-disable" onsubmit="handleToggleDisableSubmit(event)" class="space-y-3">
+        <input type="hidden" id="disable-target-uid" value="">
+        <input type="hidden" id="disable-target-action" value="disable">
+
+        <p id="toggle-disable-prompt" class="text-xs text-slate-600 leading-relaxed">
+          Are you sure you want to deactivate this account?
+        </p>
+
+        <div id="disable-reason-wrap">
+          <label class="block text-2xs font-bold text-slate-600 mb-1" for="disable-reason-input">Reason for Deactivation (Optional)</label>
+          <input type="text" id="disable-reason-input" placeholder="e.g. Requested hiatus, no longer volunteering"
+            class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+        </div>
+
+        <div class="flex justify-end items-center gap-2 pt-3 border-t border-slate-100">
+          <button type="button" onclick="closeToggleDisableModal()"
+            class="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 transition min-h-[40px]">
+            Cancel
+          </button>
+          <button type="submit" id="btn-submit-disable"
+            class="px-4 py-2 rounded-lg text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white transition shadow-xs min-h-[40px]">
+            Confirm Status Update
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- MODAL: DELETE & BLOCK USER (Danger Zone)                             -->
+  <!-- ==================================================================== -->
+  <div id="modal-delete-block" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 hidden">
+    <div class="bg-white border border-rose-300 rounded-xl max-w-md w-full p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-rose-100">
+        <h3 class="text-sm font-bold text-rose-950 flex items-center gap-2">
+          <svg class="w-4 h-4 text-rose-600"><use href="#icon-slash" /></svg>
+          Delete &amp; Permanently Block Account
+        </h3>
+        <button type="button" onclick="closeDeleteBlockModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <svg class="w-4 h-4"><use href="#icon-x" /></svg>
+        </button>
+      </div>
+
+      <div id="delete-block-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+      <form id="form-delete-block" onsubmit="handleDeleteBlockSubmit(event)" class="space-y-3">
+        <input type="hidden" id="delete-block-uid" value="">
+
+        <div class="p-3 bg-rose-50 border border-rose-200 rounded-lg text-xs text-rose-900 space-y-2">
+          <p class="font-bold flex items-center gap-1.5">
+            <span>⚠️</span> Permanent Removal Warning
+          </p>
+          <ul class="list-disc pl-4 space-y-1 text-2xs text-rose-800">
+            <li>Account will be completely deleted from Firebase Authentication and Firestore.</li>
+            <li><strong>All shifts allocated to this volunteer will be automatically released</strong> and made available for other volunteers.</li>
+            <li>The email address <code id="delete-block-email-preview" class="font-bold underline"></code> will be permanently blacklisted to prevent re-registration.</li>
+          </ul>
+        </div>
+
+        <div>
+          <label class="block text-2xs font-bold text-slate-700 mb-1" for="delete-block-reason">Administrative Reason <span class="text-rose-500">*</span></label>
+          <input type="text" id="delete-block-reason" required placeholder="e.g. Code of conduct violation, volunteer removal request"
+            class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-rose-500" />
+        </div>
+
+        <div class="flex justify-end items-center gap-2 pt-3 border-t border-slate-100">
+          <button type="button" onclick="closeDeleteBlockModal()"
+            class="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 transition min-h-[40px]">
+            Cancel
+          </button>
+          <button type="submit" id="btn-submit-delete-block"
+            class="px-4 py-2 rounded-lg text-xs font-bold bg-rose-700 hover:bg-rose-800 text-white transition shadow-xs min-h-[40px] flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5"><use href="#icon-trash" /></svg>
+            <span id="btn-delete-block-text">Release Shifts &amp; Delete Account</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- MODAL: CREATE / EDIT SHIFT                                           -->
+  <!-- ==================================================================== -->
+  <div id="modal-shift-editor" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 hidden">
+    <div class="bg-white border border-amber-200 rounded-xl max-w-lg w-full p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <h3 id="shift-editor-modal-title" class="text-sm font-bold text-slate-800 flex items-center gap-2">
+          <svg class="w-4 h-4 text-amber-700"><use href="#icon-clipboard" /></svg>
+          Create Festival Shift
+        </h3>
+        <button type="button" onclick="closeShiftEditorModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <svg class="w-4 h-4"><use href="#icon-x" /></svg>
+        </button>
+      </div>
+
+      <div id="shift-editor-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+      <form id="form-shift-editor" onsubmit="handleShiftEditorSubmit(event)" class="space-y-3">
+        <input type="hidden" id="editor-shift-id" value="">
+
+        <div>
+          <label class="block text-2xs font-bold text-slate-700 mb-1" for="editor-shift-session">Festival Session <span class="text-rose-500">*</span></label>
+          <select id="editor-shift-session" required onchange="handleEditorSessionChange(this.value)"
+            class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-2xs font-bold text-slate-700 mb-1" for="editor-shift-category">Area / Bar Category <span class="text-rose-500">*</span></label>
+            <input type="text" id="editor-shift-category" required placeholder="e.g. Cask Bar, Gate, Tokens"
+              class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+          </div>
+          <div>
+            <label class="block text-2xs font-bold text-slate-700 mb-1" for="editor-shift-capacity">Volunteer Capacity <span class="text-rose-500">*</span></label>
+            <input type="number" id="editor-shift-capacity" required min="1" max="100" value="4"
+              class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 tabular-nums" />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-2xs font-bold text-slate-700 mb-1" for="editor-shift-start">Start Time (Date &amp; Time) <span class="text-rose-500">*</span></label>
+            <input type="datetime-local" id="editor-shift-start" required
+              class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+          </div>
+          <div>
+            <label class="block text-2xs font-bold text-slate-700 mb-1" for="editor-shift-end">End Time (Date &amp; Time) <span class="text-rose-500">*</span></label>
+            <input type="datetime-local" id="editor-shift-end" required
+              class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-2xs font-bold text-slate-700 mb-1" for="editor-shift-manager">Assigned Shift Manager (Optional)</label>
+          <select id="editor-shift-manager"
+            class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+            <!-- Populated via JS -->
+          </select>
+        </div>
+
+        <div class="flex justify-end items-center gap-2 pt-3 border-t border-slate-100">
+          <button type="button" onclick="closeShiftEditorModal()"
+            class="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 transition min-h-[40px]">
+            Cancel
+          </button>
+          <button type="submit" id="btn-submit-shift-editor"
+            class="px-4 py-2 rounded-lg text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white transition shadow-xs min-h-[40px]">
+            Save Shift
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="firebase-config.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>

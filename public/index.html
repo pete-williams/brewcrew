@@ -1097,457 +1097,6 @@
         </div>
       </div>
 
-      <!-- VIEW 3: Admin Panel (Roles & Crew) -->
-      <div id="view-admin" class="hidden space-y-5">
-        <!-- Admin Header & Stats -->
-        <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200">
-          <div class="flex flex-wrap justify-between items-center gap-3 mb-4">
-            <div>
-              <h2 class="text-lg font-bold text-slate-800 flex items-center gap-2">
-                <svg class="w-5 h-5 text-purple-600 shrink-0">
-                  <use href="#icon-shield" />
-                </svg> Festival Crew &amp; Role Management
-              </h2>
-              <p class="text-xs text-slate-500">Promote volunteers to Shift Managers or Administrators, and oversee
-                permissions.</p>
-            </div>
-            <button onclick="openCreateShiftModal()"
-              class="text-xs bg-amber-700 hover:bg-amber-800 text-white font-bold px-3.5 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
-              <svg class="w-3.5 h-3.5">
-                <use href="#icon-plus" />
-              </svg> Create New Shift
-            </button>
-          </div>
-
-          <!-- Role Summary Counters -->
-          <div
-            class="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 border-t border-slate-100 divide-y sm:divide-y-0 sm:divide-x divide-slate-100 text-center">
-            <div class="py-1">
-              <span class="text-xs text-slate-500 font-semibold block">Total Crew</span>
-              <span id="stat-total-users" class="text-xl font-extrabold text-amber-950 tabular-nums">0</span>
-            </div>
-            <div class="py-1 sm:pl-3">
-              <span class="text-xs text-amber-800 font-semibold block">Volunteers</span>
-              <span id="stat-volunteers" class="text-xl font-extrabold text-amber-800 tabular-nums">0</span>
-            </div>
-            <div class="py-1 sm:pl-3">
-              <span class="text-xs text-blue-700 font-semibold block">Shift Managers</span>
-              <span id="stat-managers" class="text-xl font-extrabold text-blue-900 tabular-nums">0</span>
-            </div>
-            <div class="py-1 sm:pl-3">
-              <span class="text-xs text-purple-700 font-semibold block">Administrators</span>
-              <span id="stat-admins" class="text-xl font-extrabold text-purple-900 tabular-nums">0</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Admin Festival Configuration & Session Settings -->
-        <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200 space-y-4">
-          <div class="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-slate-100">
-            <div>
-              <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
-                <svg class="w-4 h-4 text-slate-600 shrink-0">
-                  <use href="#icon-settings" />
-                </svg> Festival Configuration &amp; Sessions
-              </h3>
-              <p class="text-xs text-slate-500">Configure global festival branding, manager contact details, and shift
-                schedule days/sessions.</p>
-            </div>
-            <button onclick="handleSaveFestivalConfig()" id="btn-save-festival-config"
-              class="text-xs bg-amber-700 hover:bg-amber-800 text-white font-bold px-4 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
-              <svg class="w-3.5 h-3.5">
-                <use href="#icon-save" />
-              </svg> Save Festival Configuration
-            </button>
-          </div>
-
-          <div id="admin-config-alert" class="hidden p-3 rounded-lg text-xs"></div>
-
-          <!-- General Details Form -->
-          <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div>
-              <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-cfg-festival-name">Festival
-                Name</label>
-              <input type="text" id="admin-cfg-festival-name" placeholder="e.g. Manchester Beer &amp; Cider Festival"
-                class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-            </div>
-            <div>
-              <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-cfg-festival-website">Festival
-                Website</label>
-              <input type="url" id="admin-cfg-festival-website" placeholder="https://festival.example.org"
-                class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-            </div>
-            <div>
-              <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-cfg-festival-logo">Logo Image
-                URL</label>
-              <div class="flex gap-2">
-                <input type="url" id="admin-cfg-festival-logo" oninput="previewFestivalLogo(this.value)"
-                  placeholder="https://example.com/logo.png"
-                  class="flex-grow text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-                <div id="admin-cfg-logo-preview-box"
-                  class="w-9 h-9 shrink-0 flex items-center justify-center text-slate-700 overflow-hidden"
-                  title="Logo Preview">
-                  <span id="admin-cfg-logo-preview-emoji" class="text-lg text-slate-700">🍺</span>
-                  <img id="admin-cfg-logo-preview-img" class="hidden w-full h-full object-contain"
-                    src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" alt="Preview" />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Volunteer Manager Contact Details -->
-          <div class="pt-3 border-t border-slate-100">
-            <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">Volunteer Manager Contact Details
-            </h4>
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div>
-                <label class="block text-xs font-semibold text-slate-600 mb-1" for="admin-cfg-manager-name">Manager
-                  Name</label>
-                <input type="text" id="admin-cfg-manager-name" placeholder="e.g. Jane Doe"
-                  class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-              </div>
-              <div>
-                <label class="block text-xs font-semibold text-slate-600 mb-1" for="admin-cfg-manager-email">Manager
-                  Email</label>
-                <input type="email" id="admin-cfg-manager-email" placeholder="volunteer@example.org"
-                  class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-              </div>
-              <div>
-                <label class="block text-xs font-semibold text-slate-600 mb-1" for="admin-cfg-manager-phone">Manager
-                  Phone</label>
-                <input type="tel" id="admin-cfg-manager-phone" placeholder="+44 7123 456789"
-                  class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-              </div>
-            </div>
-          </div>
-
-          <!-- Festival Days / Sessions Builder -->
-          <div class="pt-3 border-t border-slate-100 space-y-3">
-            <div class="flex items-center justify-between">
-              <div>
-                <h4 class="text-xs font-bold text-slate-700 uppercase tracking-wider">Festival Sessions &amp; Schedule
-                </h4>
-                <p class="text-xs text-slate-500">Configure sessions by date, start time, and end time. Admins can edit
-                  existing sessions directly or add new ones.</p>
-              </div>
-            </div>
-
-            <!-- Existing Sessions List Table -->
-            <div class="overflow-x-auto">
-              <table class="w-full text-left text-xs">
-                <thead class="border-b border-slate-200 text-slate-500 uppercase tracking-wider text-2xs font-semibold">
-                  <tr>
-                    <th class="p-2.5 w-44">Session Name</th>
-                    <th class="p-2.5 w-28">Date</th>
-                    <th class="p-2.5 w-32">Times</th>
-                    <th class="p-2.5">Description</th>
-                    <th class="p-2.5 w-32">Shifts</th>
-                    <th class="p-2.5 text-right w-28">Actions</th>
-                  </tr>
-                </thead>
-                <tbody id="admin-sessions-table-body" class="divide-y divide-slate-100">
-                  <!-- Populated by JS -->
-                </tbody>
-              </table>
-            </div>
-
-            <!-- Add Session Row Form -->
-            <div class="pt-3 border-t border-slate-100">
-              <h4 class="text-xs font-bold text-amber-900 mb-2">+ Add Festival Session</h4>
-              <div class="grid grid-cols-1 sm:grid-cols-5 gap-2.5 items-end">
-                <div>
-                  <label class="block text-xs font-medium text-slate-600 mb-1" for="admin-new-session-name">Session
-                    Name</label>
-                  <input type="text" id="admin-new-session-name" placeholder="e.g. Afternoon Tasting"
-                    class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
-                </div>
-                <div>
-                  <label class="block text-xs font-medium text-slate-600 mb-1" for="admin-new-session-date">Date</label>
-                  <input type="date" id="admin-new-session-date"
-                    class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
-                </div>
-                <div>
-                  <label class="block text-xs font-medium text-slate-600 mb-1" for="admin-new-session-start">Start
-                    Time</label>
-                  <input type="time" id="admin-new-session-start" value="12:00"
-                    class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
-                </div>
-                <div>
-                  <label class="block text-xs font-medium text-slate-600 mb-1" for="admin-new-session-end">End
-                    Time</label>
-                  <input type="time" id="admin-new-session-end" value="17:00"
-                    class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
-                </div>
-                <div>
-                  <button type="button" onclick="handleAddFestivalSession()"
-                    class="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition shadow-xs">
-                    + Add Session
-                  </button>
-                </div>
-              </div>
-              <div class="mt-2">
-                <label class="block text-xs font-medium text-slate-600 mb-1" for="admin-new-session-desc">Session
-                  Description (Optional)</label>
-                <input type="text" id="admin-new-session-desc"
-                  placeholder="e.g. Opening ceremony, brewery tasting, and trade session"
-                  class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Admin Volunteer Incentives & Milestone Rewards Settings -->
-        <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200 space-y-4">
-          <div class="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-slate-100">
-            <div>
-              <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
-                <svg class="w-4 h-4 text-amber-700 shrink-0">
-                  <use href="#icon-trophy" />
-                </svg> Volunteer Incentives &amp; Milestone Rewards
-              </h3>
-              <p class="text-xs text-slate-500">Configure reward milestone thresholds earned by volunteers as they
-                register for shift hours. Stored dynamically in <code>config/incentives</code>.</p>
-            </div>
-            <button onclick="handleSaveIncentivesConfig()" id="btn-save-incentives-config"
-              class="text-xs bg-amber-700 hover:bg-amber-800 text-white font-bold px-4 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5">
-              <svg class="w-3.5 h-3.5">
-                <use href="#icon-save" />
-              </svg> Save Incentives Configuration
-            </button>
-          </div>
-
-          <div id="admin-incentives-alert" class="hidden p-3 rounded-lg text-xs"></div>
-
-          <!-- Existing Incentives Table -->
-          <div class="overflow-x-auto">
-            <table class="w-full text-left text-xs">
-              <thead class="border-b border-slate-200 text-slate-500 uppercase tracking-wider text-2xs font-semibold">
-                <tr>
-                  <th class="p-2.5 w-32">Hours Required</th>
-                  <th class="p-2.5 w-60">Reward Name</th>
-                  <th class="p-2.5">Description</th>
-                  <th class="p-2.5 text-right w-28">Actions</th>
-                </tr>
-              </thead>
-              <tbody id="admin-incentives-table-body" class="divide-y divide-slate-100">
-                <!-- Populated by JS -->
-              </tbody>
-            </table>
-          </div>
-
-          <!-- Add Incentive Row Form -->
-          <div class="pt-3 border-t border-slate-100">
-            <h4 class="text-xs font-bold text-amber-900 mb-2">+ Add Reward Milestone</h4>
-            <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end">
-              <div class="sm:col-span-3">
-                <label class="block text-xs font-medium text-slate-600 mb-1" for="admin-new-incentive-hours">Hours
-                  Required</label>
-                <input type="number" id="admin-new-incentive-hours" min="0.5" step="0.5" placeholder="e.g. 4"
-                  class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
-              </div>
-              <div class="sm:col-span-4">
-                <label class="block text-xs font-medium text-slate-600 mb-1" for="admin-new-incentive-name">Reward
-                  Name</label>
-                <input type="text" id="admin-new-incentive-name" placeholder="e.g. Free Festival Entry Pass"
-                  class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
-              </div>
-              <div class="sm:col-span-3">
-                <label class="block text-xs font-medium text-slate-600 mb-1" for="admin-new-incentive-desc">Description
-                  (Optional)</label>
-                <input type="text" id="admin-new-incentive-desc" placeholder="e.g. General festival admission pass"
-                  class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
-              </div>
-              <div class="sm:col-span-2">
-                <button type="button" onclick="handleAddIncentive()"
-                  class="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-bold py-1.5 px-3 rounded-lg transition shadow-xs">
-                  + Add Reward
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <!-- Guest Welcome & Perks Explanation Message (Configured by Admin) -->
-          <div class="pt-3 border-t border-slate-100 space-y-2.5">
-            <div>
-              <h4 class="text-xs font-bold text-amber-950 flex items-center gap-1.5">
-                <svg class="w-3.5 h-3.5 text-amber-700">
-                  <use href="#icon-mail" />
-                </svg> Guest Welcome &amp; Rewards Explanation <span class="font-normal text-slate-500">(Shown in
-                  Floating Pint Popover)</span>
-              </h4>
-              <p class="text-xs text-slate-500">
-                This welcome message is displayed to unauthenticated visitors when they click the floating pint glass,
-                explaining what BrewCrew is and how they can earn festival rewards.
-              </p>
-            </div>
-            <div class="space-y-2">
-              <div>
-                <label class="block text-xs font-medium text-slate-600 mb-1" for="admin-incentive-welcome-title">Welcome
-                  Title</label>
-                <input type="text" id="admin-incentive-welcome-title" placeholder="e.g. Welcome to BrewCrew!"
-                  class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 font-medium" />
-              </div>
-              <div>
-                <label class="block text-xs font-medium text-slate-600 mb-1" for="admin-incentive-welcome-text">Welcome
-                  Explanation &amp; Volunteer Perks Description</label>
-                <textarea id="admin-incentive-welcome-text" rows="3"
-                  placeholder="Explain what BrewCrew is and how volunteers earn rewards..."
-                  class="w-full text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"></textarea>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Admin Volunteer Role Guides & Area Briefings -->
-        <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200 space-y-4">
-          <div class="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-slate-100">
-            <div>
-              <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
-                <svg class="w-4 h-4 text-amber-700 shrink-0">
-                  <use href="#icon-book" />
-                </svg> Volunteer Role Guides &amp; Area Briefings
-              </h3>
-              <p class="text-xs text-slate-500">Provide role descriptions, responsibilities, and guidelines for each
-                shift area. Stored dynamically in <code>config/roles</code>.</p>
-            </div>
-            <a href="roles.html" target="_blank"
-              class="text-xs font-semibold text-amber-800 hover:text-amber-950 bg-amber-50 hover:bg-amber-100 px-3 py-1.5 rounded-lg border border-amber-300 transition flex items-center gap-1.5 cursor-pointer">
-              <span>Preview Roles Page &rarr;</span>
-            </a>
-          </div>
-
-          <div id="admin-roles-alert" class="hidden p-3 rounded-lg text-xs"></div>
-
-          <!-- Roles Table listing all derived shift areas -->
-          <div class="overflow-x-auto">
-            <table class="w-full text-left text-xs">
-              <thead class="border-b border-slate-200 text-slate-500 uppercase tracking-wider text-2xs font-semibold">
-                <tr>
-                  <th class="p-2.5 w-16 text-center">Icon</th>
-                  <th class="p-2.5 w-48">Role / Area Name</th>
-                  <th class="p-2.5">Summary Blurb</th>
-                  <th class="p-2.5 w-32 text-center">Status</th>
-                  <th class="p-2.5 text-right w-28">Actions</th>
-                </tr>
-              </thead>
-              <tbody id="admin-roles-table-body" class="divide-y divide-slate-100">
-                <tr>
-                  <td colspan="5" class="p-4 text-center text-slate-400 italic">Loading volunteer roles...</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Crew Members List Section -->
-        <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200 space-y-4">
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
-              <svg class="w-4 h-4 text-slate-600 shrink-0">
-                <use href="#icon-users" />
-              </svg> Crew Member Directory &amp; Role Assignment
-            </h3>
-            <div class="flex flex-wrap items-center gap-2">
-              <input type="text" id="admin-user-search" oninput="handleAdminUserSearch(this.value)"
-                placeholder="Search by name, email or phone..."
-                class="text-xs px-3 py-1.5 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 w-60" />
-              <select id="admin-role-filter" onchange="handleAdminRoleFilter(this.value)"
-                class="text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
-                <option value="ALL">All Roles</option>
-                <option value="volunteer">Volunteers</option>
-                <option value="manager">Shift Managers</option>
-                <option value="admin">Administrators</option>
-              </select>
-            </div>
-          </div>
-
-          <div class="overflow-x-auto">
-            <table class="w-full text-left text-xs">
-              <thead class="border-b border-slate-200 text-slate-500 uppercase tracking-wider text-2xs font-semibold">
-                <tr>
-                  <th class="p-3">Crew Member</th>
-                  <th class="p-3">Email Address</th>
-                  <th class="p-3">Phone Number</th>
-                  <th class="p-3">Current Role</th>
-                  <th class="p-3 text-right">Assign Role</th>
-                </tr>
-              </thead>
-              <tbody id="admin-users-table-body" class="divide-y divide-slate-100">
-                <tr>
-                  <td colspan="5" class="p-4 text-center text-slate-500 italic">Loading crew members...</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <!-- Admin Communication: Send Email to Volunteers -->
-        <div class="bg-white p-5 rounded-xl shadow-sm border border-amber-200 space-y-4">
-          <div class="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-slate-100">
-            <div>
-              <h3 class="font-bold text-slate-800 text-base flex items-center gap-2">
-                <svg class="w-4 h-4 text-amber-700 shrink-0">
-                  <use href="#icon-mail" />
-                </svg> Email Volunteers
-              </h3>
-              <p class="text-xs text-slate-500">Dispatch an email announcement or update directly to festival volunteers
-                from the Admin Panel.</p>
-            </div>
-            <span
-              class="text-xs font-semibold px-2.5 py-1 bg-amber-100 text-amber-900 rounded-full flex items-center gap-1">
-              <svg class="w-3 h-3">
-                <use href="#icon-users" />
-              </svg> <span id="admin-broadcast-recipient-preview">Target: All Volunteers</span>
-            </span>
-          </div>
-
-          <div id="admin-broadcast-alert" class="hidden p-3 rounded-lg text-xs"></div>
-
-          <form id="admin-broadcast-form" onsubmit="handleSendAdminBroadcast(event)" class="space-y-4">
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div class="sm:col-span-2">
-                <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-broadcast-subject">
-                  Email Subject <span class="text-rose-500">*</span>
-                </label>
-                <input type="text" id="admin-broadcast-subject" required
-                  placeholder="e.g. Festival Shift Briefing &amp; Arrival Instructions"
-                  class="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
-              </div>
-              <div>
-                <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-broadcast-target">
-                  Recipients
-                </label>
-                <select id="admin-broadcast-target" onchange="updateBroadcastTargetLabel(this.value)"
-                  class="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
-                  <option value="volunteer">All Volunteers</option>
-                  <option value="all">All Crew (Volunteers, Managers &amp; Admins)</option>
-                </select>
-              </div>
-            </div>
-
-            <div>
-              <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-broadcast-body">
-                Message Body <span class="text-rose-500">*</span>
-              </label>
-              <textarea id="admin-broadcast-body" required rows="5"
-                placeholder="Write your message to volunteers here. Line breaks are converted into paragraphs automatically."
-                class="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500"></textarea>
-            </div>
-
-            <div class="flex flex-wrap items-center justify-between gap-3 pt-2">
-              <p class="text-xs text-slate-500 italic">Dispatched via festival email via backend Cloud Functions.</p>
-              <button type="submit" id="btn-submit-broadcast"
-                class="bg-amber-700 hover:bg-amber-800 text-white text-xs sm:text-sm font-bold px-5 py-2.5 rounded-xl transition shadow-sm flex items-center gap-2">
-                <svg class="w-4 h-4 shrink-0" id="btn-broadcast-icon">
-                  <use href="#icon-send" />
-                </svg>
-                <span id="btn-broadcast-text">Send Email to Volunteers</span>
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-
     </main>
 
     <!-- Modal 1: Create New Shift Modal -->
@@ -1810,13 +1359,68 @@
         </div>
 
         <div
-          class="pt-3 border-t border-slate-100 flex justify-between items-center flex-shrink-0 text-xs text-slate-500">
+          class="pt-3 border-t border-slate-100 flex flex-wrap justify-between items-center gap-2 flex-shrink-0 text-xs text-slate-500">
           <span id="roster-modal-count">0 Volunteers Registered</span>
-          <button type="button" onclick="closeShiftRosterModal()"
-            class="px-4 py-1.5 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100 transition cursor-pointer">
-            Close
-          </button>
+          <div class="flex items-center gap-2">
+            <button type="button" id="roster-admin-assign-btn" onclick="openRosterAdminAssignModal()"
+              class="hidden px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-800 text-white hover:bg-amber-900 transition flex items-center gap-1.5 cursor-pointer shadow-xs">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+              </svg>
+              <span>Assign Volunteer</span>
+            </button>
+            <button type="button" onclick="closeShiftRosterModal()"
+              class="px-4 py-1.5 rounded-lg text-sm font-semibold text-slate-600 hover:bg-slate-100 transition cursor-pointer">
+              Close
+            </button>
+          </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Modal: Admin Assign Volunteer to Shift Modal -->
+    <div id="roster-assign-modal" class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 border border-amber-200">
+        <div class="flex justify-between items-start border-b border-stone-200/80 pb-3">
+          <div class="flex items-center gap-2">
+            <div class="w-9 h-9 rounded-xl bg-amber-100 text-amber-900 flex items-center justify-center font-bold">
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z" />
+              </svg>
+            </div>
+            <div>
+              <h3 class="font-bold text-base text-stone-900">Assign Volunteer to Shift</h3>
+              <p id="roster-assign-modal-shift-info" class="text-xs text-stone-500">Select an eligible volunteer for this shift.</p>
+            </div>
+          </div>
+          <button type="button" onclick="closeRosterAdminAssignModal()" class="text-stone-400 hover:text-stone-700 text-xl font-bold cursor-pointer">&times;</button>
+        </div>
+
+        <form id="roster-assign-form" onsubmit="handleConfirmRosterAssign(event)" class="space-y-4">
+          <div>
+            <label for="roster-assign-user-select" class="block text-xs font-bold text-stone-700 uppercase tracking-wider mb-1.5">
+              Select Volunteer
+            </label>
+            <select id="roster-assign-user-select" required
+              class="w-full px-3 py-2 text-sm border border-stone-300 rounded-xl focus:ring-2 focus:ring-amber-500 focus:border-amber-500 bg-white">
+              <option value="">Loading volunteers...</option>
+            </select>
+            <p class="text-2xs text-stone-500 mt-1">Only active, non-disabled volunteers not already on this shift are listed.</p>
+          </div>
+
+          <div id="roster-assign-error" class="hidden p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700"></div>
+
+          <div class="flex justify-end items-center gap-2.5 pt-2 border-t border-stone-100">
+            <button type="button" onclick="closeRosterAdminAssignModal()"
+              class="px-4 py-2 text-xs font-bold text-stone-600 hover:bg-stone-100 rounded-xl transition cursor-pointer">
+              Cancel
+            </button>
+            <button type="submit" id="roster-assign-submit-btn"
+              class="px-4 py-2 text-xs font-bold text-white bg-amber-800 hover:bg-amber-900 rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5">
+              <span>Confirm Assignment</span>
+            </button>
+          </div>
+        </form>
       </div>
     </div>
 

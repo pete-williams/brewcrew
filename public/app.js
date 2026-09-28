@@ -269,6 +269,9 @@ function updateAdminExports(isAdmin) {
     "formatEditorDoc",
     "insertEditorLink",
     "renderAdminRolesSection",
+    "openRosterAdminAssignModal",
+    "closeRosterAdminAssignModal",
+    "handleConfirmRosterAssign",
   ];
 
   if (isAdmin) {
@@ -314,6 +317,9 @@ function updateAdminExports(isAdmin) {
     window.formatEditorDoc = formatEditorDoc;
     window.insertEditorLink = insertEditorLink;
     window.renderAdminRolesSection = renderAdminRolesSection;
+    window.openRosterAdminAssignModal = openRosterAdminAssignModal;
+    window.closeRosterAdminAssignModal = closeRosterAdminAssignModal;
+    window.handleConfirmRosterAssign = handleConfirmRosterAssign;
   } else {
     adminFunctionNames.forEach(fnName => {
       delete window[fnName];
@@ -385,6 +391,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
     currentUser = user;
     if (user) {
+      // Guard against blocked/deleted email
+      const emailLower = (user.email || "").toLowerCase().trim();
+      if (emailLower) {
+        db.collection("blockedEmails").doc(emailLower).get().then(blockedDoc => {
+          if (blockedDoc.exists) {
+            auth.signOut();
+            alert("This account has been deleted and restricted from accessing the BrewCrew platform.");
+          }
+        }).catch(err => console.warn("Blocked check error:", err));
+      }
+
       // 1. Hide Login Screen, Reveal Authenticated Platform
       if (authScreen) {
         authScreen.classList.add("hidden");
@@ -529,12 +546,9 @@ function initRoute() {
   if (hash === "#my-shifts" || window.location.pathname.endsWith("/my-shifts")) {
     switchView("my-shifts");
   } else if (hash === "#admin") {
-    if (isAdminMode()) {
-      switchView("admin");
-    } else if (currentUserRole === "admin") {
-      adminModeActive = true;
-      updateRoleUI();
-      switchView("admin");
+    if (currentUserRole === "admin") {
+      window.location.href = "admin.html";
+      return;
     } else {
       window.location.hash = "#schedule";
       switchView("schedule");
@@ -548,12 +562,9 @@ function initRoute() {
     if (window.location.hash === "#my-shifts") {
       switchView("my-shifts");
     } else if (window.location.hash === "#admin") {
-      if (isAdminMode()) {
-        switchView("admin");
-      } else if (currentUserRole === "admin") {
-        adminModeActive = true;
-        updateRoleUI();
-        switchView("admin");
+      if (currentUserRole === "admin") {
+        window.location.href = "admin.html";
+        return;
       } else {
         window.location.hash = "#schedule";
         switchView("schedule");
@@ -565,13 +576,9 @@ function initRoute() {
 }
 
 function switchView(viewName) {
-  if (viewName === "admin" && !isAdminMode()) {
-    if (currentUserRole === "admin") {
-      adminModeActive = true;
-      updateRoleUI();
-    } else {
-      viewName = "schedule";
-    }
+  if (viewName === "admin") {
+    window.location.href = "admin.html";
+    return;
   }
   currentView = viewName;
 
@@ -828,6 +835,20 @@ async function handleEmailSignUp(event) {
   if (submitText) submitText.innerText = "Creating account...";
 
   try {
+    // Check if email is restricted before creating account
+    const emailLower = email.toLowerCase().trim();
+    try {
+      const blockedDoc = await db.collection("blockedEmails").doc(emailLower).get();
+      if (blockedDoc.exists) {
+        showAuthAlert("register-alert", "This email address is restricted from registering an account on BrewCrew. Please contact festival administrators.");
+        if (submitBtn) submitBtn.disabled = false;
+        if (submitText) submitText.innerText = "Create Volunteer Account";
+        return;
+      }
+    } catch (checkErr) {
+      console.warn("Could not pre-check blocked status:", checkErr);
+    }
+
     const cred = await auth.createUserWithEmailAndPassword(email, password);
     const user = cred.user;
 
@@ -1024,10 +1045,7 @@ function closeUserMenu() {
 
 function handleMenuAdminClick() {
   closeUserMenu();
-  if (currentUserRole === "admin" && !adminModeActive) {
-    toggleAdminMode(true);
-  }
-  switchView("admin");
+  window.location.href = "admin.html";
 }
 
 function handleMenuScheduleClick() {
@@ -1097,6 +1115,11 @@ function subscribeToCurrentUserProfile(uid) {
   userProfileUnsubscribe = db.collection("users").doc(uid).onSnapshot(doc => {
     if (doc.exists) {
       currentUserProfile = doc.data();
+      if (currentUserProfile.disabled) {
+        auth.signOut();
+        alert("Your account has been disabled by an administrator. Please contact festival coordinators for assistance.");
+        return;
+      }
       currentUserRole = currentUserProfile.role || "volunteer";
       if (currentUserProfile.fullName) {
         const name = currentUserProfile.fullName;
@@ -2326,37 +2349,7 @@ function updateExpandAllButton(hasAnyCollapsed) {
   }
 }
 
-function scrollToTimeSection(timeStr) {
-  const targetTimeStr = String(timeStr).trim();
-  let matchedGroup = null;
-  currentVisibleGroups.forEach(g => {
-    if (g.key.startsWith(targetTimeStr) || g.title.startsWith(targetTimeStr) || g.id.includes(targetTimeStr.replace(/[^a-zA-Z0-9]/g, ''))) {
-      if (!matchedGroup) matchedGroup = g;
-    }
-  });
-  if (matchedGroup) {
-    activeExpandedSectionId = matchedGroup.id;
-    allSectionsExpanded = null;
-  }
-  renderShifts(currentShiftsDocs);
-  setTimeout(() => {
-    const safeTargetId = `time-jump-target-${targetTimeStr.replace(/[^a-zA-Z0-9]/g, '')}`;
-    let el = document.getElementById(safeTargetId);
-    if (!el && matchedGroup) {
-      el = document.getElementById(matchedGroup.id);
-    }
-    if (el) {
-      el.scrollIntoView({ behavior: "smooth", block: "start" });
-      const cardEl = matchedGroup ? document.getElementById(matchedGroup.id) : el;
-      if (cardEl) {
-        cardEl.classList.add("ring-2", "ring-amber-400");
-        setTimeout(() => {
-          cardEl.classList.remove("ring-2", "ring-amber-400");
-        }, 1500);
-      }
-    }
-  }, 60);
-}
+
 
 // Schedule Filter Drawer & Controls
 function toggleScheduleFilterDrawer(forceState) {
@@ -2410,12 +2403,7 @@ function updateFilterDrawerBadges() {
 }
 
 // Calendar Export Utilities (RFC 5545 iCalendar standard)
-function parseShiftDate(ts) {
-  if (!ts) return new Date();
-  if (typeof ts.toDate === "function") return ts.toDate();
-  if (ts.seconds) return new Date(ts.seconds * 1000);
-  return new Date(ts);
-}
+
 
 function formatICSDate(date) {
   const pad = n => String(n).padStart(2, "0");
@@ -4561,6 +4549,18 @@ async function openShiftRosterModal(shiftId) {
       tabBadgeCount.innerText = `${regSnapshot.size}`;
     }
 
+    // Determine admin "+ Assign Volunteer" button visibility based on capacity
+    const rosterAdminAssignBtn = document.getElementById("roster-admin-assign-btn");
+    if (rosterAdminAssignBtn) {
+      const capacity = currentShiftData?.capacity || 1;
+      const spotsRemaining = capacity - regSnapshot.size;
+      if (currentUserRole === "admin" && spotsRemaining > 0) {
+        rosterAdminAssignBtn.classList.remove("hidden");
+      } else {
+        rosterAdminAssignBtn.classList.add("hidden");
+      }
+    }
+
     if (regSnapshot.empty) {
       listEl.innerHTML = `<p class="text-xs text-slate-500 italic py-6 text-center">No volunteers are currently registered for this shift.</p>`;
       countEl.innerText = "0 Volunteers Registered";
@@ -4750,7 +4750,9 @@ async function openShiftRosterModal(shiftId) {
 
 function closeShiftRosterModal() {
   activeRosterShiftId = null;
-  document.getElementById("shift-roster-modal").classList.add("hidden");
+  const modal = document.getElementById("shift-roster-modal");
+  if (modal) modal.classList.add("hidden");
+  closeRosterAdminAssignModal();
 }
 
 /**
@@ -4964,6 +4966,174 @@ async function adminCancelUserShift(shiftId, targetUserId, userName) {
     openShiftRosterModal(shiftId);
   } catch (err) {
     alert("Cancellation failed: " + err.message);
+  }
+}
+
+// ============================================================================
+// REQUIREMENT: Admin Assign Volunteer to Shift via Roster Modal
+// ============================================================================
+async function openRosterAdminAssignModal() {
+  if (currentUserRole !== "admin") {
+    alert("Admin privileges required to assign volunteers.");
+    return;
+  }
+  if (!activeRosterShiftId) {
+    alert("No active shift selected.");
+    return;
+  }
+
+  const modal = document.getElementById("roster-assign-modal");
+  const infoEl = document.getElementById("roster-assign-modal-shift-info");
+  const selectEl = document.getElementById("roster-assign-user-select");
+  const errorEl = document.getElementById("roster-assign-error");
+  const submitBtn = document.getElementById("roster-assign-submit-btn");
+
+  if (!modal || !selectEl) return;
+
+  if (errorEl) {
+    errorEl.classList.add("hidden");
+    errorEl.innerText = "";
+  }
+  if (submitBtn) {
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = `<span>Confirm Assignment</span>`;
+  }
+
+  try {
+    const shiftDoc = await db.collection("shifts").doc(activeRosterShiftId).get();
+    if (shiftDoc.exists) {
+      const s = shiftDoc.data();
+      const sTime = formatTime(s.startTime);
+      const eTime = formatTime(s.endTime);
+      const sDate = formatDate(s.startTime);
+      if (infoEl) {
+        infoEl.innerHTML = `<strong>${escapeHtml(s.categoryName || "Shift")}</strong>: ${sDate} (${sTime} &ndash; ${eTime})`;
+      }
+    }
+  } catch (err) {
+    console.warn("Could not load shift title for assign modal:", err);
+  }
+
+  selectEl.innerHTML = `<option value="">Loading eligible volunteers...</option>`;
+  modal.classList.remove("hidden");
+
+  try {
+    const regSnap = await db.collection("registrations")
+      .where("shiftId", "==", activeRosterShiftId)
+      .where("status", "==", "confirmed")
+      .get();
+    const registeredUserIds = new Set(regSnap.docs.map(d => d.data().userId));
+
+    let usersList = Array.from(allUsersMap.values());
+    if (usersList.length === 0) {
+      const usersSnap = await db.collection("users").get();
+      usersList = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+    }
+
+    const eligibleUsers = usersList.filter(u => {
+      if (u.disabled === true || u.status === "deleted") return false;
+      if (registeredUserIds.has(u.id)) return false;
+      return true;
+    });
+
+    eligibleUsers.sort((a, b) => {
+      const nameA = (a.fullName || a.email || "").toLowerCase();
+      const nameB = (b.fullName || b.email || "").toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+
+    if (eligibleUsers.length === 0) {
+      selectEl.innerHTML = `<option value="" disabled selected>No eligible volunteers available</option>`;
+      if (submitBtn) submitBtn.disabled = true;
+    } else {
+      let optionsHtml = `<option value="" disabled selected>-- Select a volunteer (${eligibleUsers.length} available) --</option>`;
+      eligibleUsers.forEach(u => {
+        const displayName = u.fullName || u.email;
+        const roleLabel = u.role ? ` [${u.role.toUpperCase()}]` : "";
+        const emailLabel = u.email && u.fullName ? ` (${u.email})` : "";
+        optionsHtml += `<option value="${escapeHtml(u.id)}">${escapeHtml(displayName)}${escapeHtml(emailLabel)}${escapeHtml(roleLabel)}</option>`;
+      });
+      selectEl.innerHTML = optionsHtml;
+      if (submitBtn) submitBtn.disabled = false;
+    }
+  } catch (err) {
+    console.error("Error populating assign select:", err);
+    selectEl.innerHTML = `<option value="" disabled>Error loading volunteers</option>`;
+    if (errorEl) {
+      errorEl.classList.remove("hidden");
+      errorEl.innerText = "Failed to load volunteers: " + err.message;
+    }
+  }
+}
+
+function closeRosterAdminAssignModal() {
+  const modal = document.getElementById("roster-assign-modal");
+  if (modal) modal.classList.add("hidden");
+  const errorEl = document.getElementById("roster-assign-error");
+  if (errorEl) {
+    errorEl.classList.add("hidden");
+    errorEl.innerText = "";
+  }
+}
+
+async function handleConfirmRosterAssign(event) {
+  if (event) event.preventDefault();
+  if (currentUserRole !== "admin") {
+    alert("Admin privileges required.");
+    return;
+  }
+  if (!activeRosterShiftId) {
+    alert("No active shift selected.");
+    return;
+  }
+
+  const selectEl = document.getElementById("roster-assign-user-select");
+  const errorEl = document.getElementById("roster-assign-error");
+  const submitBtn = document.getElementById("roster-assign-submit-btn");
+
+  const targetUserId = selectEl?.value;
+  if (!targetUserId) {
+    if (errorEl) {
+      errorEl.classList.remove("hidden");
+      errorEl.innerText = "Please select a volunteer from the list.";
+    }
+    return;
+  }
+
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = `
+      <svg class="animate-spin w-4 h-4 text-white inline-block" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z"></path>
+      </svg>
+      <span>Assigning...</span>
+    `;
+  }
+  if (errorEl) {
+    errorEl.classList.add("hidden");
+    errorEl.innerText = "";
+  }
+
+  try {
+    const claimFn = functions.httpsCallable("claimShift");
+    await claimFn({
+      shiftId: activeRosterShiftId,
+      targetUserId: targetUserId
+    });
+
+    closeRosterAdminAssignModal();
+    await openShiftRosterModal(activeRosterShiftId);
+  } catch (err) {
+    console.error("Assign volunteer error:", err);
+    if (errorEl) {
+      errorEl.classList.remove("hidden");
+      errorEl.innerText = err.message || "Failed to assign volunteer to shift.";
+    }
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = `<span>Confirm Assignment</span>`;
+    }
   }
 }
 

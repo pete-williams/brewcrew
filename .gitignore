@@ -73,3 +73,9 @@ GEMINI.md
 
 # temp folder
 .temp
+
+# Graphify
+graphify-out/
+
+# Agents folder
+.agents/

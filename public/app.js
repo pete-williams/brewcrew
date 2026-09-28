@@ -893,7 +893,7 @@ function showAuthTab(tab) {
   const tabBtnRegister = document.getElementById("tab-btn-register");
   const formSignIn = document.getElementById("form-signin");
   const formRegister = document.getElementById("form-register");
-  
+
   clearAuthAlerts();
 
   if (tab === "register") {
@@ -1844,10 +1844,9 @@ function renderCategoryFilters() {
   if (!container) return;
 
   container.innerHTML = `
-    <button onclick="filterCategory('ALL')" class="px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition border shrink-0 ${
-      selectedCategory === 'ALL'
-        ? 'bg-slate-900 text-white border-slate-950 shadow-xs'
-        : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-100'
+    <button onclick="filterCategory('ALL')" class="px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition border shrink-0 ${selectedCategory === 'ALL'
+      ? 'bg-slate-900 text-white border-slate-950 shadow-xs'
+      : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-100'
     }">
       All Areas
     </button>
@@ -1856,11 +1855,10 @@ function renderCategoryFilters() {
   availableCategories.forEach(cat => {
     const isSelected = selectedCategory === cat;
     const btn = document.createElement("button");
-    btn.className = `px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition border shrink-0 ${
-      isSelected
+    btn.className = `px-2.5 py-1 rounded-full text-xs font-semibold whitespace-nowrap transition border shrink-0 ${isSelected
         ? 'bg-slate-900 text-white border-slate-950 shadow-xs'
         : 'bg-white text-slate-700 border-amber-200 hover:bg-amber-100'
-    }`;
+      }`;
     btn.innerText = cat;
     btn.onclick = () => filterCategory(cat);
     container.appendChild(btn);
@@ -2183,11 +2181,11 @@ function updateFilterOpenOnlyButton() {
   const btn = document.getElementById("toggle-open-only");
   if (!btn) return;
   if (filterOpenOnly) {
-    btn.className = "px-2.5 py-1 text-xs font-bold rounded-lg border transition-all duration-150 flex items-center gap-1 bg-emerald-600 text-white border-emerald-700 shadow-2xs cursor-pointer touch-manipulation active:scale-95";
-    btn.innerHTML = `<span>✓</span> Open Only`;
+    btn.className = "px-2 py-1 text-xs font-bold rounded-lg border transition-all duration-150 flex items-center gap-1 bg-emerald-700 text-white border-emerald-800 shadow-2xs cursor-pointer touch-manipulation active:scale-95";
+    btn.innerHTML = `<svg class="w-3 h-3 text-white"><use href="#icon-check"/></svg> <span class="hidden sm:inline">Open Only</span><span class="sm:hidden">Open</span>`;
   } else {
-    btn.className = "px-2.5 py-1 text-xs font-bold rounded-lg border transition-all duration-150 flex items-center gap-1 bg-white border-amber-300 text-amber-950 hover:bg-amber-50 shadow-2xs cursor-pointer touch-manipulation active:scale-95";
-    btn.innerHTML = `<span>⚡</span> Open Only`;
+    btn.className = "px-2 py-1 text-xs font-bold rounded-lg border transition-all duration-150 flex items-center gap-1 bg-white border-amber-300 text-amber-950 hover:bg-amber-50 shadow-2xs cursor-pointer touch-manipulation active:scale-95";
+    btn.innerHTML = `<svg class="w-3 h-3 text-amber-600"><use href="#icon-zap"/></svg> <span class="hidden sm:inline">Open Only</span><span class="sm:hidden">Open</span>`;
   }
 }
 
@@ -2238,11 +2236,11 @@ function updateScheduleGroupingButtons() {
 
   if (btnTime && btnArea) {
     if (scheduleGroupingMode === "time") {
-      btnTime.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all duration-150 shadow-xs bg-amber-800 text-white flex items-center gap-1.5 cursor-pointer touch-manipulation active:scale-95";
-      btnArea.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all duration-150 text-amber-900 hover:bg-white/60 flex items-center gap-1.5 cursor-pointer touch-manipulation active:scale-95";
+      btnTime.className = "px-2 py-0.5 sm:px-2.5 sm:py-1 text-xs font-bold rounded-md transition-all duration-150 shadow-xs bg-amber-800 text-white flex items-center gap-1 cursor-pointer touch-manipulation active:scale-95";
+      btnArea.className = "px-2 py-0.5 sm:px-2.5 sm:py-1 text-xs font-bold rounded-md transition-all duration-150 text-amber-900 hover:bg-amber-50 flex items-center gap-1 cursor-pointer touch-manipulation active:scale-95";
     } else {
-      btnArea.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all duration-150 shadow-xs bg-amber-800 text-white flex items-center gap-1.5 cursor-pointer touch-manipulation active:scale-95";
-      btnTime.className = "px-2.5 py-1 text-xs font-bold rounded-lg transition-all text-amber-900 hover:bg-white/60 flex items-center gap-1.5 cursor-pointer touch-manipulation active:scale-95";
+      btnArea.className = "px-2 py-0.5 sm:px-2.5 sm:py-1 text-xs font-bold rounded-md transition-all duration-150 shadow-xs bg-amber-800 text-white flex items-center gap-1 cursor-pointer touch-manipulation active:scale-95";
+      btnTime.className = "px-2 py-0.5 sm:px-2.5 sm:py-1 text-xs font-bold rounded-md transition-all text-amber-900 hover:bg-amber-50 flex items-center gap-1 cursor-pointer touch-manipulation active:scale-95";
     }
   }
 }
@@ -2260,15 +2258,46 @@ function isSectionExpanded(sectionId, smartDefault) {
   return !!smartDefault;
 }
 
+function setCardExpandedState(cardEl, isExpanded) {
+  if (!cardEl) return;
+  const btn = cardEl.querySelector("button[aria-expanded]");
+  const panel = cardEl.querySelector(".accordion-panel");
+  const chevron = cardEl.querySelector("svg.transition-transform");
+  const actionText = cardEl.querySelector(".accordion-action-text");
+
+  if (isExpanded) {
+    cardEl.classList.add("is-expanded");
+    if (panel) panel.classList.add("is-expanded");
+    if (btn) btn.setAttribute("aria-expanded", "true");
+    if (chevron) chevron.classList.add("rotate-90");
+    if (actionText) actionText.textContent = "Collapse";
+  } else {
+    cardEl.classList.remove("is-expanded");
+    if (panel) panel.classList.remove("is-expanded");
+    if (btn) btn.setAttribute("aria-expanded", "false");
+    if (chevron) chevron.classList.remove("rotate-90");
+    if (actionText) actionText.textContent = "Expand";
+  }
+}
+
 function toggleSectionCollapse(sectionId, smartDefault) {
   const currentExpanded = isSectionExpanded(sectionId, smartDefault);
+  const nextExpanded = !currentExpanded;
   allSectionsExpanded = null;
-  if (currentExpanded) {
-    activeExpandedSectionId = "__NONE__";
+  activeExpandedSectionId = nextExpanded ? sectionId : "__NONE__";
+
+  const allCards = document.querySelectorAll(".section-accordion-card");
+  if (allCards.length > 0) {
+    let anyCollapsed = false;
+    allCards.forEach(c => {
+      const shouldBeExpanded = c.id === sectionId && nextExpanded;
+      setCardExpandedState(c, shouldBeExpanded);
+      if (!shouldBeExpanded) anyCollapsed = true;
+    });
+    updateExpandAllButton(anyCollapsed);
   } else {
-    activeExpandedSectionId = sectionId;
+    renderShifts(currentShiftsDocs);
   }
-  renderShifts(currentShiftsDocs);
 }
 
 function toggleExpandAllSections() {
@@ -2279,19 +2308,21 @@ function toggleExpandAllSections() {
     allSectionsExpanded = true;
     activeExpandedSectionId = null;
   }
-  sectionExpansionOverrides.clear();
-  renderShifts(currentShiftsDocs);
+  const allCards = document.querySelectorAll(".section-accordion-card");
+  if (allCards.length > 0) {
+    allCards.forEach(c => {
+      setCardExpandedState(c, allSectionsExpanded);
+    });
+    updateExpandAllButton(!allSectionsExpanded);
+  } else {
+    renderShifts(currentShiftsDocs);
+  }
 }
 
 function updateExpandAllButton(hasAnyCollapsed) {
-  const iconSpan = document.getElementById("expand-all-icon");
   const textSpan = document.getElementById("expand-all-text");
-  if (hasAnyCollapsed) {
-    if (iconSpan) iconSpan.textContent = "▼";
-    if (textSpan) textSpan.textContent = "Expand All";
-  } else {
-    if (iconSpan) iconSpan.textContent = "▲";
-    if (textSpan) textSpan.textContent = "Collapse All";
+  if (textSpan) {
+    textSpan.textContent = hasAnyCollapsed ? "Expand All" : "Collapse All";
   }
 }
 
@@ -2596,8 +2627,8 @@ function renderDayTabs() {
   if (rangeEl && uniqueDates.length > 0) {
     const firstDay = getDayInfoFromDateStr(uniqueDates[0]);
     const lastDay = getDayInfoFromDateStr(uniqueDates[uniqueDates.length - 1]);
-    rangeEl.textContent = uniqueDates.length === 1 
-      ? firstDay.fullName 
+    rangeEl.textContent = uniqueDates.length === 1
+      ? firstDay.fullName
       : `${firstDay.displayDate} – ${lastDay.displayDate}`;
   }
 
@@ -2605,10 +2636,10 @@ function renderDayTabs() {
   const dayLabelEl = document.getElementById("selected-day-label");
   if (dayLabelEl) {
     const activeDayInfo = getDayInfoFromDateStr(selectedDayDate);
-    dayLabelEl.textContent = `${activeDayInfo.fullName} Sessions:`;
+    dayLabelEl.textContent = `${activeDayInfo.label} Sessions:`;
   }
 
-  // 1. Render Tier 1: Day Pills
+  // 1. Render Tier 1: Day Pills (Compact & Calibrated)
   if (dayPillsContainer) {
     dayPillsContainer.innerHTML = "";
     uniqueDates.forEach(dateStr => {
@@ -2618,11 +2649,10 @@ function renderDayTabs() {
 
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.className = `py-1.5 px-2 sm:py-2 sm:px-2.5 rounded-xl text-center flex flex-col items-center justify-center transition-all duration-150 border shrink-0 min-w-[54px] sm:min-w-0 min-h-[50px] cursor-pointer touch-manipulation active:scale-95 ${
-        isSelected
+      btn.className = `py-1 px-1.5 sm:py-1.5 sm:px-2 rounded-xl text-center flex flex-col items-center justify-center transition-all duration-150 border shrink-0 min-w-[50px] sm:min-w-0 min-h-[44px] cursor-pointer touch-manipulation active:scale-95 ${isSelected
           ? "bg-amber-800 text-white border-amber-950 shadow-sm"
           : "bg-amber-50/70 text-amber-950 border-amber-200 hover:bg-amber-100 active:bg-amber-200"
-      }`;
+        }`;
       btn.innerHTML = `
         <span class="text-[10px] font-bold uppercase tracking-wider ${isSelected ? 'text-amber-300' : 'text-slate-500'}">${escapeHtml(dayInfo.label)}</span>
         <span class="text-sm font-black leading-tight tabular-nums">${escapeHtml(dayInfo.dayNum || dateStr)}</span>
@@ -2657,8 +2687,6 @@ function renderDayTabs() {
     selectedSessionId = singleSession.id;
 
     // Single session scheduled for this day:
-    // Keep sessionHeaderRow visible so the 'Filters & Options' button remains accessible,
-    // displaying the single session details cleanly on the left and hiding the chips selector.
     if (sessionChipsContainer) {
       sessionChipsContainer.innerHTML = "";
       sessionChipsContainer.classList.add("hidden");
@@ -2676,7 +2704,7 @@ function renderDayTabs() {
       sessionHeaderRow.classList.add("flex");
     }
     if (sessionTierCard) {
-      sessionTierCard.className = "pt-2.5 border-t border-slate-100 space-y-2";
+      sessionTierCard.className = "pt-1.5 border-t border-slate-100 space-y-1.5";
     }
 
     if (dayLabelEl) {
@@ -2685,12 +2713,11 @@ function renderDayTabs() {
       dayLabelEl.className = "text-xs font-extrabold text-amber-950 flex items-center gap-1.5 min-w-0";
       dayLabelEl.innerHTML = `
         <span class="text-xs font-extrabold uppercase tracking-wide text-amber-900 flex items-center gap-1 min-w-0 truncate">
-          <span class="shrink-0">🍺</span>
           <span class="truncate">${escapeHtml(singleSession.name || "Session")}</span>
         </span>
         ${timeRange ? `
-          <span class="px-1.5 py-0.5 rounded-md bg-white border border-amber-300/80 text-amber-950 font-bold text-2xs sm:text-xs shrink-0 shadow-2xs whitespace-nowrap tabular-nums">
-            ⏰ ${escapeHtml(timeRange)}
+          <span class="px-1.5 py-0.5 rounded-md bg-white border border-amber-300/80 text-amber-950 font-bold text-xs shrink-0 shadow-2xs whitespace-nowrap tabular-nums flex items-center gap-1">
+            <svg class="w-3 h-3 text-amber-700 shrink-0"><use href="#icon-clock"/></svg> ${escapeHtml(timeRange)}
           </span>
         ` : ''}
         ${singleSession.description ? `
@@ -2713,7 +2740,7 @@ function renderDayTabs() {
     if (dayLabelEl) {
       const activeDayInfo = getDayInfoFromDateStr(selectedDayDate);
       dayLabelEl.className = "text-xs font-extrabold text-amber-950 flex items-center gap-1 min-w-0 truncate";
-      dayLabelEl.textContent = `${activeDayInfo.fullName} Sessions:`;
+      dayLabelEl.textContent = `${activeDayInfo.label} Sessions:`;
     }
     if (sessionStepper) {
       if (activeDaySessions.length > 1) {
@@ -2725,7 +2752,7 @@ function renderDayTabs() {
       }
     }
     if (sessionTierCard) {
-      sessionTierCard.className = "pt-2.5 border-t border-slate-100 space-y-2";
+      sessionTierCard.className = "pt-1.5 border-t border-slate-100 space-y-1.5";
     }
 
     if (sessionChipsContainer) {
@@ -2739,21 +2766,19 @@ function renderDayTabs() {
           const isSelected = session.id === selectedSessionId;
           const chip = document.createElement("button");
           chip.type = "button";
-          chip.className = `p-2.5 rounded-xl text-left transition-all duration-150 flex items-center justify-between border cursor-pointer touch-manipulation active:scale-[0.98] ${
-            isSelected
+          chip.className = `p-2 sm:p-2.5 rounded-xl text-left transition-all duration-150 flex items-center justify-between border cursor-pointer touch-manipulation active:scale-[0.98] ${isSelected
               ? "bg-amber-700 text-white border-amber-800 shadow-sm ring-2 ring-amber-400/50"
               : "bg-white text-slate-800 border-amber-200 hover:bg-amber-50 active:bg-amber-100 shadow-xs"
-          }`;
+            }`;
 
           const timeRange = session.startTime && session.endTime ? `${session.startTime} – ${session.endTime}` : "";
           chip.innerHTML = `
             <div class="truncate mr-2">
               <span class="text-xs font-bold block truncate">${escapeHtml(session.name || "Session")}</span>
-              ${timeRange ? `<span class="text-[11px] tabular-nums ${isSelected ? 'text-amber-100' : 'text-slate-500'} block">${escapeHtml(timeRange)}</span>` : ''}
-              ${session.description ? `<span class="text-[10px] ${isSelected ? 'text-amber-200/90' : 'text-slate-400'} block truncate">${escapeHtml(session.description)}</span>` : ''}
+              ${timeRange ? `<span class="text-xs tabular-nums ${isSelected ? 'text-amber-100' : 'text-slate-500'} block">${escapeHtml(timeRange)}</span>` : ''}
+              ${session.description ? `<span class="text-2xs ${isSelected ? 'text-amber-200/90' : 'text-slate-400'} block truncate">${escapeHtml(session.description)}</span>` : ''}
             </div>
-            <span class="text-[11px] font-extrabold shrink-0 px-2 py-0.5 rounded-md tabular-nums ${
-              isSelected ? 'bg-amber-900/60 text-amber-200' : 'bg-amber-50 text-amber-900 border border-amber-200'
+            <span class="text-xs font-extrabold shrink-0 px-2 py-0.5 rounded-md tabular-nums ${isSelected ? 'bg-amber-900/60 text-amber-200' : 'bg-amber-50 text-amber-900 border border-amber-200'
             }">
               ${isSelected ? '● Active' : 'Select'}
             </span>
@@ -2779,9 +2804,8 @@ function renderDayTabs() {
     sessionsList.forEach(session => {
       const isSelected = selectedSessionId === session.id;
       const btn = document.createElement("button");
-      btn.className = `px-3.5 py-2 rounded-t-lg text-xs font-bold whitespace-nowrap transition flex flex-col items-start ${
-        isSelected ? "bg-amber-800 text-white shadow-sm" : "bg-white text-amber-900 border border-amber-200 hover:bg-amber-100"
-      }`;
+      btn.className = `px-3.5 py-2 rounded-t-lg text-xs font-bold whitespace-nowrap transition flex flex-col items-start ${isSelected ? "bg-amber-800 text-white shadow-sm" : "bg-white text-amber-900 border border-amber-200 hover:bg-amber-100"
+        }`;
       const formattedDate = session.date ? formatDate(session.date) : "";
       const timeRange = session.startTime && session.endTime ? `${session.startTime} – ${session.endTime}` : "";
       const subText = [formattedDate, timeRange].filter(Boolean).join(" • ");
@@ -3007,14 +3031,18 @@ function renderShifts(docs) {
   const currentSession = (currentFestivalConfig.sessions || defaultFestivalConfig.sessions).find(s => s.id === selectedSessionId);
   const sessionName = currentSession ? currentSession.name : "this session";
   const summaryEl = document.getElementById("schedule-metrics-summary");
+  const summaryElMobile = document.getElementById("schedule-metrics-summary-mobile");
 
-  const shiftsScrollContainer = document.getElementById("shifts-table-container");
-  if (shiftsScrollContainer && activeExpandedSectionId === null) {
-    shiftsScrollContainer.scrollTop = 0;
+  if (activeExpandedSectionId === null && window.scrollY > 350) {
+    const navEl = document.getElementById("schedule-navigation");
+    if (navEl) {
+      navEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   }
 
   if (!docs || docs.length === 0) {
     if (summaryEl) summaryEl.innerHTML = "<span class='text-slate-400 italic'>0 shifts</span>";
+    if (summaryElMobile) summaryElMobile.innerHTML = "<span class='text-slate-400 italic'>0 shifts</span>";
     currentVisibleGroups = [];
     grid.innerHTML = `<div class="p-6 text-center bg-white rounded-2xl border border-amber-200 shadow-xs"><p class='text-slate-500 italic text-sm'>No shifts scheduled for ${escapeHtml(sessionName)}.</p></div>`;
     return;
@@ -3047,13 +3075,14 @@ function renderShifts(docs) {
 
   if (filteredDocs.length === 0) {
     if (summaryEl) summaryEl.innerHTML = "<span class='text-slate-400 italic'>0 shifts</span>";
+    if (summaryElMobile) summaryElMobile.innerHTML = "<span class='text-slate-400 italic'>0 shifts</span>";
     currentVisibleGroups = [];
     let emptyMsg = `No shifts scheduled for ${escapeHtml(sessionName)}`;
     if (selectedCategory !== 'ALL') emptyMsg += ` under "${escapeHtml(selectedCategory)}"`;
     if (filterOpenOnly) emptyMsg += ` with open spots`;
     grid.innerHTML = `
       <div class="p-6 text-center space-y-2 bg-white rounded-2xl border border-amber-200 shadow-xs">
-        <span class="text-2xl block mb-1">🔍</span>
+        <svg class="w-8 h-8 text-amber-700 mx-auto mb-1"><use href="#icon-search"/></svg>
         <h4 class="text-sm font-bold text-slate-800">${emptyMsg}.</h4>
         <p class="text-xs text-slate-500">Try changing categories or toggling off the "Open Only" filter.</p>
         ${filterOpenOnly || selectedCategory !== 'ALL' ? `
@@ -3066,18 +3095,19 @@ function renderShifts(docs) {
     return;
   }
 
-  // Update Live Metrics Summary in Utility Bar
-  if (summaryEl) {
-    const totalFilteredShifts = filteredDocs.length;
-    let totalFilteredOpenSpots = 0;
-    filteredDocs.forEach(d => {
-      const s = d.data();
-      totalFilteredOpenSpots += Math.max(0, (s.capacity || 0) - (s.assignedCount || 0));
-    });
-    const shiftWord = totalFilteredShifts === 1 ? "shift" : "shifts";
-    const openWord = totalFilteredOpenSpots === 1 ? "open spot" : "open spots";
-    summaryEl.innerHTML = `<span class="tabular-nums font-bold text-slate-800">${totalFilteredShifts}</span> ${shiftWord} &bull; <span class="tabular-nums font-bold text-emerald-700">${totalFilteredOpenSpots}</span> ${openWord}`;
-  }
+  // Update Live Metrics Summary in Utility Bar & Mobile Strip
+  const totalFilteredShifts = filteredDocs.length;
+  let totalFilteredOpenSpots = 0;
+  filteredDocs.forEach(d => {
+    const s = d.data();
+    totalFilteredOpenSpots += Math.max(0, (s.capacity || 0) - (s.assignedCount || 0));
+  });
+  const shiftWord = totalFilteredShifts === 1 ? "shift" : "shifts";
+  const openWord = totalFilteredOpenSpots === 1 ? "open spot" : "open spots";
+  const metricsHtml = `<span class="tabular-nums font-bold text-slate-800">${totalFilteredShifts}</span> ${shiftWord} &bull; <span class="tabular-nums font-bold text-emerald-700">${totalFilteredOpenSpots}</span> ${openWord}`;
+
+  if (summaryEl) summaryEl.innerHTML = metricsHtml;
+  if (summaryElMobile) summaryElMobile.innerHTML = metricsHtml;
 
   // Group shifts according to scheduleGroupingMode ('time' vs 'area')
   const groups = new Map();
@@ -3103,7 +3133,7 @@ function renderShifts(docs) {
           anchorId: safeTimeStartId,
           isFirstOfStartTime,
           title: timeWindowKey,
-          icon: "🕒",
+          icon: '<svg class="w-3.5 h-3.5 text-amber-800 shrink-0"><use href="#icon-clock"/></svg>',
           startMs,
           endMs,
           shifts: []
@@ -3125,7 +3155,7 @@ function renderShifts(docs) {
           anchorId: safeSectionId,
           isFirstOfStartTime: false,
           title: areaName,
-          icon: "🏷️",
+          icon: '<svg class="w-3.5 h-3.5 text-amber-800 shrink-0"><use href="#icon-tag"/></svg>',
           shifts: []
         });
       }
@@ -3242,8 +3272,8 @@ function renderShifts(docs) {
         ? (userBookedShift.data.categoryName || "Shift")
         : `${formatTime(userBookedShift.data.startTime)} – ${formatTime(userBookedShift.data.endTime)}`;
       statusBadgeHtml = `
-        <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
-          <span>✓</span> You're booked: ${escapeHtml(shiftName)}
+        <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
+          <svg class="w-3 h-3 text-emerald-800 shrink-0"><use href="#icon-check"/></svg> You're booked: ${escapeHtml(shiftName)}
         </span>
       `;
     } else if (isGroupAllFull) {
@@ -3266,8 +3296,8 @@ function renderShifts(docs) {
       `;
       if (hasClashes) {
         statusBadgeHtml += `
-          <span class="inline-flex items-center px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-amber-50 text-amber-900 border border-amber-200/90" title="Contains shifts that clash with your booked schedule">
-            ⚠️ Clash
+          <span class="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-xs font-semibold bg-amber-50 text-amber-900 border border-amber-200/90" title="Contains shifts that clash with your booked schedule">
+            <svg class="w-3 h-3 text-amber-700 shrink-0"><use href="#icon-alert"/></svg> Clash
           </span>
         `;
       }
@@ -3298,8 +3328,8 @@ function renderShifts(docs) {
       } else if (isRegistered) {
         if (isLocked) {
           actionBtnHtml = `
-            <button disabled class="h-8.5 sm:h-9 min-h-[34px] w-[80px] sm:w-[88px] px-2 py-1 rounded-xl text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed flex items-center justify-center shrink-0" title="Shift locked within 7 days">
-              🔒 Locked
+            <button disabled class="h-8.5 sm:h-9 min-h-[34px] w-[80px] sm:w-[88px] px-2 py-1 rounded-xl text-xs font-bold text-slate-400 bg-slate-100 border border-slate-200 cursor-not-allowed flex items-center justify-center gap-1 shrink-0" title="Shift locked within 7 days">
+              <svg class="w-3 h-3"><use href="#icon-lock"/></svg> Locked
             </button>
           `;
         } else {
@@ -3314,8 +3344,8 @@ function renderShifts(docs) {
         const conflictStart = formatTime(conflict.startTime);
         const conflictEnd = formatTime(conflict.endTime);
         actionBtnHtml = `
-          <button disabled class="h-8.5 sm:h-9 min-h-[34px] w-[80px] sm:w-[88px] px-1 py-1 rounded-xl text-[11px] sm:text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 cursor-not-allowed inline-flex items-center justify-center gap-1 shadow-2xs shrink-0" title="Time Clash: You are already registered for ${escapeHtml(conflictName)} (${conflictStart} &ndash; ${conflictEnd})">
-            <span>⚠️</span> Clash
+          <button disabled class="h-8.5 sm:h-9 min-h-[34px] w-[80px] sm:w-[88px] px-1 py-1 rounded-xl text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 cursor-not-allowed inline-flex items-center justify-center gap-1 shadow-2xs shrink-0" title="Time Clash: You are already registered for ${escapeHtml(conflictName)} (${conflictStart} &ndash; ${conflictEnd})">
+            <svg class="w-3 h-3 text-amber-700 shrink-0"><use href="#icon-alert"/></svg> Clash
           </button>
         `;
       } else if (isFull) {
@@ -3338,26 +3368,26 @@ function renderShifts(docs) {
         <button type="button" 
                 onclick="openShiftRosterModal('${s.id}')" 
                 title="View volunteer roster (${bookedCount} booked)" 
-                class="group inline-flex items-center gap-1 font-bold text-slate-700 hover:text-amber-900 active:text-amber-950 transition-colors cursor-pointer text-[11px] sm:text-xs py-0.5 px-1 -mx-0.5 rounded hover:bg-amber-100/70 active:bg-amber-200/70 touch-manipulation focus-visible:ring-1 focus-visible:ring-amber-500">
+                class="group inline-flex items-center gap-1 font-bold text-slate-700 hover:text-amber-900 active:text-amber-950 transition-colors cursor-pointer text-xs py-0.5 px-1 -mx-0.5 rounded hover:bg-amber-100/70 active:bg-amber-200/70 touch-manipulation focus-visible:ring-1 focus-visible:ring-amber-500">
           <span class="underline decoration-amber-300 underline-offset-2 tabular-nums">${bookedCount}/${totalSlots}</span>
-          <span class="text-xs text-amber-700 group-hover:scale-110 transition-transform">👥</span>
+          <svg class="w-3.5 h-3.5 text-amber-700 group-hover:scale-110 transition-transform"><use href="#icon-users"/></svg>
         </button>
       ` : `
-        <span class="inline-flex items-center gap-1 font-bold text-slate-700 text-[11px] sm:text-xs tabular-nums py-0.5">
+        <span class="inline-flex items-center gap-1 font-bold text-slate-700 text-xs tabular-nums py-0.5">
           <span>${bookedCount}/${totalSlots}</span>
-          <span class="text-xs text-slate-400">👥</span>
+          <svg class="w-3.5 h-3.5 text-slate-400"><use href="#icon-users"/></svg>
         </span>
       `;
 
       // Status / Availability description - compact & calm
       let urgencyHtml = "";
       if (isRegistered) {
-        urgencyHtml = `<span class="inline-flex items-center text-emerald-800 font-bold text-[11px] sm:text-xs"><span class="text-emerald-600 mr-1">✓</span> Confirmed</span>`;
+        urgencyHtml = `<span class="inline-flex items-center text-emerald-800 font-bold text-xs"><svg class="w-3 h-3 text-emerald-600 mr-1"><use href="#icon-check"/></svg> Confirmed</span>`;
       } else if (isFull) {
-        urgencyHtml = `<span class="inline-flex items-center text-slate-500 font-medium text-[11px] sm:text-xs">All spots filled</span>`;
+        urgencyHtml = `<span class="inline-flex items-center text-slate-500 font-medium text-xs">All spots filled</span>`;
       } else {
         const spotLabel = spotsLeft === 1 ? "spot available" : "spots available";
-        urgencyHtml = `<span class="inline-flex items-center text-emerald-700 font-medium text-[11px] sm:text-xs"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span><span class="tabular-nums">${spotsLeft}</span> ${spotLabel}</span>`;
+        urgencyHtml = `<span class="inline-flex items-center text-emerald-700 font-medium text-xs"><span class="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1.5"></span><span class="tabular-nums">${spotsLeft}</span> ${spotLabel}</span>`;
       }
 
       // Compact Admin Edit Button
@@ -3365,7 +3395,7 @@ function renderShifts(docs) {
       if (isAdminMode()) {
         adminEditBtn = `
           <button type="button" onclick="openEditShiftModal('${s.id}')" title="Edit Shift Details & Assign Manager" class="h-8.5 w-8.5 sm:h-9 sm:w-9 min-h-[34px] min-w-[34px] p-1.5 rounded-xl text-amber-900 hover:bg-amber-100 active:bg-amber-200 border border-amber-300/80 transition-all duration-150 text-xs inline-flex items-center justify-center cursor-pointer active:scale-95 touch-manipulation shrink-0">
-            ✏️
+            <svg class="w-3.5 h-3.5 text-amber-900"><use href="#icon-edit"/></svg>
           </button>
         `;
       }
@@ -3375,19 +3405,16 @@ function renderShifts(docs) {
         ? escapeHtml(shift.categoryName || 'General Area')
         : `<span class="tabular-nums">${startTime} &ndash; ${endTime}</span>`;
 
-      // Left border accent & background - equal treatment for open shifts
-      let borderLeftClass = "border-l-4 border-l-transparent";
+      // Status background tints - aligned without border-l-4 per craft-floor guidance
       let rowBgClass = "hover:bg-amber-50/40";
       if (isRegistered) {
-        borderLeftClass = "border-l-4 border-l-emerald-500";
-        rowBgClass = "bg-emerald-50/40 hover:bg-emerald-50/60";
+        rowBgClass = "bg-emerald-50/50 hover:bg-emerald-50/70";
       } else if (conflict) {
-        borderLeftClass = "border-l-4 border-l-amber-400";
-        rowBgClass = "bg-amber-50/20 hover:bg-amber-50/40";
+        rowBgClass = "bg-amber-50/30 hover:bg-amber-50/50";
       }
 
       return `
-        <div role="listitem" class="py-2 px-3 sm:py-2.5 sm:px-4 transition-colors flex items-center justify-between gap-2.5 sm:gap-3 ${borderLeftClass} ${rowBgClass}">
+        <div role="listitem" class="py-2 px-3 sm:py-2.5 sm:px-4 transition-colors flex items-center justify-between gap-2.5 sm:gap-3 ${rowBgClass}">
           <!-- Left: Compact Stacked Typography (~50px row height) -->
           <div class="min-w-0 flex-1 space-y-0.5">
             <div class="flex items-center gap-1.5 flex-wrap">
@@ -3400,14 +3427,14 @@ function renderShifts(docs) {
                 </span>
               ` : ''}
               ${conflict ? `
-                <span class="inline-flex items-center px-1.5 py-0.2 rounded-md text-2xs font-bold bg-amber-100 text-amber-900 border border-amber-300/80" title="Time Clash: You are already registered for ${escapeHtml(conflict.categoryName || 'another shift')}">
-                  ⚠️ Clash
+                <span class="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-md text-2xs font-bold bg-amber-100 text-amber-900 border border-amber-300/80" title="Time Clash: You are already registered for ${escapeHtml(conflict.categoryName || 'another shift')}">
+                  <svg class="w-2.5 h-2.5 text-amber-800"><use href="#icon-alert"/></svg> Clash
                 </span>
               ` : ''}
             </div>
 
             <!-- Quota & Availability Subline -->
-            <div class="flex items-center gap-1.5 text-[11px] sm:text-xs text-slate-500 flex-wrap">
+            <div class="flex items-center gap-1.5 text-xs text-slate-500 flex-wrap">
               ${rosterBtnHtml}
               <span class="text-slate-300 select-none">&bull;</span>
               ${urgencyHtml}
@@ -3424,27 +3451,37 @@ function renderShifts(docs) {
     }).join("");
 
     return `
-      <div class="section-accordion-card bg-white rounded-2xl shadow-xs border transition-all overflow-hidden scroll-mt-2 ${headerBorderClass}" id="${group.id}">
+      <div class="section-accordion-card bg-white rounded-2xl shadow-xs border transition-all overflow-hidden scroll-mt-[145px] sm:scroll-mt-[155px] ${headerBorderClass} ${isExpanded ? 'is-expanded' : ''}" id="${group.id}">
         ${group.isFirstOfStartTime ? `<div id="${group.anchorId}"></div>` : ''}
 
         <!-- Section Accordion Header with SVG chevron and active touch feedback -->
-        <button type="button" onclick="toggleSectionCollapse('${group.id}', ${smartDefaultExpanded})" class="w-full text-left p-3 sm:px-4 flex items-center justify-between gap-2 transition-colors duration-150 active:bg-amber-100/50 cursor-pointer select-none touch-manipulation ${headerBgClass}">
+        <button type="button" 
+                id="${group.id}-btn" 
+                aria-expanded="${isExpanded ? 'true' : 'false'}" 
+                aria-controls="${group.id}-content" 
+                onclick="toggleSectionCollapse('${group.id}', ${smartDefaultExpanded})" 
+                class="w-full text-left p-3 sm:px-4 flex items-center justify-between gap-2 transition-colors duration-150 active:bg-amber-100/50 cursor-pointer select-none touch-manipulation ${headerBgClass}">
           <div class="flex items-center gap-2 sm:gap-2.5 min-w-0 flex-wrap">
             <svg class="w-4 h-4 text-amber-800 transition-transform duration-200 ease-out shrink-0 ${isExpanded ? 'rotate-90' : ''}"><use href="#icon-chevron-right"/></svg>
             <span class="font-extrabold text-slate-900 text-xs sm:text-sm tracking-tight flex items-center gap-1.5">
-              <span>${group.icon}</span> ${escapeHtml(group.title)}
+              ${group.icon} <span>${escapeHtml(group.title)}</span>
             </span>
             ${statusBadgeHtml}
           </div>
           <div class="flex items-center gap-2 shrink-0">
-            <span class="text-[11px] font-bold text-amber-900/70 hover:text-amber-950 hidden sm:inline">${isExpanded ? 'Collapse' : 'Expand'}</span>
+            <span class="accordion-action-text text-xs font-bold text-amber-900/70 hover:text-amber-950 hidden sm:inline">${isExpanded ? 'Collapse' : 'Expand'}</span>
           </div>
         </button>
 
-        <!-- Section Collapsible Shift List (Replaced 3-column table with responsive list items) -->
-        <div class="${isExpanded ? 'block' : 'hidden'} border-t border-amber-100">
-          <div role="list" class="divide-y divide-amber-100/80 bg-white">
-            ${rowsHtml}
+        <!-- Section Collapsible Shift List with Smooth Grid Row Animation -->
+        <div id="${group.id}-content" 
+             role="region" 
+             aria-labelledby="${group.id}-btn" 
+             class="accordion-panel ${isExpanded ? 'is-expanded' : ''}">
+          <div class="accordion-panel-inner">
+            <div role="list" class="divide-y divide-amber-100/80 bg-white border-t border-amber-100">
+              ${rowsHtml}
+            </div>
           </div>
         </div>
       </div>
@@ -4058,7 +4095,7 @@ document.addEventListener("click", (e) => {
 // Volunteer Shift Actions
 async function claimShift(shiftId) {
   if (!currentUser) {
-    alert("Please sign in to register for shifts.");
+    showNotificationToast("<span>🔒</span><span>Please sign in to register for shifts.</span>", "warning");
     return;
   }
 
@@ -4071,7 +4108,7 @@ async function claimShift(shiftId) {
       const conflictName = conflict.categoryName || "another area";
       const conflictStart = formatTime(conflict.startTime);
       const conflictEnd = formatTime(conflict.endTime);
-      alert(`Cannot register: This shift overlaps with your registered shift for "${conflictName}" (${conflictStart} – ${conflictEnd}).`);
+      showNotificationToast(`<span>⚠️</span><span>Cannot register: overlaps with "${escapeHtml(conflictName)}" (${conflictStart} &ndash; ${conflictEnd})</span>`, "warning");
       return;
     }
   }
@@ -4079,14 +4116,25 @@ async function claimShift(shiftId) {
   try {
     const claimFn = functions.httpsCallable("claimShift");
     await claimFn({ shiftId: shiftId });
+    showNotificationToast("<span>✓</span><span>Successfully registered for shift!</span>", "success");
   } catch (err) {
-    alert("Registration failed: " + err.message);
+    let friendlyMessage = err.message || "An unexpected error occurred.";
+    if (friendlyMessage.includes("ALREADY_REGISTERED") || friendlyMessage.includes("already-exists")) {
+      friendlyMessage = "You are already registered for this shift.";
+    } else if (friendlyMessage.includes("SHIFT_FULL")) {
+      friendlyMessage = "Sorry, all spots for this shift have just been filled.";
+    } else if (friendlyMessage.includes("TIME_CONFLICT")) {
+      friendlyMessage = "This shift conflicts with another shift on your schedule.";
+    } else if (friendlyMessage.includes("PERMISSION_DENIED")) {
+      friendlyMessage = "Sign-in required to register for shifts.";
+    }
+    showNotificationToast(`<span>⚠️</span><span>Registration failed: ${escapeHtml(friendlyMessage)}</span>`, "error");
   }
 }
 
 async function cancelShift(shiftId) {
   if (!currentUser) {
-    alert("Please sign in to manage shifts.");
+    showNotificationToast("<span>🔒</span><span>Please sign in to manage shifts.</span>", "warning");
     return;
   }
 
@@ -4097,9 +4145,15 @@ async function cancelShift(shiftId) {
   try {
     const cancelFn = functions.httpsCallable("cancelShift");
     await cancelFn({ shiftId: shiftId });
-    alert("Successfully cancelled shift registration.");
+    showNotificationToast("<span>✓</span><span>Shift registration cancelled.</span>", "info");
   } catch (err) {
-    alert("Cancellation failed: " + err.message);
+    let friendlyMessage = err.message || "An unexpected error occurred.";
+    if (friendlyMessage.includes("SHIFT_LOCKED")) {
+      friendlyMessage = "Cancellations are locked within 7 days of shift start.";
+    } else if (friendlyMessage.includes("NOT_FOUND")) {
+      friendlyMessage = "Registration record could not be found.";
+    }
+    showNotificationToast(`<span>⚠️</span><span>Cancellation failed: ${escapeHtml(friendlyMessage)}</span>`, "error");
   }
 }
 
@@ -5194,8 +5248,7 @@ function renderAdminSessionsTable() {
         shiftsBadgeHtml = `<span class="text-slate-400 font-mono text-[11px]">0 shifts</span>`;
       } else {
         shiftsBadgeHtml = `
-          <button type="button" onclick="toggleSessionShiftsAccordion('${session.id}')" class="inline-flex items-center gap-1.5 font-semibold text-[11px] px-2.5 py-1 rounded-md transition shadow-2xs ${
-            isExpanded ? 'bg-amber-800 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900'
+          <button type="button" onclick="toggleSessionShiftsAccordion('${session.id}')" class="inline-flex items-center gap-1.5 font-semibold text-[11px] px-2.5 py-1 rounded-md transition shadow-2xs ${isExpanded ? 'bg-amber-800 text-white' : 'bg-amber-100 hover:bg-amber-200 text-amber-900'
           }" title="${isExpanded ? 'Hide shifts' : 'Show shifts'}">
             <span>${shiftCount} shift${shiftCount === 1 ? '' : 's'}</span>
             <span class="text-[9px]">${isExpanded ? '▲' : '▼'}</span>
@@ -5235,14 +5288,14 @@ function renderAdminSessionsTable() {
               </div>
               <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
                 ${sessionShifts.map(doc => {
-                  const shift = doc.data();
-                  const assigned = shift.assignedCount || 0;
-                  const cap = shift.capacity || 0;
-                  const isFull = assigned >= cap;
-                  const sTime = formatTime(shift.startTime);
-                  const eTime = formatTime(shift.endTime);
-                  const sDate = formatDate(shift.startTime);
-                  return `
+          const shift = doc.data();
+          const assigned = shift.assignedCount || 0;
+          const cap = shift.capacity || 0;
+          const isFull = assigned >= cap;
+          const sTime = formatTime(shift.startTime);
+          const eTime = formatTime(shift.endTime);
+          const sDate = formatDate(shift.startTime);
+          return `
                     <div class="bg-white p-2.5 rounded-lg border border-amber-200/80 shadow-2xs flex flex-col justify-between">
                       <div>
                         <div class="flex items-center justify-between gap-1 mb-1">
@@ -5259,7 +5312,7 @@ function renderAdminSessionsTable() {
                       ${shift.managerName ? `<div class="text-[10px] text-slate-400 mt-1.5 pt-1 border-t border-slate-100">👔 Manager: ${escapeHtml(shift.managerName)}</div>` : ''}
                     </div>
                   `;
-                }).join("")}
+        }).join("")}
               </div>
             </div>
           </td>

@@ -42,26 +42,59 @@ function getTimestampMs(ts) {
 
 /**
  * Atomic Shift Registration to Prevent Overbooking (Race Conditions)
+ * Supports self-registration and administrator shift assignment.
  */
 exports.claimShift = onCall(async (request) => {
   if (!request.auth) {
     throw new HttpsError("unauthenticated", "User must be logged in.");
   }
 
-  const {shiftId} = request.data;
+  const {shiftId, targetUserId} = request.data;
   if (!shiftId) {
     throw new HttpsError("invalid-argument", "shiftId is required.");
   }
 
-  const uid = request.auth.uid;
+  const callerUid = request.auth.uid;
+  const callerDoc = await db.collection("users").doc(callerUid).get();
+  if (callerDoc.exists && callerDoc.data().disabled) {
+    throw new HttpsError(
+        "permission-denied",
+        "This account has been disabled.",
+    );
+  }
+  const isAdmin = callerDoc.exists && callerDoc.data().role === "admin";
+
+  if (targetUserId && targetUserId !== callerUid && !isAdmin) {
+    throw new HttpsError(
+        "permission-denied",
+        "Only administrators can assign shifts to other volunteers.",
+    );
+  }
+
+  const assignedUid = (targetUserId && isAdmin) ? targetUserId : callerUid;
   const shiftRef = db.collection("shifts").doc(shiftId);
-  const regDocId = `${shiftId}_${uid}`;
+  const regDocId = `${shiftId}_${assignedUid}`;
   const registrationRef = db.collection("registrations").doc(regDocId);
 
   return db.runTransaction(async (transaction) => {
     const shiftDoc = await transaction.get(shiftRef);
     if (!shiftDoc.exists) {
       throw new HttpsError("not-found", "Shift does not exist.");
+    }
+
+    if (assignedUid !== callerUid) {
+      const targetUserDoc = await transaction.get(
+          db.collection("users").doc(assignedUid),
+      );
+      if (!targetUserDoc.exists) {
+        throw new HttpsError("not-found", "Target volunteer does not exist.");
+      }
+      if (targetUserDoc.data().disabled) {
+        throw new HttpsError(
+            "failed-precondition",
+            "Cannot assign shifts to a disabled user account.",
+        );
+      }
     }
 
     const shiftData = shiftDoc.data();
@@ -75,10 +108,10 @@ exports.claimShift = onCall(async (request) => {
 
     const existingReg = await transaction.get(registrationRef);
     if (existingReg.exists && existingReg.data().status === "confirmed") {
-      throw new HttpsError(
-          "already-exists",
-          "You are already registered for this shift.",
-      );
+      const alreadyText = (assignedUid === callerUid) ?
+          "You are already registered for this shift." :
+          "This volunteer is already registered for this shift.";
+      throw new HttpsError("already-exists", alreadyText);
     }
 
     // Safeguard against overlapping or simultaneous shift registrations
@@ -88,7 +121,7 @@ exports.claimShift = onCall(async (request) => {
     if (targetStartMs && targetEndMs && targetStartMs < targetEndMs) {
       const userRegsSnap = await transaction.get(
           db.collection("registrations")
-              .where("userId", "==", uid)
+              .where("userId", "==", assignedUid)
               .where("status", "==", "confirmed"),
       );
 
@@ -115,10 +148,13 @@ exports.claimShift = onCall(async (request) => {
             otherStartMs < targetEndMs
           ) {
             const conflictName = otherData.categoryName || "another shift";
+            const whoText = (assignedUid === callerUid) ?
+                "your registered shift" :
+                "their registered shift";
             throw new HttpsError(
                 "failed-precondition",
-                `Cannot register: this shift overlaps with your registered ` +
-                `shift for "${conflictName}".`,
+                `Cannot register: this shift overlaps with ${whoText} ` +
+                `for "${conflictName}".`,
             );
           }
         }
@@ -130,14 +166,19 @@ exports.claimShift = onCall(async (request) => {
       assignedCount: admin.firestore.FieldValue.increment(1),
     });
 
-    transaction.set(registrationRef, {
+    const regPayload = {
       shiftId: shiftId,
-      userId: uid,
+      userId: assignedUid,
       registeredAt: admin.firestore.FieldValue.serverTimestamp(),
       status: "confirmed",
-    });
+    };
+    if (assignedUid !== callerUid) {
+      regPayload.assignedBy = callerUid;
+    }
 
-    return {success: true};
+    transaction.set(registrationRef, regPayload);
+
+    return {success: true, assignedUserId: assignedUid};
   });
 });
 
@@ -156,6 +197,12 @@ exports.cancelShift = onCall(async (request) => {
 
   const callerUid = request.auth.uid;
   const callerDoc = await db.collection("users").doc(callerUid).get();
+  if (callerDoc.exists && callerDoc.data().disabled) {
+    throw new HttpsError(
+        "permission-denied",
+        "This account has been disabled.",
+    );
+  }
   const isAdmin = callerDoc.exists && callerDoc.data().role === "admin";
 
   const targetUid = (targetUserId && isAdmin) ? targetUserId : callerUid;
@@ -241,6 +288,12 @@ exports.sendAdminBroadcast = onCall(async (request) => {
         "Requires Administrator permissions.",
     );
   }
+  if (callerRef.data().disabled) {
+    throw new HttpsError(
+        "permission-denied",
+        "Administrator account is disabled.",
+    );
+  }
 
   const {subject, body, targetRole} = request.data;
   if (!subject || typeof subject !== "string" || !subject.trim()) {
@@ -258,6 +311,7 @@ exports.sendAdminBroadcast = onCall(async (request) => {
 
   const emails = [...new Set(
       usersSnap.docs
+          .filter((doc) => !doc.data().disabled)
           .map((doc) => doc.data().email)
           .filter((e) => e && typeof e === "string" && e.includes("@")),
   )];
@@ -777,6 +831,12 @@ exports.updateUserRole = onCall(async (request) => {
         "Only administrators can change user roles.",
     );
   }
+  if (callerDoc.data().disabled) {
+    throw new HttpsError(
+        "permission-denied",
+        "Administrator account is disabled.",
+    );
+  }
 
   const {targetUserId, newRole} = request.data;
   if (!targetUserId || typeof targetUserId !== "string") {
@@ -812,5 +872,259 @@ exports.updateUserRole = onCall(async (request) => {
   });
 
   return {success: true, userId: targetUserId, role: newRole};
+});
+
+/**
+ * Admin: Disable or Re-enable User Account
+ */
+exports.setUserDisabledStatus = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "User must be logged in.");
+  }
+
+  const callerUid = request.auth.uid;
+  const callerDoc = await db.collection("users").doc(callerUid).get();
+  if (!callerDoc.exists || callerDoc.data().role !== "admin") {
+    throw new HttpsError(
+        "permission-denied",
+        "Only administrators can change account status.",
+    );
+  }
+  if (callerDoc.data().disabled) {
+    throw new HttpsError(
+        "permission-denied",
+        "Administrator account is disabled.",
+    );
+  }
+
+  const {targetUserId, disabled, reason} = request.data;
+  if (!targetUserId || typeof targetUserId !== "string") {
+    throw new HttpsError("invalid-argument", "targetUserId is required.");
+  }
+  if (typeof disabled !== "boolean") {
+    throw new HttpsError("invalid-argument", "disabled must be a boolean.");
+  }
+
+  // Prevent self-lockout
+  if (targetUserId === callerUid) {
+    throw new HttpsError(
+        "failed-precondition",
+        "You cannot disable your own administrator account.",
+    );
+  }
+
+  const targetDocRef = db.collection("users").doc(targetUserId);
+  const targetDoc = await targetDocRef.get();
+  if (!targetDoc.exists) {
+    throw new HttpsError("not-found", "Target user does not exist.");
+  }
+
+  const updateData = {
+    disabled: disabled,
+    status: disabled ? "disabled" : "active",
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: callerUid,
+  };
+
+  if (disabled) {
+    updateData.disabledAt = admin.firestore.FieldValue.serverTimestamp();
+    updateData.disabledBy = callerUid;
+    if (reason && typeof reason === "string") {
+      updateData.disabledReason = reason.trim();
+    }
+  } else {
+    updateData.disabledAt = null;
+    updateData.disabledBy = null;
+    updateData.disabledReason = null;
+  }
+
+  await targetDocRef.update(updateData);
+
+  try {
+    await admin.auth().updateUser(targetUserId, {disabled: disabled});
+    if (disabled) {
+      await admin.auth().revokeRefreshTokens(targetUserId);
+    }
+  } catch (authErr) {
+    console.warn(
+        "Auth update warning for user:",
+        targetUserId,
+        authErr.message,
+    );
+  }
+
+  return {
+    success: true,
+    userId: targetUserId,
+    disabled: disabled,
+  };
+});
+
+/**
+ * Admin: Delete and Block User, Releasing Allocated Shifts
+ */
+exports.deleteAndBlockUser = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "User must be logged in.");
+  }
+
+  const callerUid = request.auth.uid;
+  const callerDoc = await db.collection("users").doc(callerUid).get();
+  if (!callerDoc.exists || callerDoc.data().role !== "admin") {
+    throw new HttpsError(
+        "permission-denied",
+        "Only administrators can delete and block accounts.",
+    );
+  }
+  if (callerDoc.data().disabled) {
+    throw new HttpsError(
+        "permission-denied",
+        "Administrator account is disabled.",
+    );
+  }
+
+  const {targetUserId, reason} = request.data;
+  if (!targetUserId || typeof targetUserId !== "string") {
+    throw new HttpsError("invalid-argument", "targetUserId is required.");
+  }
+
+  // Prevent self-deletion
+  if (targetUserId === callerUid) {
+    throw new HttpsError(
+        "failed-precondition",
+        "You cannot delete your own administrator account.",
+    );
+  }
+
+  const targetDocRef = db.collection("users").doc(targetUserId);
+  const targetDoc = await targetDocRef.get();
+  if (!targetDoc.exists) {
+    throw new HttpsError("not-found", "Target user does not exist.");
+  }
+
+  const targetData = targetDoc.data();
+  const rawEmail = targetData.email || "";
+  const normalizedEmail = rawEmail.trim().toLowerCase();
+
+  if (!normalizedEmail) {
+    throw new HttpsError(
+        "failed-precondition",
+        "Target user does not have a registered email address to block.",
+    );
+  }
+
+  // Query all active registrations for target user
+  const regSnapshot = await db.collection("registrations")
+      .where("userId", "==", targetUserId)
+      .where("status", "==", "confirmed")
+      .get();
+
+  // Query all shifts where user is assigned manager
+  const managerShiftsSnapshot = await db.collection("shifts")
+      .where("managerId", "==", targetUserId)
+      .get();
+
+  const releasedCount = regSnapshot.size;
+
+  // Execute atomic batch cleanup
+  const batch = db.batch();
+
+  // 1. Decrement shift assignedCount and delete registration documents
+  regSnapshot.docs.forEach((regDoc) => {
+    const regData = regDoc.data();
+    if (regData.shiftId) {
+      const shiftRef = db.collection("shifts").doc(regData.shiftId);
+      batch.update(shiftRef, {
+        assignedCount: admin.firestore.FieldValue.increment(-1),
+      });
+    }
+    batch.delete(regDoc.ref);
+  });
+
+  // 2. Clear manager assignments
+  managerShiftsSnapshot.docs.forEach((shiftDoc) => {
+    batch.update(shiftDoc.ref, {
+      managerId: null,
+      managerName: null,
+      managerEmail: null,
+    });
+  });
+
+  // 3. Add to /blockedEmails
+  const blockedEmailRef = db.collection("blockedEmails").doc(normalizedEmail);
+  batch.set(blockedEmailRef, {
+    email: normalizedEmail,
+    originalUserId: targetUserId,
+    fullName: targetData.fullName || "Volunteer",
+    reason: (reason && typeof reason === "string") ?
+      reason.trim() :
+      "Account deleted and blocked by administrator",
+    blockedAt: admin.firestore.FieldValue.serverTimestamp(),
+    blockedBy: callerUid,
+    blockedByEmail: callerDoc.data().email || null,
+  });
+
+  // 4. Delete Firestore user document
+  batch.delete(targetDocRef);
+
+  await batch.commit();
+
+  // 5. Delete from Firebase Authentication
+  try {
+    await admin.auth().deleteUser(targetUserId);
+  } catch (authErr) {
+    console.warn("Firebase Auth deletion warning:", authErr.message);
+  }
+
+  return {
+    success: true,
+    deletedUserId: targetUserId,
+    blockedEmail: normalizedEmail,
+    releasedShiftsCount: releasedCount,
+  };
+});
+
+/**
+ * Admin: Unblock Email Address
+ */
+exports.unblockUserEmail = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "User must be logged in.");
+  }
+
+  const callerUid = request.auth.uid;
+  const callerDoc = await db.collection("users").doc(callerUid).get();
+  if (!callerDoc.exists || callerDoc.data().role !== "admin") {
+    throw new HttpsError(
+        "permission-denied",
+        "Only administrators can unblock email addresses.",
+    );
+  }
+  if (callerDoc.data().disabled) {
+    throw new HttpsError(
+        "permission-denied",
+        "Administrator account is disabled.",
+    );
+  }
+
+  const {email} = request.data;
+  if (!email || typeof email !== "string") {
+    throw new HttpsError("invalid-argument", "email is required.");
+  }
+
+  const normalizedEmail = email.trim().toLowerCase();
+  const blockedDocRef = db.collection("blockedEmails").doc(normalizedEmail);
+  const blockedDoc = await blockedDocRef.get();
+
+  if (!blockedDoc.exists) {
+    throw new HttpsError("not-found", "Email is not in the blocked list.");
+  }
+
+  await blockedDocRef.delete();
+
+  return {
+    success: true,
+    unblockedEmail: normalizedEmail,
+  };
 });
 

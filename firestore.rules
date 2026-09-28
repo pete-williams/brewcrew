@@ -20,18 +20,27 @@ service cloud.firestore {
       return isAuthenticated() && (getUserData().role == 'manager' || getUserData().role == 'admin');
     }
 
+    // Blocked Emails Blacklist
+    match /blockedEmails/{emailId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
     // User Profiles
     match /users/{userId} {
       allow read: if isAuthenticated();
-      // Allow creation only if role is volunteer or omitted, preventing privilege escalation
+      // Allow creation only if role is volunteer or omitted, account is not pre-disabled,
+      // and email is not present in the blockedEmails blacklist
       allow create: if isAuthenticated()
                     && request.auth.uid == userId
-                    && (!('role' in request.resource.data) || request.resource.data.role == 'volunteer');
-      // Only admins can alter the 'role' field
+                    && (!('role' in request.resource.data) || request.resource.data.role == 'volunteer')
+                    && (!('disabled' in request.resource.data) || request.resource.data.disabled == false)
+                    && !exists(/databases/$(database)/documents/blockedEmails/$(request.resource.data.email.lower()));
+      // Only admins can alter security-sensitive fields: 'role', 'disabled', 'disabledAt', 'disabledBy', 'disabledReason', 'status'
       allow update: if isAdmin() || (
         isAuthenticated()
         && request.auth.uid == userId
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role'])
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'disabled', 'disabledAt', 'disabledBy', 'disabledReason', 'status'])
       );
     }
 

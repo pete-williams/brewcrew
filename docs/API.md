@@ -22,8 +22,17 @@ This document provides a comprehensive technical reference for all backend Cloud
   - [10. `setUserDisabledStatus`](#10-setuserdisabledstatus)
   - [11. `deleteAndBlockUser`](#11-deleteandblockuser)
   - [12. `unblockUserEmail`](#12-unblockuseremail)
+  - [13. `sendWhatsAppBroadcast`](#13-sendwhatsappbroadcast)
+  - [14. `createGroup`](#14-creategroup)
+  - [15. `updateGroup`](#15-updategroup)
+  - [16. `mergeGroups`](#16-mergegroups)
+  - [17. `deleteGroup`](#17-deletegroup)
+  - [18. `setUserGroup`](#18-setusergroup)
+- [HTTP Webhook Endpoints](#http-webhook-endpoints)
+  - [1. `twilioWhatsAppWebhook`](#1-twiliowhatsappwebhook)
 - [Firestore Background Triggers](#firestore-background-triggers)
   - [1. `onRegistrationCreated` (Retired)](#1-onregistrationcreated-retired)
+  - [2. `onUserGroupWrite`](#2-onusergroupwrite)
 - [Firestore Data Models & Schemas](#firestore-data-models--schemas)
   - [1. `/config/festival`](#1-configfestival)
   - [2. `/config/incentives`](#2-configincentives)
@@ -31,6 +40,8 @@ This document provides a comprehensive technical reference for all backend Cloud
   - [4. `/shifts/{shiftId}`](#4-shiftsshiftid)
   - [5. `/users/{userId}`](#5-usersuserid)
   - [6. `/blockedEmails/{emailId}`](#6-blockedemailsemailid)
+  - [7. `/inboundMessages/{messageId}`](#7-inboundmessagesmessageid)
+  - [8. `/groups/{groupId}`](#8-groupsgroupid)
 - [Firestore Security Rules Overview](#firestore-security-rules-overview)
 - [Maintenance & Documentation Maintenance Policy](#maintenance--documentation-maintenance-policy)
 
@@ -60,7 +71,7 @@ All callable functions (except background triggers) require user authentication.
 | :--- | :--- | :--- |
 | `volunteer` | Standard User | Register for open shifts (`claimShift`), cancel own shift with 7-day lockout (`cancelShift`), browse shifts, view privacy-masked shift rosters, manage own profile (public/private visibility, group/club, custom avatar). |
 | `manager` | Elevated Staff | All volunteer actions + inspect complete volunteer rosters (including contact info), self-claim unassigned shifts as manager (`assignShiftManager`) or release assigned shifts in the roster modal, update shift notes/status. |
-| `admin` | Festival Administrator | Full system access: create shifts (`createShift`), update shifts (`updateShift`), delete empty sessions (`deleteFestivalSession`), assign/reassign any manager (`assignShiftManager`), cancel any volunteer's shift bypassing lockout (`cancelShift`), update crew roles (`updateUserRole`), dispatch email announcements (`sendAdminBroadcast`). |
+| `admin` | Festival Administrator | Full system access: create shifts (`createShift`), update shifts (`updateShift`), delete empty sessions (`deleteFestivalSession`), assign/reassign any manager (`assignShiftManager`), cancel any volunteer's shift bypassing lockout (`cancelShift`), update crew roles (`updateUserRole`), dispatch email announcements (`sendAdminBroadcast`), manage volunteer groups (`createGroup`, `updateGroup`, `mergeGroups`, `deleteGroup`, `setUserGroup`). |
 
 #### Admin Mode UI Toggle (Client-Side Interface Switching)
 
@@ -143,6 +154,10 @@ Registers an authenticated volunteer for an open festival shift atomically, ensu
        }
        ```
        *(Note: `assignedBy` is recorded only when assigned by an administrator).*
+4. **Asynchronous WhatsApp Booking Confirmation**:
+   - Following successful transaction commit, queries `/users/{assignedUid}`.
+   - If `whatsappNotifications !== false` and a valid `phoneNumber` is registered, dispatches an automated WhatsApp booking confirmation via Twilio containing shift area name, date, and formatted working hours.
+   - Delivery errors are non-blocking and logged without rolling back the confirmed registration.
 
 ---
 
@@ -178,6 +193,10 @@ Cancels a shift registration. Enforces a 7-day lockout prior to the date of the 
    - **7-Day Before Shift Date Lockout Check**: If caller is **not** an admin, computes the calendar cutoff date as 23:59:59.999 on the 7th calendar day prior to the shift date (`shiftDate.getDate() - 7`). If `Date.now() > cutoffDate.getTime()`, throws `failed-precondition` (`"Cannot cancel shifts within 7 days of shift date."`).
    - Decrements `/shifts/{shiftId}.assignedCount` by `1` (clamped to minimum `0`).
    - Deletes `/registrations/{shiftId}_{targetUid}`.
+3. **Asynchronous WhatsApp Cancellation Alert**:
+   - Following successful transaction commit, queries `/users/{targetUid}`.
+   - If `whatsappNotifications !== false` and a valid `phoneNumber` is registered, dispatches an automated WhatsApp cancellation notice via Twilio detailing the cancelled shift area and scheduled time.
+   - Delivery errors are non-blocking and logged without impacting the cancellation state.
 
 ---
 
@@ -361,7 +380,7 @@ Promotes or demotes crew members across `volunteer`, `manager`, and `admin` role
 
 ### 7. `sendAdminBroadcast`
 
-Dispatches mass announcement emails to volunteers or crew members via Nodemailer. Accessible directly from the **Admin Panel** or via backend callable API.
+Dispatches targeted mass announcement emails to volunteers or crew members via Nodemailer, with dynamic personalization tokens and 5-tier targeting. Accessible directly from the **Admin Panel** or via backend callable API.
 
 - **Trigger**: `onCall`
 - **Permissions**: Administrator only (`role === "admin"`).
@@ -370,25 +389,45 @@ Dispatches mass announcement emails to volunteers or crew members via Nodemailer
 
 | Field | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
-| `subject` | `string` | **Yes** | Email subject line. |
-| `body` | `string` | **Yes** | HTML or text content of the announcement (paragraphs and line breaks formatted automatically). |
-| `targetRole` | `string` | No | Target recipient filter: `"volunteer"` (all volunteers), `"manager"`, or `"all"` (all crew members). Defaults to all users if omitted. |
+| `subject` | `string` | **Yes** | Email subject line (supports dynamic personalization tokens). |
+| `body` | `string` | **Yes** | HTML or text announcement body (supports dynamic personalization tokens; formatted automatically into styled HTML paragraphs). |
+| `targetType` | `string` | No | Target recipient filter mode: `"all"`, `"role"`, `"category"`, `"shift"`, or `"users"`. Defaults to `"all"` (or `"role"` if `targetRole` is provided). |
+| `targetRole` | `string` | No | Target role filter when `targetType === "role"`: `"volunteer"` or `"manager"`. |
+| `targetCategory` | `string` | No | Target shift area/category name when `targetType === "category"` (e.g. `"Keg Bar"`). |
+| `targetShiftId` | `string` | No | Target shift document ID when `targetType === "shift"`. |
+| `targetUserIds` | `string[]` | No | Explicit array of user IDs when `targetType === "users"`. |
+| `onlyWithConfirmedShifts` | `boolean` | No | If `true`, only users with at least one confirmed shift are messaged. Defaults to `false`. |
+
+#### Dynamic Placeholders Supported in Subject & Body
+
+| Placeholder | Replaced With |
+| :--- | :--- |
+| `{{name}}` | Recipient's full name (fallback: `"Volunteer"`). |
+| `{{first_name}}` | Recipient's first name (fallback: `"there"`). |
+| `{{category}}` | Targeted or upcoming shift area (fallback: `"Festival Shift"`). |
+| `{{date}}` | Formatted shift date (e.g. `"Sat 3 Aug"`). |
+| `{{time}}` | Formatted shift hours (e.g. `"12:00 - 17:00"`). |
+| `{{all_shifts}}` | Chronological styled HTML `<ul>` list of all confirmed upcoming shifts for that recipient (date, working hours, and area; manager name omitted). Fallback: `No shifts currently scheduled`. |
 
 #### Response (`result`)
 
 ```json
 {
   "success": true,
-  "count": 42
+  "count": 42,
+  "skippedCount": 3
 }
 ```
 
-#### Business Logic
-1. Verifies caller role is `admin`.
-2. Queries documents in `/users`, applying `role == targetRole` filter when `targetRole && targetRole !== "all"`. Extracts distinct non-empty email addresses.
-3. Retrieves `/config/festival` document to obtain dynamic `festivalName` (defaults to `"BrewCrew Updates"`).
-4. Uses Nodemailer with Gmail SMTP credentials (`GMAIL_EMAIL`, `GMAIL_PASS` from `functions/.env`), with sender formatted as `"${festivalName} <${gmailEmail}>"`.
-5. Sends emails concurrently via `Promise.all` and returns the dispatched count.
+#### Business Logic & Safeguards
+1. Verifies caller is authenticated and has `role === "admin"`.
+2. Validates caller account is not disabled.
+3. Resolves recipients using `resolveBroadcastRecipients`, filtering by `targetType` and `onlyWithConfirmedShifts`.
+4. Checks each recipient's `emailNotifications !== false` preference and valid email format. Skips opted-out or invalid recipients, incrementing `skippedCount`.
+5. Substitutes placeholders for each recipient individually in both subject and body.
+6. Formats body into clean HTML and wraps in BrewCrew branded container.
+7. Uses Nodemailer with Gmail SMTP credentials (`GMAIL_EMAIL`, `GMAIL_PASS` from `functions/.env`), with sender formatted as `"${festivalName} <${gmailEmail}>"`.
+8. Dispatches emails and returns `{ success: true, count, skippedCount }`.
 
 ---
 
@@ -580,6 +619,187 @@ Removes an email address from the `/blockedEmails` blacklist, restoring the abil
 
 ---
 
+### 13. `sendWhatsAppBroadcast`
+
+Dispatches targeted mass announcement messages to volunteers or crew members via Twilio WhatsApp, using the identical 5-tier targeting and dynamic personalization placeholder engine as `sendAdminBroadcast`. Accessible from the **Admin Panel (Communications Console)** or via backend callable API.
+
+- **Trigger**: `onCall`
+- **Permissions**: Administrator only (`role === "admin"`).
+
+#### Request Parameters (`data`)
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `body` | `string` | **Yes** | WhatsApp message body (supports dynamic personalization tokens and standard WhatsApp markdown: `*bold*`, `_italic_`). |
+| `targetType` | `string` | No | Target recipient filter mode: `"all"`, `"role"`, `"category"`, `"shift"`, or `"users"`. Defaults to `"all"`. |
+| `targetRole` | `string` | No | Target role filter when `targetType === "role"`: `"volunteer"` or `"manager"`. |
+| `targetCategory` | `string` | No | Target shift area/category name when `targetType === "category"` (e.g. `"Keg Bar"`). |
+| `targetShiftId` | `string` | No | Target shift document ID when `targetType === "shift"`. |
+| `targetUserIds` | `string[]` | No | Explicit array of user IDs when `targetType === "users"`. |
+| `onlyWithConfirmedShifts` | `boolean` | No | If `true`, only users with at least one confirmed shift are messaged. Defaults to `false`. |
+
+#### Dynamic Placeholders Supported in Body
+
+| Placeholder | Replaced With |
+| :--- | :--- |
+| `{{name}}` | Recipient's full name (fallback: `"Volunteer"`). |
+| `{{first_name}}` | Recipient's first name (fallback: `"there"`). |
+| `{{category}}` | Targeted or upcoming shift area (fallback: `"Festival Shift"`). |
+| `{{date}}` | Formatted shift date (e.g. `"Sat 3 Aug"`). |
+| `{{time}}` | Formatted shift hours (e.g. `"12:00 - 17:00"`). |
+| `{{all_shifts}}` | Chronological Markdown bullet list (`• *Date (Time)*: Area`) of all confirmed upcoming shifts for that recipient (manager name omitted). Fallback: `_No shifts currently scheduled_`. |
+
+#### Response (`result`)
+
+```json
+{
+  "success": true,
+  "count": 38,
+  "skippedCount": 7,
+  "warning": null,
+  "errors": []
+}
+```
+*(Note: If Twilio credentials are missing, placeholder, or delivery fails, `warning` returns a human-readable diagnostic message (e.g. `"Twilio Error 21654 (ContentSid Required): WhatsApp blocks outbound free-form messages outside a 24-hour window..."`), and `errors` returns an array of specific recipient-level delivery issues.)*
+
+#### Business Logic & Safeguards
+1. Verifies caller is authenticated and has `role === "admin"`.
+2. Validates caller account is not disabled.
+3. Resolves recipients using `resolveBroadcastRecipients`, filtering by `targetType` and `onlyWithConfirmedShifts`.
+4. Checks whether Twilio credentials (either API Key: `TWILIO_API_SID` + `TWILIO_API_KEY` + `TWILIO_ACCOUNT_SID`, or legacy: `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN`, along with `TWILIO_WHATSAPP_NUMBER`) are valid and non-placeholder. If unconfigured, gracefully skips all targeted recipients (`skippedCount++`, `count: 0`) and returns an informative diagnostic warning without failing the request.
+5. Checks each recipient's `whatsappNotifications !== false` preference and normalizes their phone number to E.164 via `normalizeE164`. Skips opted-out or invalid phone numbers, incrementing `skippedCount` and logging the specific reason.
+6. Substitutes placeholders for each recipient individually using WhatsApp channel formatting.
+7. Prefixes message with branded festival header: `🍺 *${broadcastFromName}*\n\n${personalizedBody}`.
+8. Dispatches WhatsApp messages via `sendWhatsAppAlert` (Twilio API) and **only increments `count` if Twilio returns a verified message SID (`dispatchResult.sid`)**. Failed deliveries increment `skippedCount` and record friendly translations for Twilio error codes (e.g. 21654 24h window policy, 21608 sandbox not joined, 20003 auth error).
+9. Returns `{ success: true, count, skippedCount, warning, errors }`.
+
+---
+
+### Group Management Callables (14–18)
+
+Shared behaviour for all group callables:
+- **Trigger**: `onCall` · **Permissions**: Administrator only (`role === "admin"`, account not disabled). Errors: `unauthenticated`, `permission-denied` (`"Only administrators can manage groups."` / `"Administrator account is disabled."`).
+- **Name rules**: names are trimmed and internal whitespace collapsed; length must be **2–50** characters (`invalid-argument`). Uniqueness is case/whitespace-insensitive via `nameKey` (`already-exists`).
+- **Membership resolution** (rename/merge/delete): a user belongs to a group if `users.groupId == groupId`, **or** (lazy migration) the user has no `groupId` and their normalised `groupOrClub` matches the group's `nameKey`. User updates are written in chunked batches (≤450 writes per batch).
+- All writes to `/groups` happen server-side; clients cannot write the collection (see [Security Rules](#firestore-security-rules-overview)).
+
+### 14. `createGroup`
+
+Creates a managed volunteer group.
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `name` | `string` | **Yes** | Group display name (2–50 chars after normalisation). |
+| `includeInGroupIncentives` | `boolean` | No | Group Incentives eligibility. Defaults to `true`. |
+
+```json
+{ "success": true, "groupId": "Xy12AbC", "name": "CAMRA North Branch" }
+```
+
+**Errors**: `invalid-argument` (bad name / non-boolean flag), `already-exists` (a group with the same `nameKey` exists; checked inside a transaction).
+
+### 15. `updateGroup`
+
+Renames a group and/or toggles its Group Incentives eligibility. Renames propagate to every member's `groupOrClub` (and link lazy members by setting `groupId`).
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `groupId` | `string` | **Yes** | Target group ID. |
+| `name` | `string` | No* | New display name. |
+| `includeInGroupIncentives` | `boolean` | No* | Include (`true`) or exclude (`false`) from Group Incentives. |
+
+\* At least one of `name` / `includeInGroupIncentives` is required.
+
+```json
+{
+  "success": true,
+  "groupId": "Xy12AbC",
+  "name": "CAMRA North",
+  "includeInGroupIncentives": true,
+  "updatedUsers": 6
+}
+```
+
+**Errors**: `invalid-argument`, `not-found` (group missing), `already-exists` (new name clashes with another group — use `mergeGroups` instead).
+
+### 16. `mergeGroups`
+
+Moves all members of the source group into the target group, then deletes the source. The source is deleted **before** members are moved so the `onUserGroupWrite` trigger cannot re-link users to it.
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `sourceGroupId` | `string` | **Yes** | Group to merge away (deleted). |
+| `targetGroupId` | `string` | **Yes** | Group that receives the members. Must differ from source. |
+
+```json
+{ "success": true, "targetGroupId": "Xy12AbC", "targetName": "CAMRA North", "movedUsers": 3 }
+```
+
+**Errors**: `invalid-argument` (missing IDs / same group), `not-found` (either group missing).
+
+### 17. `deleteGroup`
+
+Deletes a group; all members are set to "No group" (`groupId: null`, `groupOrClub: ""`).
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `groupId` | `string` | **Yes** | Group to delete. |
+
+```json
+{ "success": true, "groupId": "Xy12AbC", "affectedUsers": 4 }
+```
+
+**Errors**: `invalid-argument`, `not-found`.
+
+### 18. `setUserGroup`
+
+Assigns an individual user to a group, or clears their group.
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `targetUserId` | `string` | **Yes** | UID of the user to update. |
+| `groupId` | `string` \| `null` | **Yes** | Group ID to assign, or `null` for "No group". |
+
+```json
+{ "success": true, "userId": "user456", "groupId": "Xy12AbC", "groupName": "CAMRA North" }
+```
+
+**Errors**: `invalid-argument` (missing `targetUserId`, or `groupId` neither a non-empty string nor `null`), `not-found` (user or group missing).
+
+---
+
+## HTTP Webhook Endpoints
+
+### 1. `twilioWhatsAppWebhook`
+
+Inbound webhook handler for messages sent by volunteers to the dedicated BrewCrew Twilio WhatsApp number. Automatically resolves volunteer identity and upcoming shift schedule, logs the inbound conversation into `/inboundMessages`, auto-forwards the inquiry to the Volunteer Coordinator's mobile phone with a 1-tap `wa.me` direct reply link, and dispatches an instant automated acknowledgment reply to the volunteer.
+
+- **Trigger**: `onRequest` (HTTP POST)
+- **Permissions**: Public endpoint (secured via Twilio webhook signature / sender verification).
+
+#### Inbound Request Payload (Twilio Form URL-Encoded / JSON)
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `From` | `string` | Originating WhatsApp sender string (e.g. `"whatsapp:+447123456789"`). |
+| `To` | `string` | Destination bot number. |
+| `Body` | `string` | Text content of the volunteer's WhatsApp reply. |
+| `MessageSid` | `string` | Unique Twilio message identifier. |
+
+#### Business Logic & Workflow
+1. Verifies HTTP request method is `POST`.
+2. Strips `"whatsapp:"` prefix and normalizes the sender's mobile phone number to standard E.164 via `normalizeE164`.
+3. Looks up the volunteer profile in `/users` matching the normalized phone number.
+4. If a volunteer is identified, queries active confirmed shift registrations (`/registrations` where `userId == volunteer.id`) to determine their next upcoming shift area, date, and time.
+5. Retrieves the Volunteer Coordinator's mobile phone number from `/config/festival`.
+6. Logs the message record into Firestore collection `/inboundMessages`.
+7. Auto-forwards the inbound message to the Volunteer Coordinator's WhatsApp via `sendWhatsAppAlert`, complete with sender context, upcoming shift details, and an embedded 1-tap reply link:
+   `https://wa.me/<cleanVolunteerPhone>`.
+8. Sends an immediate automated confirmation reply to the volunteer assuring them their message has been forwarded to festival coordination.
+9. Returns HTTP 200 with empty TwiML `<Response></Response>`.
+
+---
+
 ## Firestore Background Triggers
 
 ### 1. `onRegistrationCreated` (Retired)
@@ -587,6 +807,22 @@ Removes an email address from the `/blockedEmails` blacklist, restoring the abil
 > [!NOTE]
 > **Status: Retired / Disabled**
 > The automatic transactional email confirmation upon shift registration has been retired as shift registration confirmation emails are no longer required. The Nodemailer email transport infrastructure and administrative broadcast capability ([`sendAdminBroadcast`](#7-sendadminbroadcast)) remain active for volunteer announcements from the Admin Panel.
+
+### 2. `onUserGroupWrite`
+
+Resolves a user's free-text `groupOrClub` to a canonical `/groups` document and sets `groupId` server-side, so clients never write `groupId` directly. Also performs **lazy migration** of legacy free-text groups: any write to an unlinked user profile resolves it.
+
+- **Trigger**: `onDocumentWritten("users/{userId}")` · **Region**: `europe-west2`
+
+#### Workflow
+1. Ignores deletes. **Fast path**: exits if `groupId` is set and neither `groupOrClub` nor `groupId` changed in this write (prevents loops and cost on unrelated profile writes).
+2. Normalises `groupOrClub` (trim + collapse whitespace). If shorter than 2 characters, clears `groupId` (leaves the text untouched) and exits.
+3. If already linked to a group with the same `nameKey`, rewrites `groupOrClub` to the canonical name if casing/spacing differs, then exits.
+4. Otherwise, in a **transaction**, finds a group by `nameKey` or creates one (`createdBy: "signup"`, `includeInGroupIncentives: true`, name truncated to 50 chars). The transaction prevents duplicate groups under concurrent signups with the same name.
+5. Writes `groupId` and canonical `groupOrClub` to the user if they differ. The resulting re-trigger exits at step 3.
+
+> [!NOTE]
+> Groups created via signup/profile "Other…" are **immediately public** in the signup dropdown (no moderation). Admins clean up via rename/merge/delete.
 
 ---
 
@@ -664,8 +900,11 @@ User profile document created upon initial registration or OAuth sign-in, manage
 | :--- | :--- | :--- |
 | `fullName` | `string` | Full name of the volunteer or crew member. |
 | `email` | `string` | Registered email address (lowercase). |
-| `phoneNumber` | `string` | **Mandatory** contact phone number required on registration and onboarding. |
-| `groupOrClub` | `string` | Optional text field specifying group, club, CAMRA branch, or brewery team affiliation. Visible to other volunteers only when `profileVisibility` is `"public"`. |
+| `phoneNumber` | `string` | **Mandatory** contact phone number required on registration and onboarding. Normalized to international E.164 format (e.g. `+447123456789`). |
+| `whatsappNotifications` | `boolean` | Volunteer notification opt-out preference for WhatsApp alerts and broadcasts. Defaults to `true`. Configurable in "My Profile" modal. |
+| `emailNotifications` | `boolean` | Volunteer notification opt-out preference for email updates and announcements. Defaults to `true`. Configurable in "My Profile" modal. |
+| `groupOrClub` | `string` | Optional group/club name (e.g. CAMRA branch, brewery team). Chosen at signup / in "My Profile" from the `/groups` dropdown or typed via "Other…". Normalised server-side to the canonical group name by [`onUserGroupWrite`](#2-onusergroupwrite). Visible to other volunteers only when `profileVisibility` is `"public"`. |
+| `groupId` | `string` \| `null` | **Server-written only.** ID of the linked `/groups` document, set by `onUserGroupWrite` or admin group callables. Clients cannot create or modify this field (security rules). Missing on legacy profiles until their next write (lazy migration); the Admin Panel falls back to matching `groupOrClub` by normalised name. |
 | `profileVisibility` | `string` | Profile privacy setting: `"public"` (default) or `"private"`. When `"public"`, user name and group/club are displayed on volunteer shift rosters. When `"private"`, other volunteers see only an anonymous placeholder space. Shift managers and admins can always view full roster details. |
 | `photoURL` | `string` | Optional custom profile avatar stored as a client-compressed (128x128 JPEG) Data URL. When `profileVisibility` is `"public"`, displayed in shift rosters to volunteers. When `"private"`, masked with an anonymous lock placeholder to volunteer viewers. Shift managers and admins always see avatars. |
 | `role` | `string` | Access tier: `"volunteer"`, `"manager"`, or `"admin"`. |
@@ -705,6 +944,46 @@ Blacklist collection storing email addresses permanently blocked from registerin
 | `blockedBy` | `string` | UID of administrator who committed the block action. |
 | `blockedByEmail` | `string` \| `null` | Email of administrator who committed the block action. |
 
+### 7. `/inboundMessages/{messageId}`
+
+Collection storing inbound WhatsApp inquiries and replies sent by volunteers to the BrewCrew dedicated Twilio bot number.
+
+- **Document ID**: Auto-generated Firestore document ID.
+- **Read Access**: Shift Managers and Administrators (`allow read: if isManager();`).
+- **Write Access**: `admin` only (`allow write: if isAdmin();`). Inbound creation handled by Cloud Functions backend.
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `from` | `string` | Normalized E.164 phone number of the volunteer. |
+| `fromName` | `string` | Display name of the volunteer (fallback: `"Volunteer"`). |
+| `userId` | `string` \| `null` | Firestore user ID in `/users` if identified. |
+| `body` | `string` | Message content received from the volunteer. |
+| `messageSid` | `string` \| `null` | Twilio message SID. |
+| `receivedAt` | `timestamp` | Server timestamp when the webhook processed the message. |
+| `status` | `string` | Message status: `"received"`. |
+| `forwardedTo` | `string` \| `null` | Normalized E.164 phone number of the coordinator the message was forwarded to. |
+
+### 8. `/groups/{groupId}`
+
+Managed volunteer groups (clubs, CAMRA branches, brewery teams). Listed in the signup and "My Profile" group dropdowns and used for Admin Panel filtering and future Group Incentives.
+
+- **Document ID**: Auto-generated Firestore document ID.
+- **Read Access**: **Public** (`allow read: if true;`) so the signup screen can list groups before authentication.
+- **Write Access**: None from clients (`allow write: if false;`). Created/updated only by [`onUserGroupWrite`](#2-onusergroupwrite) and the admin group callables (14–18).
+
+| Field | Type | Description |
+| :--- | :--- | :--- |
+| `name` | `string` | Canonical display name (2–50 chars, trimmed, whitespace collapsed). |
+| `nameKey` | `string` | Lowercased normalised name; unique lookup key used for de-duplication. |
+| `includeInGroupIncentives` | `boolean` | Whether the group participates in the Group Incentives initiative. Defaults to `true`. Toggled in Admin Panel → Manage Groups. |
+| `createdAt` | `timestamp` | Server timestamp when the group was created. |
+| `createdBy` | `string` | Admin UID, or `"signup"` when auto-created from a volunteer's "Other…" entry. |
+| `updatedAt` | `timestamp` | Server timestamp of last change. |
+| `updatedBy` | `string` | UID of the administrator who last updated the group (absent for trigger-created groups). |
+
+> [!NOTE]
+> Member counts are not stored; the Admin Panel derives them client-side from `/users` (by `groupId`, falling back to normalised `groupOrClub` for unlinked legacy profiles).
+
 ---
 
 ## Firestore Security Rules Overview
@@ -715,10 +994,13 @@ While Cloud Functions execute using the Firebase Admin SDK (which bypasses secur
 | :--- | :--- | :--- | :--- |
 | `blockedEmails` | `/blockedEmails/{emailId}` | **Public** (`allow read: if true;`) | `admin` only (`isAdmin()`). Client registration checks blocked list; modifications restricted to administrators. |
 | `config` | `/config/{configId}` | **Public** (`allow read: if true;`) | `admin` only (`isAdmin()`). Enables unauthenticated login screen branding (`/config/festival`), volunteer reward milestone configuration (`/config/incentives`), and public volunteer role guides (`/config/roles`) while guarding writes. |
-| `users` | `/users/{userId}` | Authenticated users | Create: `volunteer` role only, `disabled == false`, and email must NOT exist in `/blockedEmails`. Update: profile fields only; only `admin` can mutate `role`, `disabled`, `disabledAt`, `disabledBy`, `disabledReason`, or `status`. |
+| `groups` | `/groups/{groupId}` | **Public** (`allow read: if true;`) | **Denied** to all clients (`allow write: if false;`). Managed exclusively by `onUserGroupWrite` and admin group callables via the Admin SDK. |
+| `users` | `/users/{userId}` | Authenticated users | Create: `volunteer` role only, `disabled == false`, `groupId` absent or `null`, and email must NOT exist in `/blockedEmails`. Update: profile fields only (including `whatsappNotifications`, `emailNotifications`, and `groupOrClub`); only `admin` can mutate `role`, `disabled`, `disabledAt`, `disabledBy`, `disabledReason`, `status`, or `groupId` (normally set server-side by `onUserGroupWrite` / `setUserGroup`). |
 | `shifts` | `/shifts/{shiftId}` | Authenticated users | Create/Delete: `admin` only. Update: `admin` or assigned `manager` (manager fields only). |
 | `registrations` | `/registrations/{regId}` | Authenticated users | `admin` only. Client writes disabled to prevent race conditions; mutations routed through `claimShift` / `cancelShift`. |
 | `incentives` | `/incentives/{incId}` | Authenticated users | `admin` only. (Legacy fallback path; active incentive configuration stored in `/config/incentives`). |
+| `inboundMessages` | `/inboundMessages/{msgId}` | `isManager()` | `admin` only. Client writes disabled; inbound WhatsApp volunteer replies logged via Cloud Functions. |
+
 
 ---
 

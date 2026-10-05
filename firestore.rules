@@ -35,13 +35,23 @@ service cloud.firestore {
                     && request.auth.uid == userId
                     && (!('role' in request.resource.data) || request.resource.data.role == 'volunteer')
                     && (!('disabled' in request.resource.data) || request.resource.data.disabled == false)
+                    && (!('groupId' in request.resource.data) || request.resource.data.groupId == null)
                     && !exists(/databases/$(database)/documents/blockedEmails/$(request.resource.data.email.lower()));
       // Only admins can alter security-sensitive fields: 'role', 'disabled', 'disabledAt', 'disabledBy', 'disabledReason', 'status'
+      // 'groupId' is resolved server-side by the onUserGroupWrite trigger / admin callables (clients edit 'groupOrClub' only)
       allow update: if isAdmin() || (
         isAuthenticated()
         && request.auth.uid == userId
-        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'disabled', 'disabledAt', 'disabledBy', 'disabledReason', 'status'])
+        && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['role', 'disabled', 'disabledAt', 'disabledBy', 'disabledReason', 'status', 'groupId'])
       );
+    }
+
+    // Volunteer Groups
+    // Read: Public (signup screen lists existing groups before the user is authenticated)
+    // Write: Server only (onUserGroupWrite trigger + admin group callables via Admin SDK)
+    match /groups/{groupId} {
+      allow read: if true;
+      allow write: if false;
     }
 
     // Configuration Documents (Festival Branding/Sessions: /config/festival, Incentives/Rewards: /config/incentives)
@@ -81,6 +91,13 @@ service cloud.firestore {
     // Incentives Configuration
     match /incentives/{incentiveId} {
       allow read: if isAuthenticated();
+      allow write: if isAdmin();
+    }
+
+    // Inbound WhatsApp Messages (Forwarded Volunteer Replies)
+    // Managed via Cloud Functions (twilioWhatsAppWebhook); accessible to Managers and Admins
+    match /inboundMessages/{messageId} {
+      allow read: if isManager();
       allow write: if isAdmin();
     }
   }

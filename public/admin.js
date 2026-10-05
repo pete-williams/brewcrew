@@ -42,6 +42,11 @@ let crewStatusFilter = "ALL";
 let crewSortMode = "name-asc";
 let crewPageSize = 25;
 let crewCurrentPage = 1;
+let crewGroupFilter = "ALL"; // "ALL" | "NONE" | groupId
+
+// Group Management State
+let allGroupsMap = new Map();
+let editingGroupId = null;
 
 // Shift Filter State
 let shiftSessionFilter = "ALL";
@@ -143,7 +148,23 @@ function initializeRealtimeSubscriptions() {
     });
     updateCrewSummaryStats();
     renderCrewDirectory();
+    renderGroupFilterOptions();
+    renderManageGroupsList();
   }, (err) => console.warn("Users subscription error:", err));
+
+  // 1b. Groups Collection
+  db.collection("groups").orderBy("name").onSnapshot((snapshot) => {
+    allGroupsMap.clear();
+    snapshot.docs.forEach((doc) => {
+      allGroupsMap.set(doc.id, { id: doc.id, ...doc.data() });
+    });
+    if (crewGroupFilter !== "ALL" && crewGroupFilter !== "NONE" && !allGroupsMap.has(crewGroupFilter)) {
+      crewGroupFilter = "ALL";
+    }
+    renderGroupFilterOptions();
+    renderCrewDirectory();
+    renderManageGroupsList();
+  }, (err) => console.warn("Groups subscription error:", err));
 
   // 2. Shifts Collection
   db.collection("shifts").onSnapshot((snapshot) => {
@@ -240,6 +261,10 @@ function switchAdminTab(tabName) {
 
   if (window.location.hash !== `#${tabName}`) {
     window.location.hash = `#${tabName}`;
+  }
+
+  if (tabName === "broadcast") {
+    initOrRefreshCommConsole();
   }
 }
 
@@ -355,12 +380,18 @@ function getFilteredAndSortedCrew() {
     if (crewStatusFilter === "active" && u.disabled) return false;
     if (crewStatusFilter === "disabled" && !u.disabled) return false;
 
+    // Group filter
+    if (crewGroupFilter !== "ALL") {
+      const gid = resolveUserGroup(u).id;
+      if (crewGroupFilter === "NONE" ? gid !== null : gid !== crewGroupFilter) return false;
+    }
+
     // Search query
     if (crewSearchQuery) {
       const name = (u.fullName || "").toLowerCase();
       const email = (u.email || "").toLowerCase();
       const phone = (u.phoneNumber || "").toLowerCase();
-      const group = (u.groupOrClub || "").toLowerCase();
+      const group = (resolveUserGroup(u).name || "").toLowerCase();
       return name.includes(crewSearchQuery) ||
              email.includes(crewSearchQuery) ||
              phone.includes(crewSearchQuery) ||
@@ -394,6 +425,17 @@ function getFilteredAndSortedCrew() {
       const disA = Boolean(a.disabled);
       const disB = Boolean(b.disabled);
       if (disA !== disB) return disA ? 1 : -1;
+      return nameA.localeCompare(nameB);
+    }
+    if (crewSortMode === "group") {
+      // Users with a group first (A-Z by group), then ungrouped; ties by name
+      const gA = (resolveUserGroup(a).name || "").toLowerCase();
+      const gB = (resolveUserGroup(b).name || "").toLowerCase();
+      if (gA !== gB) {
+        if (!gA) return 1;
+        if (!gB) return -1;
+        return gA.localeCompare(gB);
+      }
       return nameA.localeCompare(nameB);
     }
     // default: name-asc
@@ -502,7 +544,7 @@ function renderCrewDirectory() {
               ${escapeHtml(u.fullName || "Volunteer")}
               ${isSelf ? '<span class="text-2xs text-amber-800 font-bold bg-amber-100 px-1 py-0.2 rounded">(You)</span>' : ''}
             </p>
-            ${u.groupOrClub ? `<p class="text-2xs text-slate-400 font-medium">${escapeHtml(u.groupOrClub)}</p>` : ''}
+            <div class="mt-0.5">${renderUserGroupBadge(u)}</div>
           </div>
         </div>
       </td>
@@ -590,7 +632,7 @@ function renderCrewDirectory() {
 
       <div class="flex items-center justify-between text-2xs text-slate-600 border-t border-slate-100 pt-2">
         <span>Phone: <strong class="font-mono text-slate-800">${escapeHtml(u.phoneNumber || '—')}</strong></span>
-        ${u.groupOrClub ? `<span>Club: <strong class="text-slate-800">${escapeHtml(u.groupOrClub)}</strong></span>` : ''}
+        <span class="flex items-center gap-1">Group: ${renderUserGroupBadge(u)}</span>
       </div>
 
       <div class="flex flex-wrap items-center justify-between gap-1.5 border-t border-slate-100 pt-2">
@@ -643,6 +685,487 @@ async function handleRoleChange(targetUserId, newRole, userName, selectEl) {
   } catch (err) {
     alert("Role update failed: " + err.message);
     renderCrewDirectory();
+  }
+}
+
+// ============================================================================
+// GROUP MANAGEMENT (filter, badges, Manage Groups modal, Set Group modal)
+// ============================================================================
+const GROUP_BADGE_PALETTE = [
+  "bg-amber-100 text-amber-900 border-amber-300",
+  "bg-teal-50 text-teal-800 border-teal-300",
+  "bg-sky-50 text-sky-800 border-sky-300",
+  "bg-violet-50 text-violet-800 border-violet-300",
+  "bg-rose-50 text-rose-800 border-rose-300",
+  "bg-lime-50 text-lime-800 border-lime-300",
+  "bg-orange-50 text-orange-800 border-orange-300",
+  "bg-indigo-50 text-indigo-800 border-indigo-300"
+];
+
+function groupNameKey(name) {
+  return (name || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function findGroupByNameKey(key) {
+  if (!key) return null;
+  for (const g of allGroupsMap.values()) {
+    if ((g.nameKey || groupNameKey(g.name)) === key) return g;
+  }
+  return null;
+}
+
+/**
+ * Resolves a user's group. Prefers the server-linked groupId; falls back to
+ * matching legacy free-text groupOrClub by normalised name (lazy migration).
+ * @return {{id: string|null, name: string, linked: boolean}}
+ */
+function resolveUserGroup(u) {
+  if (u.groupId && allGroupsMap.has(u.groupId)) {
+    return { id: u.groupId, name: allGroupsMap.get(u.groupId).name, linked: true };
+  }
+  const raw = (u.groupOrClub || "").trim();
+  if (!raw) return { id: null, name: "", linked: false };
+  const match = findGroupByNameKey(groupNameKey(raw));
+  if (match) return { id: match.id, name: match.name, linked: false };
+  return { id: null, name: raw, linked: false };
+}
+
+function getGroupBadgeClass(groupId) {
+  let hash = 0;
+  for (let i = 0; i < groupId.length; i++) hash = (hash * 31 + groupId.charCodeAt(i)) >>> 0;
+  return GROUP_BADGE_PALETTE[hash % GROUP_BADGE_PALETTE.length];
+}
+
+function getGroupMemberCounts() {
+  const counts = new Map();
+  let none = 0;
+  allUsersMap.forEach((u) => {
+    const gid = resolveUserGroup(u).id;
+    if (gid) counts.set(gid, (counts.get(gid) || 0) + 1);
+    else none++;
+  });
+  return { counts, none };
+}
+
+function renderUserGroupBadge(u) {
+  const g = resolveUserGroup(u);
+  const userName = escapeHtml(u.fullName || u.email || "User");
+  const onclick = `openSetUserGroupModal('${escapeHtml(u.id)}', this.dataset.userName)`;
+  if (g.id) {
+    return `<button type="button" data-user-name="${userName}" onclick="${onclick}" title="Change group" aria-label="Change group for ${userName} (currently ${escapeHtml(g.name)})"
+      class="inline-flex items-center px-2 py-0.5 rounded-full text-2xs font-bold border transition hover:brightness-95 hover:shadow-2xs min-h-[24px] ${getGroupBadgeClass(g.id)}">
+      ${escapeHtml(g.name)}</button>`;
+  }
+  if (g.name) {
+    return `<button type="button" data-user-name="${userName}" onclick="${onclick}" title="Not linked to a managed group yet. Click to assign." aria-label="Assign group to ${userName} (currently unlinked club ${escapeHtml(g.name)})"
+      class="inline-flex items-center px-2 py-0.5 rounded-full text-2xs font-semibold italic border border-dashed border-slate-300 bg-slate-50 text-slate-600 hover:bg-slate-100 transition min-h-[24px]">
+      ${escapeHtml(g.name)}</button>`;
+  }
+  return `<button type="button" data-user-name="${userName}" onclick="${onclick}" title="Assign a group" aria-label="Assign group to ${userName}"
+    class="inline-flex items-center px-2 py-0.5 rounded-full text-2xs font-semibold border border-dashed border-slate-300 text-slate-500 hover:text-amber-800 hover:border-amber-400 transition min-h-[24px]">
+    + Group</button>`;
+}
+
+function renderGroupFilterOptions() {
+  const select = document.getElementById("crew-group-filter");
+  if (!select) return;
+  const { counts, none } = getGroupMemberCounts();
+  select.innerHTML = "";
+  select.appendChild(new Option(`All groups (${allUsersMap.size})`, "ALL"));
+  select.appendChild(new Option(`No group (${none})`, "NONE"));
+  allGroupsMap.forEach((g) => {
+    select.appendChild(new Option(`${g.name} (${counts.get(g.id) || 0})`, g.id));
+  });
+  select.value = crewGroupFilter;
+}
+
+function setCrewGroupFilter(val) {
+  crewGroupFilter = val || "ALL";
+  crewCurrentPage = 1;
+  renderCrewDirectory();
+}
+
+function showManageGroupsAlert(message, isError) {
+  const el = document.getElementById("manage-groups-alert");
+  if (!el) return;
+  if (!message) {
+    el.className = "hidden p-3 rounded-lg text-xs";
+    el.textContent = "";
+    return;
+  }
+  el.className = isError ?
+    "p-3 rounded-lg text-xs bg-rose-50 text-rose-800 border border-rose-300" :
+    "p-3 rounded-lg text-xs bg-emerald-50 text-emerald-800 border border-emerald-300";
+  el.textContent = message;
+}
+
+function openManageGroupsModal() {
+  editingGroupId = null;
+  showManageGroupsAlert("");
+  renderManageGroupsList();
+  const modal = document.getElementById("modal-manage-groups");
+  if (modal) modal.classList.remove("hidden");
+  document.getElementById("new-group-name")?.focus();
+}
+
+function closeManageGroupsModal() {
+  editingGroupId = null;
+  const modal = document.getElementById("modal-manage-groups");
+  if (modal) modal.classList.add("hidden");
+}
+
+function getUnlinkedGroupNames() {
+  // Distinct legacy free-text names that match no managed group
+  const map = new Map();
+  allUsersMap.forEach((u) => {
+    const g = resolveUserGroup(u);
+    if (!g.id && g.name) {
+      const key = groupNameKey(g.name);
+      const entry = map.get(key) || { name: g.name, count: 0 };
+      entry.count++;
+      map.set(key, entry);
+    }
+  });
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function renderManageGroupsList() {
+  const list = document.getElementById("manage-groups-list");
+  const countEl = document.getElementById("manage-groups-count");
+  if (!list) return;
+
+  const { counts } = getGroupMemberCounts();
+  const groups = Array.from(allGroupsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+  if (countEl) countEl.textContent = `${groups.length} group${groups.length === 1 ? "" : "s"}`;
+
+  let html = "";
+  if (groups.length === 0) {
+    html += `<div class="p-6 text-center text-slate-400 italic text-xs">No groups yet. Add one above, or they'll appear as volunteers sign up.</div>`;
+  }
+
+  groups.forEach((g) => {
+    const members = counts.get(g.id) || 0;
+    const included = g.includeInGroupIncentives !== false;
+    const canMerge = groups.length > 1;
+
+    const nameBlock = editingGroupId === g.id ? `
+      <form onsubmit="handleRenameGroup(event, '${g.id}')" class="flex items-center gap-1.5 flex-grow">
+        <input type="text" id="rename-group-input-${g.id}" value="${escapeHtml(g.name)}" maxlength="50" minlength="2" required
+          aria-label="Group name"
+          class="flex-grow text-xs px-2.5 py-1.5 rounded-lg border border-amber-400 focus:outline-none focus:ring-2 focus:ring-amber-500 font-semibold" />
+        <button type="submit" class="px-2.5 py-1.5 rounded-lg text-2xs font-bold bg-amber-700 hover:bg-amber-800 text-white min-h-[32px]">Save</button>
+        <button type="button" onclick="setEditingGroup(null)" class="px-2.5 py-1.5 rounded-lg text-2xs font-semibold text-slate-600 hover:bg-slate-100 min-h-[32px]">Cancel</button>
+      </form>` : `
+      <div class="min-w-0 flex-grow">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold border ${getGroupBadgeClass(g.id)}">${escapeHtml(g.name)}</span>
+          <span class="inline-flex items-center gap-1 text-2xs font-semibold px-2 py-0.5 rounded-full border ${included ? 'text-amber-900 bg-amber-50 border-amber-200' : 'text-slate-500 bg-slate-100 border-slate-200'}">
+            <span class="w-1.5 h-1.5 rounded-full ${included ? 'bg-amber-600' : 'bg-slate-400'}"></span>
+            ${included ? 'Incentives Active' : 'Excluded from Incentives'}
+          </span>
+        </div>
+        <p class="text-2xs text-slate-500 mt-1 tabular-nums font-medium">${members} volunteer${members === 1 ? "" : "s"}${g.createdBy === "signup" ? " &middot; registered via volunteer signup" : ""}</p>
+      </div>`;
+
+    html += `
+      <div class="py-3 px-1 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-amber-50/30 transition rounded-lg">
+        ${nameBlock}
+        ${editingGroupId === g.id ? "" : `
+        <div class="flex items-center gap-1.5 flex-wrap sm:justify-end shrink-0">
+          <button type="button" onclick="setEditingGroup('${g.id}')" title="Rename ${escapeHtml(g.name)}"
+            class="px-2.5 py-1.5 rounded-lg text-2xs font-semibold text-slate-600 hover:text-amber-900 hover:bg-amber-100/60 border border-slate-200 transition flex items-center gap-1 min-h-[32px]" aria-label="Rename ${escapeHtml(g.name)}">
+            <svg class="w-3.5 h-3.5 text-slate-500"><use href="#icon-edit" /></svg>
+            <span>Rename</span>
+          </button>
+          ${canMerge ? `
+          <button type="button" onclick="openMergeGroupModal('${g.id}')" title="Merge ${escapeHtml(g.name)} into another group"
+            class="px-2.5 py-1.5 rounded-lg text-2xs font-semibold text-slate-600 hover:text-amber-900 hover:bg-amber-100/60 border border-slate-200 transition flex items-center gap-1 min-h-[32px]" aria-label="Merge ${escapeHtml(g.name)} into another group">
+            <svg class="w-3.5 h-3.5 text-slate-500"><use href="#icon-users" /></svg>
+            <span>Merge&hellip;</span>
+          </button>` : ""}
+          <button type="button" onclick="handleToggleGroupIncentives('${g.id}', ${!included}, this)"
+            title="${included ? 'Exclude ' + escapeHtml(g.name) + ' from Group Incentives' : 'Include ' + escapeHtml(g.name) + ' in Group Incentives'}"
+            aria-label="${included ? 'Exclude ' + escapeHtml(g.name) + ' from Group Incentives' : 'Include ' + escapeHtml(g.name) + ' in Group Incentives'}"
+            class="px-2.5 py-1.5 rounded-lg text-2xs font-semibold border transition flex items-center gap-1.5 min-h-[32px] ${included ? 'bg-amber-50 text-amber-900 border-amber-300 hover:bg-amber-100' : 'bg-slate-50 text-slate-600 border-slate-200 hover:bg-slate-100'}">
+            ${included ? '<svg class="w-3.5 h-3.5 text-amber-700"><use href="#icon-check" /></svg><span>Incentives: ON</span>' : '<span class="w-2 h-2 rounded-full bg-slate-400"></span><span>Incentives: OFF</span>'}
+          </button>
+          <button type="button" onclick="openDeleteGroupModal('${g.id}')" title="Delete ${escapeHtml(g.name)}"
+            class="px-2.5 py-1.5 rounded-lg text-2xs font-semibold text-rose-700 hover:bg-rose-50 border border-rose-200 transition flex items-center gap-1 min-h-[32px]" aria-label="Delete ${escapeHtml(g.name)}">
+            <svg class="w-3.5 h-3.5 text-rose-600"><use href="#icon-trash" /></svg>
+            <span>Delete</span>
+          </button>
+        </div>`}
+      </div>`;
+  });
+
+  const unlinked = getUnlinkedGroupNames();
+  if (unlinked.length > 0) {
+    html += `
+      <div class="py-3 px-2 bg-slate-50/80 rounded-lg mt-2">
+        <p class="text-2xs font-bold text-slate-600 uppercase tracking-wider mb-1 flex items-center gap-1">
+          <svg class="w-3.5 h-3.5 text-amber-700"><use href="#icon-info" /></svg>
+          Clubs from Volunteer Signups (Pending Setup)
+        </p>
+        <p class="text-2xs text-slate-500 mb-2">Volunteers entered these club names during registration. Click a club to promote it to an official managed group:</p>
+        <div class="flex flex-wrap gap-1.5">
+          ${unlinked.map((u) => `
+            <button type="button" data-group-name="${escapeHtml(u.name)}" onclick="handleCreateGroupFromName(this.dataset.groupName)" title="Create a managed group with this name"
+              class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-2xs font-semibold italic border border-dashed border-slate-300 bg-white text-slate-700 hover:border-amber-400 hover:text-amber-900 transition min-h-[28px] shadow-2xs">
+              + ${escapeHtml(u.name)} <span class="not-italic text-slate-400 tabular-nums">(${u.count})</span>
+            </button>`).join("")}
+        </div>
+      </div>`;
+  }
+
+  list.innerHTML = html;
+
+  if (editingGroupId) {
+    const input = document.getElementById(`rename-group-input-${editingGroupId}`);
+    if (input) { input.focus(); input.select(); }
+  }
+}
+
+function setEditingGroup(groupId) {
+  editingGroupId = groupId;
+  renderManageGroupsList();
+}
+
+async function callGroupFunction(name, payload, successMessage) {
+  showManageGroupsAlert("");
+  try {
+    const fn = functions.httpsCallable(name);
+    const res = await fn(payload);
+    if (successMessage) showManageGroupsAlert(successMessage(res.data || {}), false);
+    return res.data;
+  } catch (err) {
+    showManageGroupsAlert(err.message || "Request failed.", true);
+    throw err;
+  }
+}
+
+async function handleCreateGroup(e) {
+  e.preventDefault();
+  const input = document.getElementById("new-group-name");
+  const btn = document.getElementById("btn-create-group");
+  const name = (input?.value || "").trim();
+  if (!name) return;
+  if (btn) btn.disabled = true;
+  try {
+    await callGroupFunction("createGroup", { name }, (d) => `Group "${d.name}" created.`);
+    if (input) input.value = "";
+  } catch (_) {
+    // alert already shown
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function handleCreateGroupFromName(name) {
+  try {
+    await callGroupFunction("createGroup", { name },
+      (d) => `Group "${d.name}" created. Matching profiles are now grouped under it.`);
+  } catch (_) { /* alert shown */ }
+}
+
+async function handleRenameGroup(e, groupId) {
+  e.preventDefault();
+  const input = document.getElementById(`rename-group-input-${groupId}`);
+  const name = (input?.value || "").trim();
+  const current = allGroupsMap.get(groupId);
+  if (!name || !current) return;
+  if (name === current.name) { setEditingGroup(null); return; }
+  if (input) input.disabled = true;
+  try {
+    await callGroupFunction("updateGroup", { groupId, name },
+      (d) => `Renamed to "${d.name}" (${d.updatedUsers} user${d.updatedUsers === 1 ? "" : "s"} updated).`);
+    editingGroupId = null;
+    renderManageGroupsList();
+  } catch (_) {
+    if (input) input.disabled = false;
+  }
+}
+
+async function handleToggleGroupIncentives(groupId, include, buttonEl) {
+  if (buttonEl) buttonEl.disabled = true;
+  try {
+    await callGroupFunction("updateGroup", { groupId, includeInGroupIncentives: include },
+      (d) => `"${d.name}" ${d.includeInGroupIncentives ? "included in" : "excluded from"} Group Incentives.`);
+  } catch (_) {
+    // alert handled by callGroupFunction
+  } finally {
+    if (buttonEl) buttonEl.disabled = false;
+  }
+}
+
+function openMergeGroupModal(sourceGroupId) {
+  const source = allGroupsMap.get(sourceGroupId);
+  if (!source) return;
+  const modal = document.getElementById("modal-merge-group");
+  const sourceIdInput = document.getElementById("merge-group-source-id");
+  const sourceNameEl = document.getElementById("merge-group-source-name");
+  const deleteNoteEl = document.getElementById("merge-group-source-delete-note");
+  const membersCountEl = document.getElementById("merge-group-members-count");
+  const targetSelect = document.getElementById("merge-group-target-select");
+  const alertEl = document.getElementById("merge-group-alert");
+
+  if (alertEl) alertEl.className = "hidden p-3 rounded-lg text-xs";
+  if (sourceIdInput) sourceIdInput.value = sourceGroupId;
+  if (sourceNameEl) sourceNameEl.textContent = `"${source.name}"`;
+  if (deleteNoteEl) deleteNoteEl.textContent = `"${source.name}"`;
+
+  const members = getGroupMemberCounts().counts.get(sourceGroupId) || 0;
+  if (membersCountEl) {
+    membersCountEl.textContent = `${members} volunteer${members === 1 ? "" : "s"}`;
+  }
+
+  if (targetSelect) {
+    targetSelect.innerHTML = "";
+    const otherGroups = Array.from(allGroupsMap.values())
+      .filter((g) => g.id !== sourceGroupId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+    otherGroups.forEach((g) => {
+      targetSelect.appendChild(new Option(g.name, g.id));
+    });
+  }
+
+  if (modal) modal.classList.remove("hidden");
+  targetSelect?.focus();
+}
+
+function closeMergeGroupModal() {
+  const modal = document.getElementById("modal-merge-group");
+  if (modal) modal.classList.add("hidden");
+}
+
+async function handleMergeGroupSubmit(e) {
+  e.preventDefault();
+  const sourceGroupId = document.getElementById("merge-group-source-id")?.value;
+  const targetGroupId = document.getElementById("merge-group-target-select")?.value;
+  const btn = document.getElementById("btn-submit-merge-group");
+  const alertEl = document.getElementById("merge-group-alert");
+
+  if (!sourceGroupId || !targetGroupId) return;
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await callGroupFunction("mergeGroups", { sourceGroupId, targetGroupId });
+    closeMergeGroupModal();
+    showManageGroupsAlert(`Merged into "${res.targetName}" (${res.movedUsers} user${res.movedUsers === 1 ? "" : "s"} moved).`, false);
+  } catch (err) {
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs bg-rose-50 text-rose-800 border border-rose-300";
+      alertEl.textContent = "Error: " + err.message;
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function openDeleteGroupModal(groupId) {
+  const group = allGroupsMap.get(groupId);
+  if (!group) return;
+  const modal = document.getElementById("modal-delete-group");
+  const idInput = document.getElementById("delete-group-id");
+  const nameEl = document.getElementById("delete-group-name");
+  const membersCountEl = document.getElementById("delete-group-members-count");
+  const alertEl = document.getElementById("delete-group-alert");
+
+  if (alertEl) alertEl.className = "hidden p-3 rounded-lg text-xs";
+  if (idInput) idInput.value = groupId;
+  if (nameEl) nameEl.textContent = `"${group.name}"`;
+
+  const members = getGroupMemberCounts().counts.get(groupId) || 0;
+  if (membersCountEl) {
+    membersCountEl.textContent = `${members} volunteer${members === 1 ? "" : "s"}`;
+  }
+
+  if (modal) modal.classList.remove("hidden");
+}
+
+function closeDeleteGroupModal() {
+  const modal = document.getElementById("modal-delete-group");
+  if (modal) modal.classList.add("hidden");
+}
+
+async function handleDeleteGroupSubmit(e) {
+  e.preventDefault();
+  const groupId = document.getElementById("delete-group-id")?.value;
+  const btn = document.getElementById("btn-submit-delete-group");
+  const alertEl = document.getElementById("delete-group-alert");
+
+  if (!groupId) return;
+  if (btn) btn.disabled = true;
+
+  try {
+    const res = await callGroupFunction("deleteGroup", { groupId });
+    closeDeleteGroupModal();
+    showManageGroupsAlert(`Group deleted (${res.affectedUsers} user${res.affectedUsers === 1 ? "" : "s"} now have no group).`, false);
+  } catch (err) {
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs bg-rose-50 text-rose-800 border border-rose-300";
+      alertEl.textContent = "Error: " + err.message;
+    }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function openSetUserGroupModal(userId, userName) {
+  const u = allUsersMap.get(userId);
+  if (!u) return;
+  const modal = document.getElementById("modal-set-user-group");
+  const select = document.getElementById("set-user-group-select");
+  const nameEl = document.getElementById("set-user-group-name");
+  const uidInput = document.getElementById("set-user-group-uid");
+  const legacyEl = document.getElementById("set-user-group-legacy");
+  const alertEl = document.getElementById("set-user-group-alert");
+
+  if (alertEl) alertEl.className = "hidden p-3 rounded-lg text-xs";
+  if (nameEl) nameEl.textContent = userName;
+  if (uidInput) uidInput.value = userId;
+
+  const g = resolveUserGroup(u);
+  if (select) {
+    select.innerHTML = "";
+    select.appendChild(new Option("No group", ""));
+    allGroupsMap.forEach((grp) => select.appendChild(new Option(grp.name, grp.id)));
+    select.value = g.id || "";
+  }
+  if (legacyEl) {
+    if (!g.id && g.name) {
+      legacyEl.textContent = `Current free-text value "${g.name}" isn't a managed group. Pick a group, or create "${g.name}" in Manage Groups.`;
+      legacyEl.classList.remove("hidden");
+    } else {
+      legacyEl.classList.add("hidden");
+    }
+  }
+  if (modal) modal.classList.remove("hidden");
+}
+
+function closeSetUserGroupModal() {
+  const modal = document.getElementById("modal-set-user-group");
+  if (modal) modal.classList.add("hidden");
+}
+
+async function handleSetUserGroupSubmit(e) {
+  e.preventDefault();
+  const userId = document.getElementById("set-user-group-uid")?.value;
+  const groupId = document.getElementById("set-user-group-select")?.value || null;
+  const btn = document.getElementById("btn-submit-set-user-group");
+  const alertEl = document.getElementById("set-user-group-alert");
+  if (!userId) return;
+  if (btn) btn.disabled = true;
+  try {
+    const fn = functions.httpsCallable("setUserGroup");
+    await fn({ targetUserId: userId, groupId });
+    closeSetUserGroupModal();
+  } catch (err) {
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs bg-rose-50 text-rose-800 border border-rose-300";
+      alertEl.textContent = "Error: " + err.message;
+    }
+  } finally {
+    if (btn) btn.disabled = false;
   }
 }
 
@@ -1440,52 +1963,785 @@ async function saveRoleInfo(categoryName, icon, summary, desc) {
 }
 
 // ============================================================================
-// TAB 6: EMAIL BROADCAST
+// TAB 6: OMNICHANNEL COMMUNICATIONS & ANNOUNCEMENTS CONSOLE
 // ============================================================================
-function updateBroadcastTargetLabel(target) {
-  const preview = document.getElementById("admin-broadcast-recipient-preview");
-  if (!preview) return;
-  if (target === "manager") preview.textContent = "Target: Shift Managers Only";
-  else if (target === "all") preview.textContent = "Target: All Crew (Volunteers & Managers)";
-  else preview.textContent = "Target: All Volunteers";
+let commActiveChannel = "email"; // "email" | "whatsapp"
+let commSelectedUserIds = new Set();
+let commUserSearchQuery = "";
+let commRecentDispatches = [];
+
+try {
+  const cachedHistory = localStorage.getItem("brewcrew_comm_history");
+  if (cachedHistory) {
+    commRecentDispatches = JSON.parse(cachedHistory);
+  }
+} catch (e) {
+  commRecentDispatches = [];
 }
 
-async function handleSendAdminBroadcast(e) {
-  e.preventDefault();
-  const subject = document.getElementById("admin-broadcast-subject")?.value?.trim();
-  const targetRole = document.getElementById("admin-broadcast-target")?.value || "volunteer";
-  const body = document.getElementById("admin-broadcast-body")?.value?.trim();
-  const alertEl = document.getElementById("admin-broadcast-alert");
-  const submitBtn = document.getElementById("btn-submit-broadcast");
-  const submitText = document.getElementById("btn-broadcast-text");
+/**
+ * Normalizes phone number to E.164 for client-side readiness checks
+ */
+function normalizeE164Client(rawPhone) {
+  if (!rawPhone || typeof rawPhone !== "string") return null;
+  let cleaned = rawPhone.replace(/[^\d+]/g, "");
+  if (cleaned.startsWith("00")) {
+    cleaned = "+" + cleaned.slice(2);
+  }
+  if (cleaned.startsWith("07") && cleaned.length === 11) {
+    cleaned = "+44" + cleaned.slice(1);
+  }
+  if (!cleaned.startsWith("+") && cleaned.length >= 10) {
+    cleaned = "+" + cleaned;
+  }
+  return /^\+[1-9]\d{7,14}$/.test(cleaned) ? cleaned : null;
+}
 
-  if (!subject || !body) return;
+/**
+ * Initializes or refreshes communications targeting options and preview
+ */
+function initOrRefreshCommConsole() {
+  populateCommContextOptions();
+  updateCommTargetPreview();
+  updateCommLivePreview();
+  renderCommHistory();
+}
 
-  if (!confirm(`Are you sure you want to send this broadcast email to ${targetRole === 'all' ? 'all crew members' : targetRole + 's'}?`)) {
+/**
+ * Switches composer between Email and WhatsApp mode
+ * @param {"email"|"whatsapp"} channel
+ */
+function switchCommChannel(channel) {
+  commActiveChannel = channel;
+
+  const emailBtn = document.getElementById("comm-channel-email-btn");
+  const waBtn = document.getElementById("comm-channel-whatsapp-btn");
+  const subjectContainer = document.getElementById("comm-subject-field-container");
+  const mirrorLabel = document.getElementById("comm-mirror-label");
+  const previewEmail = document.getElementById("comm-preview-email-card");
+  const previewWa = document.getElementById("comm-preview-whatsapp-card");
+  const previewChannelName = document.getElementById("comm-preview-channel-name");
+  const btnIcon = document.getElementById("btn-broadcast-icon");
+  const formattingHint = document.getElementById("comm-formatting-hint");
+
+  if (channel === "whatsapp") {
+    if (emailBtn) {
+      emailBtn.className = "flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition min-h-[44px] bg-stone-100 text-slate-700 hover:bg-stone-200 border border-slate-200";
+    }
+    if (waBtn) {
+      waBtn.className = "flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition min-h-[44px] bg-emerald-700 text-white shadow-xs";
+    }
+    if (subjectContainer) subjectContainer.classList.add("hidden");
+    if (mirrorLabel) mirrorLabel.textContent = "Also mirror and send via Email";
+    if (previewEmail) previewEmail.classList.add("hidden");
+    if (previewWa) previewWa.classList.remove("hidden");
+    if (previewChannelName) previewChannelName.textContent = "WhatsApp";
+    if (btnIcon) btnIcon.innerHTML = '<use href="#icon-whatsapp" />';
+    if (formattingHint) {
+      formattingHint.textContent = "Use *bold*, _italics_, and placeholders. Sent directly to volunteer WhatsApp apps via Twilio.";
+    }
+  } else {
+    // email
+    if (emailBtn) {
+      emailBtn.className = "flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition min-h-[44px] bg-amber-700 text-white shadow-xs";
+    }
+    if (waBtn) {
+      waBtn.className = "flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition min-h-[44px] bg-stone-100 text-slate-700 hover:bg-stone-200 border border-slate-200";
+    }
+    if (subjectContainer) subjectContainer.classList.remove("hidden");
+    if (mirrorLabel) mirrorLabel.textContent = "Also mirror and send via WhatsApp";
+    if (previewEmail) previewEmail.classList.remove("hidden");
+    if (previewWa) previewWa.classList.add("hidden");
+    if (previewChannelName) previewChannelName.textContent = "Email";
+    if (btnIcon) btnIcon.innerHTML = '<use href="#icon-mail" />';
+    if (formattingHint) {
+      formattingHint.textContent = "Line breaks are converted into formatted paragraphs. Use dynamic placeholders to personalize each message.";
+    }
+  }
+
+  updateCommLivePreview();
+  updateCommTargetPreview();
+}
+
+/**
+ * Handles change of Primary Target Group dropdown
+ */
+function handleCommTargetTypeChange(type) {
+  const contextContainer = document.getElementById("comm-context-container");
+  const userPickerContainer = document.getElementById("comm-user-picker-container");
+
+  if (type === "all") {
+    if (contextContainer) contextContainer.classList.add("hidden");
+    if (userPickerContainer) userPickerContainer.classList.add("hidden");
+  } else if (type === "users") {
+    if (contextContainer) contextContainer.classList.add("hidden");
+    if (userPickerContainer) {
+      userPickerContainer.classList.remove("hidden");
+      renderCommUserList();
+    }
+  } else {
+    // role, category, shift
+    if (contextContainer) contextContainer.classList.remove("hidden");
+    if (userPickerContainer) userPickerContainer.classList.add("hidden");
+    populateCommContextOptions();
+  }
+
+  updateCommTargetPreview();
+  updateCommLivePreview();
+}
+
+/**
+ * Populates secondary context dropdown based on primary target type
+ */
+function populateCommContextOptions() {
+  const targetType = document.getElementById("comm-target-type")?.value || "all";
+  const contextSelect = document.getElementById("comm-context-select");
+  const contextLabel = document.getElementById("comm-context-label");
+  if (!contextSelect) return;
+
+  contextSelect.innerHTML = "";
+
+  if (targetType === "role") {
+    if (contextLabel) contextLabel.textContent = "Role Group";
+    contextSelect.innerHTML = `
+      <option value="volunteer">Volunteers Only</option>
+      <option value="manager">Shift Managers Only</option>
+    `;
+  } else if (targetType === "category") {
+    if (contextLabel) contextLabel.textContent = "Area / Bar Category";
+    const categoriesSet = new Set();
+    currentShiftsDocs.forEach((d) => {
+      const cat = d.data().categoryName;
+      if (cat && typeof cat === "string" && cat.trim()) {
+        categoriesSet.add(cat.trim());
+      }
+    });
+    const categories = Array.from(categoriesSet).sort((a, b) => a.localeCompare(b));
+    if (categories.length === 0) {
+      contextSelect.innerHTML = `<option value="">No shift categories found</option>`;
+    } else {
+      contextSelect.innerHTML = categories
+        .map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`)
+        .join("");
+    }
+  } else if (targetType === "shift") {
+    if (contextLabel) contextLabel.textContent = "Specific Shift Slot";
+    const shifts = currentShiftsDocs.map((d) => ({ id: d.id, ...d.data() }));
+    shifts.sort((a, b) => {
+      const msA = a.startTime?.seconds ? a.startTime.seconds * 1000 : new Date(a.startTime || 0).getTime();
+      const msB = b.startTime?.seconds ? b.startTime.seconds * 1000 : new Date(b.startTime || 0).getTime();
+      return msA - msB;
+    });
+
+    if (shifts.length === 0) {
+      contextSelect.innerHTML = `<option value="">No shifts available</option>`;
+    } else {
+      contextSelect.innerHTML = shifts
+        .map((s) => {
+          const startMs = s.startTime?.seconds ? s.startTime.seconds * 1000 : new Date(s.startTime || 0).getTime();
+          const endMs = s.endTime?.seconds ? s.endTime.seconds * 1000 : new Date(s.endTime || 0).getTime();
+          const dateStr = startMs ? new Date(startMs).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) : "Date TBD";
+          const timeStr = startMs && endMs ? `${new Date(startMs).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}-${new Date(endMs).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}` : "";
+          const area = s.categoryName || s.role || "Shift";
+          return `<option value="${s.id}">[${dateStr} ${timeStr}] ${escapeHtml(area)} (${s.assignedCount || 0}/${s.capacity || 0} crew)</option>`;
+        })
+        .join("");
+    }
+  }
+}
+
+function handleCommContextChange() {
+  updateCommTargetPreview();
+  updateCommLivePreview();
+}
+
+/**
+ * Renders the searchable volunteer checkbox list for specific user targeting
+ */
+function renderCommUserList() {
+  const container = document.getElementById("comm-user-list-items");
+  if (!container) return;
+
+  const users = Array.from(allUsersMap.values()).filter((u) => !u.disabled);
+  const q = commUserSearchQuery.toLowerCase().trim();
+
+  const filtered = users.filter((u) => {
+    if (!q) return true;
+    const nameMatch = (u.fullName || "").toLowerCase().includes(q);
+    const emailMatch = (u.email || "").toLowerCase().includes(q);
+    const phoneMatch = (u.phoneNumber || "").toLowerCase().includes(q);
+    return nameMatch || emailMatch || phoneMatch;
+  });
+
+  if (filtered.length === 0) {
+    container.innerHTML = `<div class="p-3 text-center text-xs text-slate-400 italic">No volunteers matching search query.</div>`;
     return;
   }
 
-  if (submitBtn) submitBtn.disabled = true;
-  if (submitText) submitText.textContent = "Sending announcement emails...";
+  container.innerHTML = filtered.map((u) => {
+    const isChecked = commSelectedUserIds.has(u.id);
+    const shiftCount = allRegistrationsDocs.filter((d) => d.data().userId === u.id).length;
+    const hasPhone = Boolean(normalizeE164Client(u.phoneNumber));
+    const roleBadge = u.role === "manager"
+      ? `<span class="px-1.5 py-0.5 rounded text-3xs font-bold bg-blue-100 text-blue-800 uppercase">Manager</span>`
+      : u.role === "admin"
+      ? `<span class="px-1.5 py-0.5 rounded text-3xs font-bold bg-purple-100 text-purple-800 uppercase">Admin</span>`
+      : `<span class="px-1.5 py-0.5 rounded text-3xs font-bold bg-amber-100 text-amber-800 uppercase">Volunteer</span>`;
+
+    return `
+      <label class="flex items-center justify-between p-2 hover:bg-amber-50/60 rounded cursor-pointer transition">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <input type="checkbox" ${isChecked ? "checked" : ""} onchange="toggleCommUserSelect('${u.id}', this.checked)"
+            class="rounded border-slate-300 text-amber-700 focus:ring-amber-500 w-4 h-4 cursor-pointer">
+          <div class="w-6 h-6 rounded-full bg-amber-200 text-amber-900 font-bold text-3xs flex items-center justify-center shrink-0">
+            ${escapeHtml((u.fullName || "V").charAt(0).toUpperCase())}
+          </div>
+          <div class="min-w-0">
+            <span class="block text-xs font-semibold text-slate-800 truncate">${escapeHtml(u.fullName || "Volunteer")}</span>
+            <span class="block text-3xs text-slate-400 truncate">${escapeHtml(u.email || "")}</span>
+          </div>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          ${roleBadge}
+          <span class="text-3xs font-semibold px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 tabular-nums">
+            ${shiftCount} shift${shiftCount === 1 ? "" : "s"}
+          </span>
+          <span title="${hasPhone ? 'WhatsApp Ready: ' + (u.phoneNumber || '') : 'No valid mobile phone'}"
+            class="w-4 h-4 flex items-center justify-center rounded-full ${hasPhone ? 'text-emerald-700 bg-emerald-50' : 'text-slate-300'}">
+            <svg class="w-3 h-3"><use href="#icon-whatsapp" /></svg>
+          </span>
+        </div>
+      </label>
+    `;
+  }).join("");
+}
+
+function filterCommUserList(q) {
+  commUserSearchQuery = q || "";
+  renderCommUserList();
+}
+
+function toggleCommUserSelect(uid, checked) {
+  if (checked) {
+    commSelectedUserIds.add(uid);
+  } else {
+    commSelectedUserIds.delete(uid);
+  }
+  updateCommTargetPreview();
+  updateCommLivePreview();
+}
+
+function selectAllCommUsers(select) {
+  const users = Array.from(allUsersMap.values()).filter((u) => !u.disabled);
+  const q = commUserSearchQuery.toLowerCase().trim();
+  const visible = users.filter((u) => {
+    if (!q) return true;
+    return (u.fullName || "").toLowerCase().includes(q) ||
+           (u.email || "").toLowerCase().includes(q) ||
+           (u.phoneNumber || "").toLowerCase().includes(q);
+  });
+
+  visible.forEach((u) => {
+    if (select) {
+      commSelectedUserIds.add(u.id);
+    } else {
+      commSelectedUserIds.delete(u.id);
+    }
+  });
+
+  renderCommUserList();
+  updateCommTargetPreview();
+  updateCommLivePreview();
+}
+
+/**
+ * Resolves current client targeting criteria into matching crew objects
+ */
+function getResolvedCommRecipients() {
+  const targetType = document.getElementById("comm-target-type")?.value || "all";
+  const contextVal = document.getElementById("comm-context-select")?.value || "";
+  const onlyConfirmed = document.getElementById("comm-only-confirmed-shifts")?.checked || false;
+
+  const users = Array.from(allUsersMap.values()).filter((u) => !u.disabled);
+
+  // Map user shifts
+  const userShiftsMap = new Map();
+  allRegistrationsDocs.forEach((d) => {
+    const r = d.data();
+    if (r.status === "confirmed" && r.userId) {
+      if (!userShiftsMap.has(r.userId)) userShiftsMap.set(r.userId, []);
+      const shiftDoc = currentShiftsDocs.find((sd) => sd.id === r.shiftId);
+      if (shiftDoc) {
+        userShiftsMap.get(r.userId).push({ id: shiftDoc.id, ...shiftDoc.data() });
+      }
+    }
+  });
+
+  // Include managed shifts
+  currentShiftsDocs.forEach((sd) => {
+    const s = sd.data();
+    if (s.managerId) {
+      if (!userShiftsMap.has(s.managerId)) userShiftsMap.set(s.managerId, []);
+      userShiftsMap.get(s.managerId).push({ id: sd.id, ...s });
+    }
+  });
+
+  let matching = [];
+  let targetDesc = "All Crew";
+
+  if (targetType === "role") {
+    matching = users.filter((u) => u.role === contextVal);
+    targetDesc = contextVal === "manager" ? "Shift Managers" : "Volunteers";
+  } else if (targetType === "category") {
+    matching = users.filter((u) => {
+      const userShifts = userShiftsMap.get(u.id) || [];
+      return userShifts.some((s) => s.categoryName && s.categoryName.trim() === contextVal.trim());
+    });
+    targetDesc = `Area: ${contextVal || "Category"}`;
+  } else if (targetType === "shift") {
+    matching = users.filter((u) => {
+      const userShifts = userShiftsMap.get(u.id) || [];
+      return userShifts.some((s) => s.id === contextVal);
+    });
+    const sDoc = currentShiftsDocs.find((sd) => sd.id === contextVal);
+    targetDesc = sDoc ? `Shift: ${sDoc.data().categoryName || 'Shift'}` : "Specific Shift";
+  } else if (targetType === "users") {
+    matching = users.filter((u) => commSelectedUserIds.has(u.id));
+    targetDesc = `${matching.length} Selected Volunteer${matching.length === 1 ? '' : 's'}`;
+  } else {
+    // all
+    matching = users;
+    targetDesc = "All Festival Crew";
+  }
+
+  if (onlyConfirmed) {
+    matching = matching.filter((u) => (userShiftsMap.get(u.id) || []).length > 0);
+    targetDesc += " (Confirmed Shifts Only)";
+  }
+
+  const emailReadyCount = matching.filter((u) => u.emailNotifications !== false && u.email && u.email.includes("@")).length;
+  const whatsappReadyCount = matching.filter((u) => u.whatsappNotifications !== false && Boolean(normalizeE164Client(u.phoneNumber))).length;
+
+  const mirrorActive = document.getElementById("comm-mirror-channel")?.checked || false;
+  let activeReady = commActiveChannel === "email" ? emailReadyCount : whatsappReadyCount;
+  if (mirrorActive) {
+    activeReady = commActiveChannel === "email" ? emailReadyCount : whatsappReadyCount;
+  }
+  const skippedCount = Math.max(0, matching.length - activeReady);
+
+  return {
+    matchingUsers: matching,
+    targetDesc,
+    emailReadyCount,
+    whatsappReadyCount,
+    skippedCount
+  };
+}
+
+/**
+ * Updates real-time recipient counts and target summary badges
+ */
+function updateCommTargetPreview() {
+  const { matchingUsers, targetDesc, emailReadyCount, whatsappReadyCount, skippedCount } = getResolvedCommRecipients();
+
+  const badgeText = document.getElementById("comm-target-summary-text");
+  const statMatching = document.getElementById("comm-stat-matching");
+  const statEmail = document.getElementById("comm-stat-email-ready");
+  const statWa = document.getElementById("comm-stat-whatsapp-ready");
+  const statSkipped = document.getElementById("comm-stat-skipped");
+
+  if (badgeText) {
+    badgeText.textContent = `Target: ${targetDesc} • ${matchingUsers.length} crew`;
+  }
+  if (statMatching) statMatching.textContent = matchingUsers.length;
+  if (statEmail) statEmail.textContent = emailReadyCount;
+  if (statWa) statWa.textContent = whatsappReadyCount;
+  if (statSkipped) statSkipped.textContent = skippedCount;
+}
+
+/**
+ * Quick Starter templates for operational messaging
+ */
+function applyCommStarter(key) {
+  const subjectInput = document.getElementById("admin-broadcast-subject");
+  const bodyInput = document.getElementById("admin-broadcast-body");
+
+  let subject = "";
+  let body = "";
+
+  if (key === "briefing") {
+    subject = "{{first_name}}, shift arrival briefing for {{category}}";
+    body = `Hi {{first_name}},\n\nHere is your operational briefing for your upcoming shift on {{date}} ({{time}}) at {{category}}.\n\nPlease arrive 10 minutes before your start time at the Volunteer Check-In desk. Wear comfortable footwear and bring your festival wristband.\n\nYour scheduled shifts:\n{{all_shifts}}\n\nThank you for making BrewCrew great!`;
+  } else if (key === "age_rules") {
+    subject = "{{category}} Team: Important Challenge 25 & Token Policy";
+    body = `Hi {{first_name}},\n\nA quick reminder of our core licensing rules for all volunteers at {{category}}:\n\n1. Challenge 25 is strictly enforced — if a customer looks under 25, ask for valid photo ID.\n2. We do not accept cash at the bar — all purchases must be made via official festival tokens or contactless.\n3. Drink sensibly — volunteers may not consume alcohol during active shifts.\n\nYour shifts:\n{{all_shifts}}\n\nCheers,\nVolunteer Coordinator`;
+  } else if (key === "schedule_reminder") {
+    subject = "Festival Week Alert: Your BrewCrew Shift Schedule";
+    body = `Hi {{name}},\n\nThe festival is just around the corner! Here is your current confirmed volunteering schedule:\n\n{{all_shifts}}\n\nIf you have any conflicts or need to swap shifts, please check the BrewCrew app immediately so our coordinators can reassign cover.\n\nSee you on site!`;
+  } else if (key === "thank_you") {
+    subject = "Thank you for volunteering with BrewCrew!";
+    body = `Hi {{first_name}},\n\nA huge thank you for your fantastic work supporting {{category}} during the festival!\n\nYour energy and dedication helped make this event a tremendous success. Don't forget to stop by the volunteer lounge to collect your commemorative festival cup and crew pin.\n\nCheers and see you next year!`;
+  }
+
+  if (subjectInput && commActiveChannel === "email") {
+    subjectInput.value = subject;
+  }
+  if (bodyInput) {
+    bodyInput.value = body;
+  }
+
+  handleCommBodyInput();
+}
+
+/**
+ * Inserts dynamic tag into cursor position of message textarea
+ */
+function insertCommPlaceholder(token) {
+  const textarea = document.getElementById("admin-broadcast-body");
+  if (!textarea) return;
+
+  const start = textarea.selectionStart || 0;
+  const end = textarea.selectionEnd || 0;
+  const val = textarea.value;
+
+  textarea.value = val.substring(0, start) + token + val.substring(end);
+  textarea.selectionStart = textarea.selectionEnd = start + token.length;
+  textarea.focus();
+
+  handleCommBodyInput();
+}
+
+function handleCommBodyInput() {
+  const bodyVal = document.getElementById("admin-broadcast-body")?.value || "";
+  const counter = document.getElementById("comm-char-counter");
+  if (counter) {
+    counter.textContent = `${bodyVal.length} character${bodyVal.length === 1 ? '' : 's'}`;
+  }
+  updateCommLivePreview();
+}
+
+/**
+ * Real-time live preview rendering for Email and WhatsApp simulated cards
+ */
+function updateCommLivePreview() {
+  const subjectInput = document.getElementById("admin-broadcast-subject");
+  const bodyInput = document.getElementById("admin-broadcast-body");
+  const subject = (subjectInput?.value || "").trim() || "Festival Announcement";
+  const body = (bodyInput?.value || "").trim() || "Write your announcement content above to see live preview...";
+
+  // Sample Volunteer Context
+  const sampleUser = {
+    fullName: "Alex Green",
+    firstName: "Alex",
+    category: "Keg Bar",
+    date: "Sat 3 Aug",
+    time: "12:00 - 17:00",
+    allShiftsHtml: `<ul style="margin: 8px 0; padding-left: 20px; line-height: 1.6;"><li style="margin-bottom: 4px;"><strong>Sat 3 Aug (12:00 - 17:00)</strong>: Keg Bar</li><li style="margin-bottom: 4px;"><strong>Sun 4 Aug (17:00 - 22:00)</strong>: Cider Bar</li></ul>`,
+    allShiftsMd: `• *Sat 3 Aug (12:00 - 17:00)*: Keg Bar\n• *Sun 4 Aug (17:00 - 22:00)*: Cider Bar`
+  };
+
+  const festivalName = currentFestivalConfig.festivalName || "BrewCrew Festival";
+  const prevFestName = document.getElementById("comm-preview-festival-name");
+  if (prevFestName) prevFestName.textContent = festivalName;
+
+  // Substitute tags for sample preview
+  const subTokens = (raw, isEmail) => {
+    return raw
+      .replace(/\{\{\s*name\s*\}\}/gi, sampleUser.fullName)
+      .replace(/\{\{\s*first_name\s*\}\}/gi, sampleUser.firstName)
+      .replace(/\{\{\s*all_shifts\s*\}\}/gi, isEmail ? sampleUser.allShiftsHtml : sampleUser.allShiftsMd)
+      .replace(/\{\{\s*category\s*\}\}/gi, sampleUser.category)
+      .replace(/\{\{\s*date\s*\}\}/gi, sampleUser.date)
+      .replace(/\{\{\s*time\s*\}\}/gi, sampleUser.time);
+  };
+
+  // 1. Email Preview
+  const previewEmailSubject = document.getElementById("comm-preview-email-subject");
+  const previewEmailBody = document.getElementById("comm-preview-email-body");
+  if (previewEmailSubject) {
+    previewEmailSubject.textContent = subTokens(subject, true);
+  }
+  if (previewEmailBody) {
+    const substitutedEmailBody = subTokens(body, true);
+    // Split on double newlines to make paragraphs, preserving embedded <ul>
+    const paragraphs = substitutedEmailBody.split(/\n\s*\n/).map((p) => p.trim()).filter((p) => p.length > 0);
+    previewEmailBody.innerHTML = paragraphs.map((block) => {
+      if (block.startsWith("<ul") || block.startsWith("<ol") || block.startsWith("<div") || block.startsWith("<p")) {
+        return block;
+      }
+      return `<p style="margin: 0 0 10px 0;">${block.replace(/\n/g, "<br/>")}</p>`;
+    }).join("");
+  }
+
+  // 2. WhatsApp Preview
+  const previewWaBody = document.getElementById("comm-preview-whatsapp-body");
+  if (previewWaBody) {
+    const substitutedWa = subTokens(body, false);
+    // Escape HTML first then parse WhatsApp markdown *bold*, _italic_
+    let formatted = escapeHtml(substitutedWa);
+    formatted = formatted.replace(/\*([^*\n]+)\*/g, "<strong>$1</strong>");
+    formatted = formatted.replace(/_([^_\n]+)_/g, "<em>$1</em>");
+    previewWaBody.innerHTML = formatted;
+  }
+}
+
+/**
+ * Opens pre-flight safety review modal
+ */
+function openCommReviewModal() {
+  const subjectInput = document.getElementById("admin-broadcast-subject");
+  const bodyInput = document.getElementById("admin-broadcast-body");
+  const subject = (subjectInput?.value || "").trim();
+  const body = (bodyInput?.value || "").trim();
+
+  if (commActiveChannel === "email" && !subject) {
+    showBroadcastAlert("Please enter an email subject before dispatching.", false);
+    return;
+  }
+  if (!body) {
+    showBroadcastAlert("Please enter message content before dispatching.", false);
+    return;
+  }
+
+  const { matchingUsers, targetDesc, emailReadyCount, whatsappReadyCount, skippedCount } = getResolvedCommRecipients();
+  if (matchingUsers.length === 0) {
+    showBroadcastAlert("Selected target criteria matches 0 crew members.", false);
+    return;
+  }
+
+  const mirrorActive = document.getElementById("comm-mirror-channel")?.checked || false;
+  const reviewChannels = document.getElementById("comm-review-channels");
+  const reviewTarget = document.getElementById("comm-review-target");
+  const reviewCount = document.getElementById("comm-review-count");
+  const reviewSkipped = document.getElementById("comm-review-skipped");
+  const reviewPreviewText = document.getElementById("comm-review-preview-text");
+
+  let channelBadges = "";
+  let readyCount = 0;
+  if (commActiveChannel === "email") {
+    channelBadges += `<span class="px-2 py-0.5 rounded bg-blue-100 text-blue-900 font-bold text-3xs uppercase">Email</span>`;
+    readyCount = emailReadyCount;
+    if (mirrorActive) {
+      channelBadges += `<span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 font-bold text-3xs uppercase">WhatsApp (Mirrored)</span>`;
+    }
+  } else {
+    channelBadges += `<span class="px-2 py-0.5 rounded bg-emerald-100 text-emerald-900 font-bold text-3xs uppercase">WhatsApp</span>`;
+    readyCount = whatsappReadyCount;
+    if (mirrorActive) {
+      channelBadges += `<span class="px-2 py-0.5 rounded bg-blue-100 text-blue-900 font-bold text-3xs uppercase">Email (Mirrored)</span>`;
+    }
+  }
+
+  if (reviewChannels) reviewChannels.innerHTML = channelBadges;
+  if (reviewTarget) reviewTarget.textContent = targetDesc;
+  if (reviewCount) reviewCount.textContent = `${readyCount} Recipient${readyCount === 1 ? '' : 's'}`;
+  if (reviewSkipped) reviewSkipped.textContent = `${skippedCount} Skipped`;
+
+  const sampleBody = body
+    .replace(/\{\{\s*name\s*\}\}/gi, "Alex Green")
+    .replace(/\{\{\s*first_name\s*\}\}/gi, "Alex")
+    .replace(/\{\{\s*all_shifts\s*\}\}/gi, "• Sat 3 Aug (12:00 - 17:00): Keg Bar\n• Sun 4 Aug (17:00 - 22:00): Cider Bar")
+    .replace(/\{\{\s*category\s*\}\}/gi, "Keg Bar")
+    .replace(/\{\{\s*date\s*\}\}/gi, "Sat 3 Aug")
+    .replace(/\{\{\s*time\s*\}\}/gi, "12:00 - 17:00");
+
+  if (reviewPreviewText) {
+    reviewPreviewText.textContent = (commActiveChannel === "email" && subject ? `Subject: ${subject}\n\n` : "") + sampleBody;
+  }
+
+  const modal = document.getElementById("modal-comm-review");
+  if (modal) modal.classList.remove("hidden");
+}
+
+function closeCommReviewModal() {
+  const modal = document.getElementById("modal-comm-review");
+  if (modal) modal.classList.add("hidden");
+}
+
+/**
+ * Executes the dispatch call across Email and/or WhatsApp via Cloud Functions
+ */
+async function executeCommDispatch() {
+  const subjectInput = document.getElementById("admin-broadcast-subject");
+  const bodyInput = document.getElementById("admin-broadcast-body");
+  const targetType = document.getElementById("comm-target-type")?.value || "all";
+  const contextVal = document.getElementById("comm-context-select")?.value || "";
+  const onlyConfirmed = document.getElementById("comm-only-confirmed-shifts")?.checked || false;
+  const mirrorActive = document.getElementById("comm-mirror-channel")?.checked || false;
+  const confirmBtn = document.getElementById("btn-confirm-comm-dispatch");
+  const confirmText = document.getElementById("btn-confirm-dispatch-text");
+
+  const subject = (subjectInput?.value || "").trim();
+  const body = (bodyInput?.value || "").trim();
+
+  const payload = {
+    targetType,
+    onlyWithConfirmedShifts: onlyConfirmed,
+    body
+  };
+
+  if (targetType === "role") {
+    payload.targetRole = contextVal;
+  } else if (targetType === "category") {
+    payload.targetCategory = contextVal;
+  } else if (targetType === "shift") {
+    payload.targetShiftId = contextVal;
+  } else if (targetType === "users") {
+    payload.targetUserIds = Array.from(commSelectedUserIds);
+  }
+
+  if (confirmBtn) confirmBtn.disabled = true;
+  if (confirmText) confirmText.textContent = "Dispatching announcements...";
+
+  let totalSent = 0;
+  let totalSkipped = 0;
+  const channelsUsed = [];
+  const warnings = [];
 
   try {
-    const fn = functions.httpsCallable("sendAdminBroadcast");
-    const result = await fn({ subject, body, targetRole });
-    if (alertEl) {
-      alertEl.className = "p-3 rounded-lg text-xs bg-emerald-50 text-emerald-800 border border-emerald-300";
-      alertEl.textContent = `Broadcast sent successfully to ${result.data?.count || 0} recipient(s)!`;
-      alertEl.classList.remove("hidden");
+    // 1. Primary Channel Dispatch
+    if (commActiveChannel === "email") {
+      channelsUsed.push("Email");
+      const emailFn = functions.httpsCallable("sendAdminBroadcast");
+      const emailResult = await emailFn({ ...payload, subject });
+      totalSent += emailResult.data?.count || 0;
+      totalSkipped += emailResult.data?.skippedCount || 0;
+      if (emailResult.data?.warning) warnings.push(emailResult.data.warning);
+
+      if (mirrorActive) {
+        channelsUsed.push("WhatsApp");
+        const waFn = functions.httpsCallable("sendWhatsAppBroadcast");
+        const waResult = await waFn(payload);
+        totalSent += waResult.data?.count || 0;
+        totalSkipped += waResult.data?.skippedCount || 0;
+        if (waResult.data?.warning) warnings.push(waResult.data.warning);
+      }
+    } else {
+      // Primary is WhatsApp
+      channelsUsed.push("WhatsApp");
+      const waFn = functions.httpsCallable("sendWhatsAppBroadcast");
+      const waResult = await waFn(payload);
+      totalSent += waResult.data?.count || 0;
+      totalSkipped += waResult.data?.skippedCount || 0;
+      if (waResult.data?.warning) warnings.push(waResult.data.warning);
+
+      if (mirrorActive) {
+        channelsUsed.push("Email");
+        const emailFn = functions.httpsCallable("sendAdminBroadcast");
+        const fallbackSubject = subject || `${currentFestivalConfig.festivalName || 'Festival'} Announcement`;
+        const emailResult = await emailFn({ ...payload, subject: fallbackSubject });
+        totalSent += emailResult.data?.count || 0;
+        totalSkipped += emailResult.data?.skippedCount || 0;
+        if (emailResult.data?.warning) warnings.push(emailResult.data.warning);
+      }
     }
+
+    closeCommReviewModal();
+
+    if (totalSent === 0 && totalSkipped > 0) {
+      const warnMsg = warnings.length > 0 ? warnings.join(" ") : "All messages were skipped or failed delivery.";
+      showBroadcastAlert(`No messages delivered (${totalSkipped} skipped). ${warnMsg}`, false);
+    } else if (totalSent > 0) {
+      const warnSuffix = warnings.length > 0 ? ` (Note: ${warnings.join(" ")})` : "";
+      showBroadcastAlert(`Successfully dispatched announcement to ${totalSent} recipient(s) across ${channelsUsed.join(" & ")}${totalSkipped > 0 ? ` (${totalSkipped} skipped)` : ''}!${warnSuffix}`, true);
+    } else {
+      showBroadcastAlert("0 recipients matched the selected criteria. No messages were dispatched.", false);
+    }
+
+    // Save history audit
+    const { targetDesc } = getResolvedCommRecipients();
+    commRecentDispatches.unshift({
+      timestamp: new Date().toISOString(),
+      channels: channelsUsed.join(" & "),
+      targetDesc,
+      sentCount: totalSent,
+      skippedCount: totalSkipped,
+      subject: subject || body.substring(0, 40) + "..."
+    });
+    if (commRecentDispatches.length > 15) commRecentDispatches.pop();
+    try {
+      localStorage.setItem("brewcrew_comm_history", JSON.stringify(commRecentDispatches));
+    } catch (e) {}
+
+    renderCommHistory();
+
+    // Reset inputs
+    if (bodyInput) bodyInput.value = "";
+    if (subjectInput) subjectInput.value = "";
+    handleCommBodyInput();
   } catch (err) {
-    if (alertEl) {
-      alertEl.className = "p-3 rounded-lg text-xs bg-rose-50 text-rose-800 border border-rose-300";
-      alertEl.textContent = "Failed to dispatch email: " + err.message;
-      alertEl.classList.remove("hidden");
-    }
+    console.error("Communication dispatch error:", err);
+    showBroadcastAlert("Dispatch failure: " + err.message, false);
   } finally {
-    if (submitBtn) submitBtn.disabled = false;
-    if (submitText) submitText.textContent = "Send Announcement Email";
+    if (confirmBtn) confirmBtn.disabled = false;
+    if (confirmText) confirmText.textContent = "Confirm & Dispatch Now";
   }
+}
+
+/**
+ * Renders the recent dispatch audit table
+ */
+function renderCommHistory() {
+  const tbody = document.getElementById("comm-recent-history-tbody");
+  if (!tbody) return;
+
+  if (commRecentDispatches.length === 0) {
+    tbody.innerHTML = `
+      <tr>
+        <td colspan="6" class="text-center py-4 text-slate-400 italic text-2xs">
+          No broadcasts dispatched yet in this session.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  tbody.innerHTML = commRecentDispatches.map((h) => {
+    const d = new Date(h.timestamp);
+    const dateFormatted = d.toLocaleDateString("en-GB", { day: "numeric", month: "short" }) + " " +
+                          d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    const channelBadge = h.channels.includes("WhatsApp") && h.channels.includes("Email")
+      ? `<span class="px-1.5 py-0.5 rounded text-3xs font-bold bg-amber-100 text-amber-900 border border-amber-300">Omnichannel</span>`
+      : h.channels.includes("WhatsApp")
+      ? `<span class="px-1.5 py-0.5 rounded text-3xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300">WhatsApp</span>`
+      : `<span class="px-1.5 py-0.5 rounded text-3xs font-bold bg-blue-100 text-blue-900 border border-blue-300">Email</span>`;
+
+    return `
+      <tr class="hover:bg-amber-50/40 transition">
+        <td class="py-2.5 px-3 whitespace-nowrap text-2xs text-slate-500 font-mono">${dateFormatted}</td>
+        <td class="py-2.5 px-3">${channelBadge}</td>
+        <td class="py-2.5 px-3 font-semibold text-slate-800 text-2xs truncate max-w-[140px]">${escapeHtml(h.targetDesc || 'All Crew')}</td>
+        <td class="py-2.5 px-3 text-center tabular-nums font-bold text-emerald-700">${h.sentCount}</td>
+        <td class="py-2.5 px-3 text-center tabular-nums text-slate-400">${h.skippedCount || 0}</td>
+        <td class="py-2.5 px-3 text-slate-600 truncate max-w-[200px] text-2xs">${escapeHtml(h.subject || 'Announcement')}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function showBroadcastAlert(msg, isSuccess) {
+  const alertEl = document.getElementById("admin-broadcast-alert");
+  if (!alertEl) return;
+  alertEl.className = isSuccess
+    ? "p-3 rounded-lg text-xs bg-emerald-50 text-emerald-800 border border-emerald-300"
+    : "p-3 rounded-lg text-xs bg-rose-50 text-rose-800 border border-rose-300";
+  alertEl.textContent = msg;
+  alertEl.classList.remove("hidden");
+  if (isSuccess) {
+    setTimeout(() => alertEl.classList.add("hidden"), 8000);
+  }
+}
+
+function updateBroadcastTargetLabel(target) {
+  handleCommTargetTypeChange("role");
+  const select = document.getElementById("comm-context-select");
+  if (select) select.value = target;
+  updateCommTargetPreview();
+}
+
+function handleSendAdminBroadcast(e) {
+  if (e && e.preventDefault) e.preventDefault();
+  openCommReviewModal();
 }
 
 // ============================================================================
@@ -1708,6 +2964,30 @@ function formatForDateTimeLocal(ts) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// Universal Keyboard Escape Modal Dismissal
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  const modals = [
+    { id: "modal-delete-group", close: closeDeleteGroupModal },
+    { id: "modal-merge-group", close: closeMergeGroupModal },
+    { id: "modal-set-user-group", close: closeSetUserGroupModal },
+    { id: "modal-manage-groups", close: closeManageGroupsModal },
+    { id: "modal-toggle-disable", close: closeToggleDisableModal },
+    { id: "modal-delete-block", close: closeDeleteBlockModal },
+    { id: "modal-assign-volunteer", close: closeAssignVolunteerModal },
+    { id: "modal-shift-editor", close: closeShiftEditorModal },
+    { id: "modal-comm-review", close: closeCommReviewModal }
+  ];
+  for (const m of modals) {
+    const el = document.getElementById(m.id);
+    if (el && !el.classList.contains("hidden")) {
+      m.close();
+      e.preventDefault();
+      break;
+    }
+  }
+});
+
 // Global Exports
 window.switchAdminTab = switchAdminTab;
 window.handleCrewSearch = handleCrewSearch;
@@ -1716,6 +2996,23 @@ window.setCrewStatusFilter = setCrewStatusFilter;
 window.handleCrewSortChange = handleCrewSortChange;
 window.handleCrewPageSizeChange = handleCrewPageSizeChange;
 window.handleRoleChange = handleRoleChange;
+window.setCrewGroupFilter = setCrewGroupFilter;
+window.openManageGroupsModal = openManageGroupsModal;
+window.closeManageGroupsModal = closeManageGroupsModal;
+window.setEditingGroup = setEditingGroup;
+window.handleCreateGroup = handleCreateGroup;
+window.handleCreateGroupFromName = handleCreateGroupFromName;
+window.handleRenameGroup = handleRenameGroup;
+window.handleToggleGroupIncentives = handleToggleGroupIncentives;
+window.openMergeGroupModal = openMergeGroupModal;
+window.closeMergeGroupModal = closeMergeGroupModal;
+window.handleMergeGroupSubmit = handleMergeGroupSubmit;
+window.openDeleteGroupModal = openDeleteGroupModal;
+window.closeDeleteGroupModal = closeDeleteGroupModal;
+window.handleDeleteGroupSubmit = handleDeleteGroupSubmit;
+window.openSetUserGroupModal = openSetUserGroupModal;
+window.closeSetUserGroupModal = closeSetUserGroupModal;
+window.handleSetUserGroupSubmit = handleSetUserGroupSubmit;
 window.openToggleDisableModal = openToggleDisableModal;
 window.closeToggleDisableModal = closeToggleDisableModal;
 window.handleToggleDisableSubmit = handleToggleDisableSubmit;
@@ -1742,4 +3039,18 @@ window.handleSaveIncentivesConfig = handleSaveIncentivesConfig;
 window.openEditRoleModal = openEditRoleModal;
 window.updateBroadcastTargetLabel = updateBroadcastTargetLabel;
 window.handleSendAdminBroadcast = handleSendAdminBroadcast;
+window.switchCommChannel = switchCommChannel;
+window.handleCommTargetTypeChange = handleCommTargetTypeChange;
+window.handleCommContextChange = handleCommContextChange;
+window.filterCommUserList = filterCommUserList;
+window.toggleCommUserSelect = toggleCommUserSelect;
+window.selectAllCommUsers = selectAllCommUsers;
+window.updateCommTargetPreview = updateCommTargetPreview;
+window.applyCommStarter = applyCommStarter;
+window.insertCommPlaceholder = insertCommPlaceholder;
+window.handleCommBodyInput = handleCommBodyInput;
+window.updateCommLivePreview = updateCommLivePreview;
+window.openCommReviewModal = openCommReviewModal;
+window.closeCommReviewModal = closeCommReviewModal;
+window.executeCommDispatch = executeCommDispatch;
 window.adminSignOut = adminSignOut;

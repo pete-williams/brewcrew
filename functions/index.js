@@ -1,5 +1,6 @@
 // functions/index.js
-const {onCall, HttpsError} = require("firebase-functions/v2/https");
+const {onCall, onRequest, HttpsError} = require("firebase-functions/v2/https");
+const {onDocumentWritten} = require("firebase-functions/v2/firestore");
 const admin = require("firebase-admin");
 
 admin.initializeApp();
@@ -40,6 +41,199 @@ function getTimestampMs(ts) {
   return isNaN(ms) ? 0 : ms;
 }
 
+let cachedTwilioClient = null;
+
+/**
+ * Checks whether valid Twilio credentials and WhatsApp number are configured.
+ * Supports API Key auth (TWILIO_API_SID, TWILIO_API_KEY, TWILIO_ACCOUNT_SID)
+ * and legacy Auth Token auth (TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN).
+ * @return {boolean} True if all required Twilio environment variables are set.
+ */
+function isTwilioConfigured() {
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const apiSid = process.env.TWILIO_API_SID;
+  const apiKey = process.env.TWILIO_API_KEY;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  const from = process.env.TWILIO_WHATSAPP_NUMBER;
+
+  if (!from || from.includes("PLACEHOLDER") || from.includes("xxxx")) {
+    return false;
+  }
+
+  // API Key authentication (recommended by Twilio)
+  if (apiSid && apiKey && accountSid) {
+    if (apiSid.includes("PLACEHOLDER") || apiSid.includes("xxxx")) return false;
+    if (apiKey.includes("placeholder") || apiKey.includes("xxxx")) return false;
+    if (accountSid.includes("PLACEHOLDER") || accountSid.includes("xxxx")) {
+      return false;
+    }
+    return true;
+  }
+
+  // Legacy Auth Token authentication fallback
+  if (accountSid && authToken) {
+    if (accountSid.includes("PLACEHOLDER") || accountSid.includes("xxxx")) {
+      return false;
+    }
+    if (authToken.includes("placeholder") || authToken.includes("xxxx")) {
+      return false;
+    }
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Lazy-load Twilio client to avoid deployment initialization timeouts.
+ * Supports both API Key and Auth Token authentication.
+ * @return {object|null} Configured Twilio client instance.
+ */
+function getTwilioClient() {
+  if (!cachedTwilioClient) {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const apiSid = process.env.TWILIO_API_SID;
+    const apiKey = process.env.TWILIO_API_KEY;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+
+    const twilio = require("twilio");
+
+    if (apiSid && apiKey && accountSid) {
+      cachedTwilioClient = twilio(apiSid, apiKey, {accountSid});
+    } else if (accountSid && authToken) {
+      cachedTwilioClient = twilio(accountSid, authToken);
+    } else {
+      return null;
+    }
+  }
+  return cachedTwilioClient;
+}
+
+/**
+ * Normalizes a phone number to standard E.164 format.
+ * Defaults to UK (+44) for local 07... mobile numbers.
+ * @param {string} rawPhone Raw input phone number.
+ * @return {string|null} E.164 phone string (e.g. "+447123456789") or null.
+ */
+function normalizeE164(rawPhone) {
+  if (!rawPhone || typeof rawPhone !== "string") return null;
+  let cleaned = rawPhone.replace(/[^\d+]/g, "");
+  if (cleaned.startsWith("00")) {
+    cleaned = "+" + cleaned.slice(2);
+  }
+  if (cleaned.startsWith("07") && cleaned.length === 11) {
+    cleaned = "+44" + cleaned.slice(1);
+  }
+  if (!cleaned.startsWith("+") && cleaned.length >= 10) {
+    cleaned = "+" + cleaned;
+  }
+  return /^\+[1-9]\d{7,14}$/.test(cleaned) ? cleaned : null;
+}
+
+/**
+ * Dispatches an automated WhatsApp alert message using Twilio.
+ * @param {object} params Message dispatch parameters.
+ * @param {string} params.to Destination phone number.
+ * @param {string} params.body Message body text.
+ * @return {Promise<object|null>} Twilio message response or null if skipped.
+ */
+async function sendWhatsAppAlert({to, body}) {
+  const e164 = normalizeE164(to);
+  if (!e164) {
+    return {
+      success: false,
+      reason: "invalid_phone",
+      error: `Invalid destination phone number: "${to}"`,
+    };
+  }
+  if (!body || typeof body !== "string" || !body.trim()) {
+    return {
+      success: false,
+      reason: "empty_body",
+      error: "Message body cannot be empty.",
+    };
+  }
+  if (!isTwilioConfigured()) {
+    console.warn("Twilio WhatsApp is not configured with valid credentials.");
+    const isMissingAccountSid = Boolean(
+        process.env.TWILIO_API_SID &&
+        process.env.TWILIO_API_KEY &&
+        !process.env.TWILIO_ACCOUNT_SID,
+    );
+    const errText = isMissingAccountSid ?
+        "Twilio API Key authentication requires TWILIO_ACCOUNT_SID " +
+        "(starts with AC...) in functions/.env alongside TWILIO_API_SID " +
+        "and TWILIO_API_KEY." :
+        "Twilio credentials are not configured in functions/.env.";
+    return {
+      success: false,
+      reason: "unconfigured",
+      error: errText,
+    };
+  }
+  const client = getTwilioClient();
+  if (!client) {
+    console.warn("Twilio client is not initialized.");
+    return {
+      success: false,
+      reason: "client_init_failed",
+      error: "Twilio client failed to initialize.",
+    };
+  }
+
+  let from = (process.env.TWILIO_WHATSAPP_NUMBER || "").trim();
+  if (!from.toLowerCase().startsWith("whatsapp:")) {
+    from = `whatsapp:${from}`;
+  }
+
+  try {
+    const res = await client.messages.create({
+      from,
+      to: `whatsapp:${e164}`,
+      body: body.trim(),
+    });
+    return {
+      success: true,
+      sid: res.sid,
+      status: res.status,
+    };
+  } catch (err) {
+    console.error("Failed to send WhatsApp message via Twilio:", err);
+    let friendlyError = err.message || "Unknown Twilio error";
+    if (err.code === 21654) {
+      friendlyError = "Twilio Error 21654 (ContentSid Required): Twilio " +
+          "Trial accounts restrict custom free-form text via API and " +
+          "require pre-approved templates (ContentSid). To send custom " +
+          "festival announcements, your Twilio account must be upgraded " +
+          "from Trial to a paid balance in the Twilio Console.";
+    } else if (err.code === 21608) {
+      friendlyError = `Twilio Error 21608: The recipient (${e164}) has ` +
+          `not joined your WhatsApp sandbox. Send the join keyword to your ` +
+          `Twilio number first.`;
+    } else if (err.code === 20003) {
+      const authDetail = err.message ||
+          "Authentication failed. Verify credentials in functions/.env.";
+      friendlyError = `Twilio Error 20003: ${authDetail}`;
+    } else if (err.code === 21211) {
+      friendlyError = `Twilio Error 21211: The recipient phone number ` +
+          `(${e164}) is invalid.`;
+    } else if (err.code === 21606) {
+      friendlyError = `Twilio Error 21606: The configured 'From' number ` +
+          `(${from}) is not an active WhatsApp sender.`;
+    }
+    return {
+      success: false,
+      code: err.code || null,
+      status: err.status || null,
+      error: friendlyError,
+    };
+  }
+}
+
+exports._isTwilioConfigured = isTwilioConfigured;
+exports._normalizeE164 = normalizeE164;
+exports._sendWhatsAppAlert = sendWhatsAppAlert;
+
 /**
  * Atomic Shift Registration to Prevent Overbooking (Race Conditions)
  * Supports self-registration and administrator shift assignment.
@@ -76,7 +270,7 @@ exports.claimShift = onCall(async (request) => {
   const regDocId = `${shiftId}_${assignedUid}`;
   const registrationRef = db.collection("registrations").doc(regDocId);
 
-  return db.runTransaction(async (transaction) => {
+  const txResult = await db.runTransaction(async (transaction) => {
     const shiftDoc = await transaction.get(shiftRef);
     if (!shiftDoc.exists) {
       throw new HttpsError("not-found", "Shift does not exist.");
@@ -178,8 +372,59 @@ exports.claimShift = onCall(async (request) => {
 
     transaction.set(registrationRef, regPayload);
 
-    return {success: true, assignedUserId: assignedUid};
+    return {
+      success: true,
+      assignedUserId: assignedUid,
+      categoryName: shiftData.categoryName || "Festival Shift",
+      startTime: shiftData.startTime,
+      endTime: shiftData.endTime,
+    };
   });
+
+  // Out-of-transaction asynchronous alert dispatch:
+  // Trigger WhatsApp booking confirmation if volunteer has opted in
+  try {
+    const userDoc = await db.collection("users").doc(assignedUid).get();
+    if (userDoc.exists) {
+      const userData = userDoc.data();
+      if (userData.whatsappNotifications !== false && userData.phoneNumber) {
+        const startMs = getTimestampMs(txResult.startTime);
+        const endMs = getTimestampMs(txResult.endTime);
+        const dateStr = startMs ?
+            new Date(startMs).toLocaleDateString("en-GB", {
+              weekday: "short",
+              day: "numeric",
+              month: "short",
+            }) : "Festival";
+        const timeStr = (startMs && endMs) ?
+            `${new Date(startMs).toLocaleTimeString("en-GB", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })} - ${new Date(endMs).toLocaleTimeString("en-GB", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}` : "";
+
+        const volunteerName = userData.fullName || "Volunteer";
+        const category = txResult.categoryName;
+        const alertMsg =
+            `🍺 *BrewCrew Shift Confirmed*\n\n` +
+            `Hi ${volunteerName}, you're booked for *${category}* on ` +
+            `*${dateStr}* (${timeStr}).\n\n` +
+            `You can view your roster anytime in the BrewCrew app. ` +
+            `Thank you for volunteering!`;
+
+        await sendWhatsAppAlert({
+          to: userData.phoneNumber,
+          body: alertMsg,
+        });
+      }
+    }
+  } catch (alertErr) {
+    console.warn("Could not dispatch WhatsApp booking confirmation:", alertErr);
+  }
+
+  return {success: true, assignedUserId: assignedUid};
 });
 
 /**
@@ -217,7 +462,7 @@ exports.cancelShift = onCall(async (request) => {
   const regDocId = `${shiftId}_${targetUid}`;
   const registrationRef = db.collection("registrations").doc(regDocId);
 
-  return db.runTransaction(async (transaction) => {
+  const txResult = await db.runTransaction(async (transaction) => {
     const shiftDoc = await transaction.get(shiftRef);
     if (!shiftDoc.exists) {
       throw new HttpsError("not-found", "Shift does not exist.");
@@ -268,9 +513,357 @@ exports.cancelShift = onCall(async (request) => {
 
     transaction.delete(registrationRef);
 
-    return {success: true};
+    return {
+      success: true,
+      categoryName: shiftData.categoryName || "Festival Shift",
+      startTime: shiftData.startTime,
+      endTime: shiftData.endTime,
+    };
   });
+
+  // Out-of-transaction asynchronous alert dispatch:
+  // Trigger WhatsApp cancellation notice if volunteer has opted in
+  try {
+    const userDoc = await db.collection("users").doc(targetUid).get();
+    if (userDoc.exists) {
+      const userData = userDoc.data();
+      if (userData.whatsappNotifications !== false && userData.phoneNumber) {
+        const startMs = getTimestampMs(txResult.startTime);
+        const endMs = getTimestampMs(txResult.endTime);
+        const dateStr = startMs ?
+            new Date(startMs).toLocaleDateString("en-GB", {
+              weekday: "short",
+              day: "numeric",
+              month: "short",
+            }) : "Festival";
+        const timeStr = (startMs && endMs) ?
+            `${new Date(startMs).toLocaleTimeString("en-GB", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })} - ${new Date(endMs).toLocaleTimeString("en-GB", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })}` : "";
+
+        const volunteerName = userData.fullName || "Volunteer";
+        const category = txResult.categoryName;
+        const alertMsg =
+            `⚠️ *BrewCrew Shift Cancelled*\n\n` +
+            `Hi ${volunteerName}, your registration for *${category}* on ` +
+            `*${dateStr}* (${timeStr}) has been cancelled.\n\n` +
+            `If this was unintentional, you can browse open slots in ` +
+            `the BrewCrew schedule.`;
+
+        await sendWhatsAppAlert({
+          to: userData.phoneNumber,
+          body: alertMsg,
+        });
+      }
+    }
+  } catch (alertErr) {
+    console.warn("Could not dispatch WhatsApp cancellation notice:", alertErr);
+  }
+
+  return {success: true};
 });
+
+/**
+ * Converts a plain-text body into clean HTML paragraphs,
+ * preserving embedded HTML blocks like <ul>.
+ * @param {string} text Body text.
+ * @return {string} Formatted HTML.
+ */
+function formatEmailBody(text) {
+  if (!text) return "";
+  const paragraphs = text
+      .split(/\n\s*\n/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+
+  return paragraphs.map((block) => {
+    if (
+      block.startsWith("<ul") ||
+      block.startsWith("<ol") ||
+      block.startsWith("<div") ||
+      block.startsWith("<p")
+    ) {
+      return block;
+    }
+    const inner = block.replace(/\n/g, "<br/>");
+    return `<p style="margin: 0 0 14px 0; line-height: 1.6;">${inner}</p>`;
+  }).join("\n");
+}
+
+/**
+ * Builds the branded email container for festival announcements.
+ * @param {string} title Header title.
+ * @param {string} formattedBody Body HTML.
+ * @return {string} Complete HTML email document.
+ */
+function buildBrandedEmailHtml(title, formattedBody) {
+  const outerStyle =
+      "font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', " +
+      "Roboto, Helvetica, Arial, sans-serif; max-width: 600px; " +
+      "margin: 0 auto; padding: 20px 16px; background-color: #f5f5f4; " +
+      "color: #1e293b;";
+  const cardStyle =
+      "background-color: #ffffff; border: 1px solid #fde68a; " +
+      "border-radius: 12px; padding: 24px; " +
+      "box-shadow: 0 1px 3px rgba(0,0,0,0.05);";
+  const headerStyle =
+      "border-bottom: 2px solid #b45309; padding-bottom: 12px; " +
+      "margin-bottom: 20px;";
+  const footerStyle =
+      "margin-top: 24px; padding-top: 16px; border-top: 1px solid #e2e8f0; " +
+      "font-size: 11px; color: #64748b;";
+
+  return `
+    <div style="${outerStyle}">
+      <div style="${cardStyle}">
+        <div style="${headerStyle}">
+          <h2 style="margin: 0; color: #78350f; font-size: 20px; ` +
+            `font-weight: 700;">🍺 ${title}</h2>
+        </div>
+        <div style="font-size: 14px; line-height: 1.6; color: #334155;">
+          ${formattedBody}
+        </div>
+        <div style="${footerStyle}">
+          <p style="margin: 0;">Sent via BrewCrew Volunteer Platform. ` +
+            `Received based on festival preferences.` +
+          `</p>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Formats a chronological list of shifts into HTML or WhatsApp Markdown.
+ * Note: Manager name is omitted per specification.
+ * @param {Array<object>} shifts List of shift objects.
+ * @param {"email"|"whatsapp"} channel Delivery channel.
+ * @return {string} Formatted shift schedule string.
+ */
+function formatVolunteerShiftList(shifts, channel) {
+  if (!shifts || shifts.length === 0) {
+    if (channel === "email") {
+      return `<p style="margin: 8px 0; font-style: italic; color: #64748b;">` +
+          `No shifts currently scheduled</p>`;
+    }
+    return `_No shifts currently scheduled_`;
+  }
+
+  const items = shifts.map((s) => {
+    const startMs = getTimestampMs(s.startTime);
+    const endMs = getTimestampMs(s.endTime);
+    const dateStr = startMs ?
+        new Date(startMs).toLocaleDateString("en-GB", {
+          weekday: "short",
+          day: "numeric",
+          month: "short",
+        }) : "Date TBD";
+    const timeStr = (startMs && endMs) ?
+        `${new Date(startMs).toLocaleTimeString("en-GB", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })} - ${new Date(endMs).toLocaleTimeString("en-GB", {
+          hour: "2-digit",
+          minute: "2-digit",
+        })}` : "Time TBD";
+    const area = s.categoryName || s.role || "General Shift";
+
+    if (channel === "email") {
+      return `<li style="margin-bottom: 4px;">` +
+          `<strong>${dateStr} (${timeStr})</strong>: ${area}</li>`;
+    }
+    return `• *${dateStr} (${timeStr})*: ${area}`;
+  });
+
+  if (channel === "email") {
+    return `<ul style="margin: 8px 0; padding-left: 20px; line-height: 1.6;">` +
+        `${items.join("")}</ul>`;
+  }
+  return items.join("\n");
+}
+
+/**
+ * Substitutes dynamic tokens in template text for a specific recipient.
+ * @param {string} text Template text containing {{...}} tokens.
+ * @param {object} user Recipient user data.
+ * @param {Array<object>} shifts Confirmed shifts for recipient.
+ * @param {object|null} contextShift Targeted shift context if applicable.
+ * @param {"email"|"whatsapp"} channel Delivery channel.
+ * @param {string} [targetCategory] Targeted category if applicable.
+ * @return {string} Personalized text.
+ */
+function substitutePlaceholders(
+    text,
+    user,
+    shifts,
+    contextShift,
+    channel,
+    targetCategory,
+) {
+  if (!text || typeof text !== "string") return "";
+
+  const fullName = user.fullName || "Volunteer";
+  const trimmed = user.fullName ? user.fullName.trim() : "";
+  const firstName = (trimmed ? trimmed.split(/\s+/)[0] : "") || "there";
+
+  const nextShift = contextShift ||
+      (shifts && shifts.length > 0 ? shifts[0] : null);
+
+  let categoryStr = "Festival Shift";
+  let dateStr = "Scheduled Date";
+  let timeStr = "Scheduled Time";
+
+  if (nextShift) {
+    categoryStr = nextShift.categoryName || nextShift.role || "Festival Shift";
+    const startMs = getTimestampMs(nextShift.startTime);
+    const endMs = getTimestampMs(nextShift.endTime);
+    if (startMs) {
+      dateStr = new Date(startMs).toLocaleDateString("en-GB", {
+        weekday: "short",
+        day: "numeric",
+        month: "short",
+      });
+    }
+    if (startMs && endMs) {
+      timeStr = `${new Date(startMs).toLocaleTimeString("en-GB", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })} - ${new Date(endMs).toLocaleTimeString("en-GB", {
+        hour: "2-digit",
+        minute: "2-digit",
+      })}`;
+    }
+  } else if (targetCategory) {
+    categoryStr = targetCategory;
+  }
+
+  const allShiftsFormatted = formatVolunteerShiftList(shifts, channel);
+
+  return text
+      .replace(/\{\{\s*name\s*\}\}/gi, fullName)
+      .replace(/\{\{\s*first_name\s*\}\}/gi, firstName)
+      .replace(/\{\{\s*all_shifts\s*\}\}/gi, allShiftsFormatted)
+      .replace(/\{\{\s*category\s*\}\}/gi, categoryStr)
+      .replace(/\{\{\s*date\s*\}\}/gi, dateStr)
+      .replace(/\{\{\s*time\s*\}\}/gi, timeStr);
+}
+
+/**
+ * Resolves targeted recipient users and their confirmed shifts.
+ * Supports: all, role, category, shift, users.
+ * @param {object} params Target parameters.
+ * @param {string} [params.targetType] Target mode.
+ * @param {string} [params.targetRole] Target role.
+ * @param {string} [params.targetCategory] Target category.
+ * @param {string} [params.targetShiftId] Target shift ID.
+ * @param {Array<string>} [params.targetUserIds] User IDs.
+ * @param {boolean} [params.onlyWithConfirmedShifts] Filter confirmed.
+ * @return {Promise<object>} Resolved recipients and context shift.
+ */
+async function resolveBroadcastRecipients({
+  targetType = "all",
+  targetRole,
+  targetCategory,
+  targetShiftId,
+  targetUserIds,
+  onlyWithConfirmedShifts = false,
+}) {
+  const usersSnapshot = await db.collection("users").get();
+  const allActiveUsers = usersSnapshot.docs
+      .filter((doc) => !doc.data().disabled)
+      .map((doc) => ({id: doc.id, ...doc.data()}));
+
+  const shiftsSnapshot = await db.collection("shifts").get();
+  const shiftsMap = new Map();
+  shiftsSnapshot.docs.forEach((doc) => {
+    shiftsMap.set(doc.id, {id: doc.id, ...doc.data()});
+  });
+
+  const regSnapshot = await db.collection("registrations")
+      .where("status", "==", "confirmed")
+      .get();
+
+  const userShiftsMap = new Map();
+  const addShiftToUser = (uid, shift) => {
+    if (!uid || !shift) return;
+    if (!userShiftsMap.has(uid)) {
+      userShiftsMap.set(uid, []);
+    }
+    const list = userShiftsMap.get(uid);
+    if (!list.some((s) => s.id === shift.id)) {
+      list.push(shift);
+    }
+  };
+
+  regSnapshot.docs.forEach((regDoc) => {
+    const regData = regDoc.data();
+    const shift = shiftsMap.get(regData.shiftId);
+    if (shift && regData.userId) {
+      addShiftToUser(regData.userId, shift);
+    }
+  });
+
+  shiftsMap.forEach((shift) => {
+    if (shift.managerId) {
+      addShiftToUser(shift.managerId, shift);
+    }
+  });
+
+  userShiftsMap.forEach((shiftList) => {
+    shiftList.sort((a, b) =>
+      getTimestampMs(a.startTime) - getTimestampMs(b.startTime),
+    );
+  });
+
+  let contextShift = null;
+  if (targetType === "shift" && targetShiftId) {
+    contextShift = shiftsMap.get(targetShiftId) || null;
+  }
+
+  let filteredUsers = [];
+  if (targetType === "role") {
+    filteredUsers = allActiveUsers.filter((u) => {
+      if (!targetRole || targetRole === "all") return true;
+      return u.role === targetRole;
+    });
+  } else if (targetType === "category") {
+    filteredUsers = allActiveUsers.filter((u) => {
+      const userShifts = userShiftsMap.get(u.id) || [];
+      return userShifts.some((s) =>
+        s.categoryName && s.categoryName.trim() === targetCategory.trim(),
+      );
+    });
+  } else if (targetType === "shift") {
+    filteredUsers = allActiveUsers.filter((u) => {
+      const userShifts = userShiftsMap.get(u.id) || [];
+      return userShifts.some((s) => s.id === targetShiftId);
+    });
+  } else if (targetType === "users") {
+    const idSet = new Set(Array.isArray(targetUserIds) ? targetUserIds : []);
+    filteredUsers = allActiveUsers.filter((u) => idSet.has(u.id));
+  } else {
+    // "all"
+    filteredUsers = allActiveUsers;
+  }
+
+  if (onlyWithConfirmedShifts) {
+    filteredUsers = filteredUsers.filter((u) => {
+      const shifts = userShiftsMap.get(u.id) || [];
+      return shifts.length > 0;
+    });
+  }
+
+  const recipients = filteredUsers.map((u) => ({
+    ...u,
+    shifts: userShiftsMap.get(u.id) || [],
+  }));
+
+  return {recipients, contextShift};
+}
 
 /**
  * Admin Mass Communication Dispatch Endpoint via Nodemailer
@@ -295,7 +888,17 @@ exports.sendAdminBroadcast = onCall(async (request) => {
     );
   }
 
-  const {subject, body, targetRole} = request.data;
+  const {
+    subject,
+    body,
+    targetRole,
+    targetType,
+    targetCategory,
+    targetShiftId,
+    targetUserIds,
+    onlyWithConfirmedShifts,
+  } = request.data;
+
   if (!subject || typeof subject !== "string" || !subject.trim()) {
     throw new HttpsError("invalid-argument", "Subject is required.");
   }
@@ -303,18 +906,8 @@ exports.sendAdminBroadcast = onCall(async (request) => {
     throw new HttpsError("invalid-argument", "Message body is required.");
   }
 
-  let usersQuery = db.collection("users");
-  if (targetRole && targetRole !== "all") {
-    usersQuery = usersQuery.where("role", "==", targetRole);
-  }
-  const usersSnap = await usersQuery.get();
-
-  const emails = [...new Set(
-      usersSnap.docs
-          .filter((doc) => !doc.data().disabled)
-          .map((doc) => doc.data().email)
-          .filter((e) => e && typeof e === "string" && e.includes("@")),
-  )];
+  const resolvedTargetType = targetType ||
+      (targetRole && targetRole !== "all" ? "role" : "all");
 
   let broadcastFromName = "BrewCrew Updates";
   try {
@@ -326,36 +919,231 @@ exports.sendAdminBroadcast = onCall(async (request) => {
     console.warn("Could not fetch festival name for broadcast:", e);
   }
 
-  const formattedBody = body
-      .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line.length > 0)
-      .map((p) => `<p style="margin-bottom: 12px;">${p}</p>`)
-      .join("");
-
-  const emailHtml = `
-    <div style="font-family: Arial, sans-serif; color: #1e293b;">
-      ${formattedBody}
-    </div>
-  `;
+  const {recipients, contextShift} = await resolveBroadcastRecipients({
+    targetType: resolvedTargetType,
+    targetRole,
+    targetCategory,
+    targetShiftId,
+    targetUserIds,
+    onlyWithConfirmedShifts: Boolean(onlyWithConfirmedShifts),
+  });
 
   const transporter = getTransporter();
   const gmailEmail = process.env.GMAIL_EMAIL;
-  const sendPromises = emails.map((email) =>
-    transporter.sendMail({
-      from: `"${broadcastFromName}" <${gmailEmail}>`,
-      to: email,
-      subject: subject.trim(),
-      html: emailHtml,
-    }),
-  );
 
-  try {
-    await Promise.all(sendPromises);
-    return {success: true, count: emails.length};
-  } catch (err) {
-    throw new HttpsError("internal", err.message);
+  let sentCount = 0;
+  let skippedCount = 0;
+
+  for (const recipient of recipients) {
+    if (
+      recipient.emailNotifications === false ||
+      !recipient.email ||
+      !recipient.email.includes("@")
+    ) {
+      skippedCount++;
+      continue;
+    }
+
+    const personalizedSubject = substitutePlaceholders(
+        subject.trim(),
+        recipient,
+        recipient.shifts,
+        contextShift,
+        "email",
+        targetCategory,
+    );
+
+    const personalizedBody = substitutePlaceholders(
+        body.trim(),
+        recipient,
+        recipient.shifts,
+        contextShift,
+        "email",
+        targetCategory,
+    );
+
+    const formattedBody = formatEmailBody(personalizedBody);
+    const emailHtml = buildBrandedEmailHtml(broadcastFromName, formattedBody);
+
+    try {
+      await transporter.sendMail({
+        from: `"${broadcastFromName}" <${gmailEmail}>`,
+        to: recipient.email,
+        subject: personalizedSubject,
+        html: emailHtml,
+      });
+      sentCount++;
+    } catch (sendErr) {
+      console.warn(
+          `Failed sending email broadcast to ${recipient.id}:`,
+          sendErr.message,
+      );
+      skippedCount++;
+    }
   }
+
+  return {
+    success: true,
+    count: sentCount,
+    skippedCount,
+  };
+});
+
+/**
+ * Admin Mass Communication Dispatch Endpoint via Twilio WhatsApp
+ */
+exports.sendWhatsAppBroadcast = onCall(async (request) => {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "User must be logged in.");
+  }
+
+  const callerRef = await db.collection("users").doc(request.auth.uid).get();
+  if (!callerRef.exists || callerRef.data().role !== "admin") {
+    throw new HttpsError(
+        "permission-denied",
+        "Requires Administrator permissions.",
+    );
+  }
+  if (callerRef.data().disabled) {
+    throw new HttpsError(
+        "permission-denied",
+        "Administrator account is disabled.",
+    );
+  }
+
+  const {
+    body,
+    targetType = "all",
+    targetRole,
+    targetCategory,
+    targetShiftId,
+    targetUserIds,
+    onlyWithConfirmedShifts,
+  } = request.data;
+
+  if (!body || typeof body !== "string" || !body.trim()) {
+    throw new HttpsError("invalid-argument", "Message body is required.");
+  }
+
+  let broadcastFromName = "BrewCrew Updates";
+  try {
+    const configDoc = await db.collection("config").doc("festival").get();
+    if (configDoc.exists && configDoc.data().festivalName) {
+      broadcastFromName = configDoc.data().festivalName;
+    }
+  } catch (e) {
+    console.warn("Could not fetch festival name for broadcast:", e);
+  }
+
+  const {recipients, contextShift} = await resolveBroadcastRecipients({
+    targetType,
+    targetRole,
+    targetCategory,
+    targetShiftId,
+    targetUserIds,
+    onlyWithConfirmedShifts: Boolean(onlyWithConfirmedShifts),
+  });
+
+  const twilioConfigured = isTwilioConfigured();
+  let sentCount = 0;
+  let skippedCount = 0;
+  const dispatchErrors = [];
+
+  for (const recipient of recipients) {
+    const vName = recipient.fullName || "Volunteer";
+    if (recipient.whatsappNotifications === false) {
+      skippedCount++;
+      dispatchErrors.push(`${vName} has opted out of WhatsApp.`);
+      continue;
+    }
+    if (!recipient.phoneNumber) {
+      skippedCount++;
+      dispatchErrors.push(`${vName} has no phone number on profile.`);
+      continue;
+    }
+
+    const e164 = normalizeE164(recipient.phoneNumber);
+    if (!e164) {
+      skippedCount++;
+      dispatchErrors.push(
+          `${vName}: invalid phone "${recipient.phoneNumber}".`,
+      );
+      continue;
+    }
+
+    if (!twilioConfigured) {
+      skippedCount++;
+      continue;
+    }
+
+    const personalized = substitutePlaceholders(
+        body.trim(),
+        recipient,
+        recipient.shifts,
+        contextShift,
+        "whatsapp",
+        targetCategory,
+    );
+
+    const messageText = `🍺 *${broadcastFromName}*\n\n${personalized}`;
+
+    try {
+      const dispatchResult = await sendWhatsAppAlert({
+        to: e164,
+        body: messageText,
+      });
+      if (dispatchResult && dispatchResult.success && dispatchResult.sid) {
+        sentCount++;
+      } else {
+        skippedCount++;
+        if (dispatchResult && dispatchResult.error) {
+          dispatchErrors.push(dispatchResult.error);
+        }
+      }
+    } catch (sendErr) {
+      console.warn(
+          `Failed sending WhatsApp broadcast to ${recipient.id}:`,
+          sendErr.message,
+      );
+      skippedCount++;
+      dispatchErrors.push(sendErr.message);
+    }
+  }
+
+  let warning = null;
+  if (!twilioConfigured) {
+    const isMissingAccountSid = Boolean(
+        process.env.TWILIO_API_SID &&
+        process.env.TWILIO_API_KEY &&
+        !process.env.TWILIO_ACCOUNT_SID,
+    );
+    warning = isMissingAccountSid ?
+        "Twilio API Key authentication requires TWILIO_ACCOUNT_SID " +
+        "(starts with AC...) in functions/.env alongside TWILIO_API_SID " +
+        "and TWILIO_API_KEY." :
+        "Twilio WhatsApp credentials are not configured in functions/.env. " +
+        "All WhatsApp messages were skipped.";
+  } else if (sentCount === 0 && skippedCount > 0) {
+    if (dispatchErrors.length > 0) {
+      const unique = Array.from(new Set(dispatchErrors));
+      warning = unique.slice(0, 2).join(" | ");
+    } else {
+      warning = "All WhatsApp messages were skipped or failed delivery. " +
+          "Check volunteer phone numbers and Twilio logs.";
+    }
+  } else if (dispatchErrors.length > 0) {
+    const unique = Array.from(new Set(dispatchErrors));
+    warning = `Delivered ${sentCount} message(s). Issues with ` +
+        `${skippedCount}: ` + unique.slice(0, 2).join(" | ");
+  }
+
+  return {
+    success: true,
+    count: sentCount,
+    skippedCount,
+    warning,
+    errors: Array.from(new Set(dispatchErrors)),
+  };
 });
 
 /**
@@ -1125,6 +1913,564 @@ exports.unblockUserEmail = onCall(async (request) => {
   return {
     success: true,
     unblockedEmail: normalizedEmail,
+  };
+});
+
+/**
+ * Inbound Webhook for Twilio WhatsApp Messages.
+ * Forwards volunteer replies to Volunteer Manager and sends auto-ack.
+ */
+exports.twilioWhatsAppWebhook = onRequest(async (req, res) => {
+  if (req.method !== "POST") {
+    res.status(405).send("Method Not Allowed");
+    return;
+  }
+
+  const fromRaw = req.body.From || "";
+  const volunteerPhone = fromRaw.replace(/^whatsapp:/i, "").trim();
+  const volunteerE164 = normalizeE164(volunteerPhone);
+  const inboundBody = (req.body.Body || "").trim();
+  const messageSid = req.body.MessageSid || null;
+
+  if (!volunteerE164 || !inboundBody) {
+    res.status(200).send("<Response></Response>");
+    return;
+  }
+
+  try {
+    // 1. Look up volunteer by phone
+    const usersSnapshot = await db.collection("users").get();
+    let volunteer = null;
+    for (const doc of usersSnapshot.docs) {
+      const data = doc.data();
+      if (
+        data.phoneNumber &&
+        normalizeE164(data.phoneNumber) === volunteerE164
+      ) {
+        volunteer = {id: doc.id, ...data};
+        break;
+      }
+    }
+
+    const volunteerName = volunteer ?
+        (volunteer.fullName || "Volunteer") : "Volunteer";
+
+    // 2. Look up upcoming shift for this volunteer
+    let upcomingShiftInfo = "No upcoming shifts scheduled";
+    if (volunteer) {
+      const regSnap = await db.collection("registrations")
+          .where("userId", "==", volunteer.id)
+          .where("status", "==", "confirmed")
+          .get();
+
+      if (!regSnap.empty) {
+        const shiftIds = regSnap.docs.map((d) => d.data().shiftId);
+        const shiftDocs = await Promise.all(
+            shiftIds.map((id) => db.collection("shifts").doc(id).get()),
+        );
+
+        const activeShifts = shiftDocs
+            .filter((d) => d.exists)
+            .map((d) => ({id: d.id, ...d.data()}))
+            .sort((a, b) =>
+              getTimestampMs(a.startTime) - getTimestampMs(b.startTime),
+            );
+
+        if (activeShifts.length > 0) {
+          const s = activeShifts[0];
+          const startMs = getTimestampMs(s.startTime);
+          const endMs = getTimestampMs(s.endTime);
+          const dateStr = startMs ?
+              new Date(startMs).toLocaleDateString("en-GB", {
+                weekday: "short",
+                day: "numeric",
+                month: "short",
+              }) : "Date TBD";
+          const timeStr = (startMs && endMs) ?
+              `${new Date(startMs).toLocaleTimeString("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })} - ${new Date(endMs).toLocaleTimeString("en-GB", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}` : "";
+          const area = s.categoryName || s.role || "Shift";
+          upcomingShiftInfo = `${area} on ${dateStr} (${timeStr})`;
+        }
+      }
+    }
+
+    // 3. Look up Volunteer Manager from festival config
+    let managerE164 = null;
+    const configDoc = await db.collection("config").doc("festival").get();
+    if (configDoc.exists) {
+      const festData = configDoc.data();
+      const managerPhone = festData.volunteerManager?.phone || "";
+      managerE164 = normalizeE164(managerPhone);
+    }
+
+    // 4. Log message to /inboundMessages
+    await db.collection("inboundMessages").add({
+      from: volunteerE164,
+      fromName: volunteerName,
+      userId: volunteer ? volunteer.id : null,
+      body: inboundBody,
+      messageSid: messageSid,
+      receivedAt: admin.firestore.FieldValue.serverTimestamp(),
+      status: "received",
+      forwardedTo: managerE164 || null,
+    });
+
+    // 5. Forward to Volunteer Manager with 1-tap wa.me reply link
+    if (managerE164) {
+      const cleanPhone = volunteerE164.replace(/^\+/, "");
+      const waLink = `https://wa.me/${cleanPhone}`;
+      const forwardText =
+          `📩 *Inbound Volunteer Reply*\n\n` +
+          `*From:* ${volunteerName} (${volunteerE164})\n` +
+          `*Upcoming Shift:* ${upcomingShiftInfo}\n\n` +
+          `*Message:*\n"${inboundBody}"\n\n` +
+          `👉 Tap to reply directly:\n${waLink}`;
+
+      await sendWhatsAppAlert({
+        to: managerE164,
+        body: forwardText,
+      });
+    }
+
+    // 6. Send automated acknowledgment reply to the volunteer
+    const ackText =
+        `Hi ${volunteerName}, thanks for your message! Our volunteer ` +
+        `coordinator has received it and will follow up shortly.\n\n` +
+        `For shift rosters or info, please check the BrewCrew app.`;
+
+    await sendWhatsAppAlert({
+      to: volunteerE164,
+      body: ackText,
+    });
+  } catch (err) {
+    console.error("Error processing inbound WhatsApp webhook:", err);
+  }
+
+  res.status(200).send("<Response></Response>");
+});
+
+// ====================================================================
+// GROUP MANAGEMENT
+// ====================================================================
+
+const GROUP_NAME_MIN = 2;
+const GROUP_NAME_MAX = 50;
+const BATCH_LIMIT = 450;
+
+/**
+ * Normalises a raw group name: trims and collapses internal whitespace.
+ * @param {*} raw Raw input value.
+ * @return {string} Cleaned name ("" if not a usable string).
+ */
+function normalizeGroupName(raw) {
+  if (typeof raw !== "string") return "";
+  return raw.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * Builds the case/whitespace-insensitive lookup key for a group name.
+ * @param {string} name Group name.
+ * @return {string} Lowercased normalised key.
+ */
+function groupNameKey(name) {
+  return normalizeGroupName(name).toLowerCase();
+}
+
+/**
+ * Validates a group name supplied to an admin callable.
+ * @param {*} raw Raw name from request data.
+ * @return {string} Normalised, validated name.
+ */
+function requireValidGroupName(raw) {
+  const name = normalizeGroupName(raw);
+  if (name.length < GROUP_NAME_MIN || name.length > GROUP_NAME_MAX) {
+    throw new HttpsError(
+        "invalid-argument",
+        `Group name must be ${GROUP_NAME_MIN}-${GROUP_NAME_MAX} characters.`,
+    );
+  }
+  return name;
+}
+
+/**
+ * Verifies the caller is an enabled administrator.
+ * @param {object} request Callable request.
+ * @return {Promise<void>}
+ */
+async function assertActiveAdmin(request) {
+  if (!request.auth) {
+    throw new HttpsError("unauthenticated", "User must be logged in.");
+  }
+  const callerDoc = await db.collection("users").doc(request.auth.uid).get();
+  if (!callerDoc.exists || callerDoc.data().role !== "admin") {
+    throw new HttpsError(
+        "permission-denied",
+        "Only administrators can manage groups.",
+    );
+  }
+  if (callerDoc.data().disabled) {
+    throw new HttpsError(
+        "permission-denied",
+        "Administrator account is disabled.",
+    );
+  }
+}
+
+/**
+ * Finds a group whose nameKey matches, optionally inside a transaction.
+ * @param {string} key Group name key.
+ * @param {object} [tx] Optional Firestore transaction.
+ * @return {Promise<object|null>} Matching document snapshot or null.
+ */
+async function findGroupByKey(key, tx) {
+  const q = db.collection("groups").where("nameKey", "==", key).limit(1);
+  const snap = tx ? await tx.get(q) : await q.get();
+  return snap.empty ? null : snap.docs[0];
+}
+
+/**
+ * Returns all user docs belonging to a group: either linked by groupId, or
+ * (lazy migration) unlinked users whose free-text groupOrClub matches the
+ * group's name key.
+ * @param {string} groupId Group document ID.
+ * @param {string} nameKey Group name key.
+ * @return {Promise<Array<object>>} Matching user document snapshots.
+ */
+async function getGroupMemberDocs(groupId, nameKey) {
+  const usersSnap = await db.collection("users").get();
+  return usersSnap.docs.filter((d) => {
+    const u = d.data();
+    if (u.groupId) return u.groupId === groupId;
+    return !!u.groupOrClub && groupNameKey(u.groupOrClub) === nameKey;
+  });
+}
+
+/**
+ * Applies the same update to many docs in chunked batches.
+ * @param {Array<object>} docs Document snapshots.
+ * @param {object} update Update payload.
+ * @return {Promise<void>}
+ */
+async function batchUpdateDocs(docs, update) {
+  for (let i = 0; i < docs.length; i += BATCH_LIMIT) {
+    const batch = db.batch();
+    docs.slice(i, i + BATCH_LIMIT).forEach((d) => batch.update(d.ref, update));
+    await batch.commit();
+  }
+}
+
+/**
+ * Firestore Trigger: resolves a user's free-text groupOrClub to a canonical
+ * /groups document, creating the group if none matches. Sets groupId and
+ * the canonical name server-side so clients can never forge a groupId.
+ * Also performs lazy migration of legacy free-text groups on any write.
+ */
+exports.onUserGroupWrite = onDocumentWritten(
+    {document: "users/{userId}", region: "europe-west2"},
+    async (event) => {
+      const after = event.data?.after;
+      if (!after || !after.exists) return;
+      const data = after.data();
+      const before = event.data.before?.exists ?
+        event.data.before.data() : {};
+
+      const name = normalizeGroupName(data.groupOrClub || "");
+      const currentGroupId = data.groupId || null;
+
+      // Fast path: nothing group-related changed and already resolved.
+      if (
+        currentGroupId &&
+        before.groupOrClub === data.groupOrClub &&
+        before.groupId === currentGroupId
+      ) {
+        return;
+      }
+
+      // No group (or unusable name): ensure groupId is cleared.
+      if (name.length < GROUP_NAME_MIN) {
+        if (currentGroupId) await after.ref.update({groupId: null});
+        return;
+      }
+
+      const key = groupNameKey(name);
+
+      // Already linked to a group whose canonical name matches exactly.
+      if (currentGroupId) {
+        const g = await db.collection("groups").doc(currentGroupId).get();
+        if (g.exists && g.data().nameKey === key) {
+          if (data.groupOrClub !== g.data().name) {
+            await after.ref.update({groupOrClub: g.data().name});
+          }
+          return;
+        }
+      }
+
+      // Find or create the group atomically to avoid duplicates under
+      // concurrent signups with the same name.
+      const resolved = await db.runTransaction(async (tx) => {
+        const existing = await findGroupByKey(key, tx);
+        if (existing) {
+          return {id: existing.id, name: existing.data().name};
+        }
+        const ref = db.collection("groups").doc();
+        const newName = name.slice(0, GROUP_NAME_MAX);
+        tx.set(ref, {
+          name: newName,
+          nameKey: groupNameKey(newName),
+          includeInGroupIncentives: true,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          createdBy: "signup",
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        return {id: ref.id, name: newName};
+      });
+
+      if (
+        resolved.id !== currentGroupId ||
+        resolved.name !== data.groupOrClub
+      ) {
+        await after.ref.update({
+          groupId: resolved.id,
+          groupOrClub: resolved.name,
+        });
+      }
+    },
+);
+
+/**
+ * Admin: Create a new group.
+ */
+exports.createGroup = onCall(async (request) => {
+  await assertActiveAdmin(request);
+  const name = requireValidGroupName(request.data?.name);
+  const include = request.data?.includeInGroupIncentives;
+  if (include !== undefined && typeof include !== "boolean") {
+    throw new HttpsError(
+        "invalid-argument",
+        "includeInGroupIncentives must be a boolean.",
+    );
+  }
+  const key = groupNameKey(name);
+
+  const groupId = await db.runTransaction(async (tx) => {
+    if (await findGroupByKey(key, tx)) {
+      throw new HttpsError(
+          "already-exists",
+          `A group named "${name}" already exists.`,
+      );
+    }
+    const ref = db.collection("groups").doc();
+    tx.set(ref, {
+      name,
+      nameKey: key,
+      includeInGroupIncentives: include !== false,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      createdBy: request.auth.uid,
+      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    return ref.id;
+  });
+
+  return {success: true, groupId, name};
+});
+
+/**
+ * Admin: Rename a group and/or toggle its Group Incentives eligibility.
+ * Renames propagate to all member users' groupOrClub.
+ */
+exports.updateGroup = onCall(async (request) => {
+  await assertActiveAdmin(request);
+  const {groupId, name: rawName, includeInGroupIncentives} =
+    request.data || {};
+  if (!groupId || typeof groupId !== "string") {
+    throw new HttpsError("invalid-argument", "groupId is required.");
+  }
+  if (rawName === undefined && includeInGroupIncentives === undefined) {
+    throw new HttpsError(
+        "invalid-argument",
+        "Provide name and/or includeInGroupIncentives.",
+    );
+  }
+  if (
+    includeInGroupIncentives !== undefined &&
+    typeof includeInGroupIncentives !== "boolean"
+  ) {
+    throw new HttpsError(
+        "invalid-argument",
+        "includeInGroupIncentives must be a boolean.",
+    );
+  }
+
+  const groupRef = db.collection("groups").doc(groupId);
+  const groupDoc = await groupRef.get();
+  if (!groupDoc.exists) {
+    throw new HttpsError("not-found", "Group does not exist.");
+  }
+  const oldKey = groupDoc.data().nameKey;
+  const updates = {
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: request.auth.uid,
+  };
+  let newName = groupDoc.data().name;
+
+  if (rawName !== undefined) {
+    newName = requireValidGroupName(rawName);
+    const newKey = groupNameKey(newName);
+    if (newKey !== oldKey) {
+      const clash = await findGroupByKey(newKey);
+      if (clash && clash.id !== groupId) {
+        throw new HttpsError(
+            "already-exists",
+            `A group named "${newName}" already exists. Use merge instead.`,
+        );
+      }
+    }
+    updates.name = newName;
+    updates.nameKey = newKey;
+  }
+  if (includeInGroupIncentives !== undefined) {
+    updates.includeInGroupIncentives = includeInGroupIncentives;
+  }
+
+  // Collect members before changing nameKey so lazy (unlinked) members
+  // matching the old name are captured too.
+  let updatedUsers = 0;
+  if (updates.name !== undefined && updates.name !== groupDoc.data().name) {
+    const members = await getGroupMemberDocs(groupId, oldKey);
+    await groupRef.update(updates);
+    await batchUpdateDocs(members, {groupId, groupOrClub: newName});
+    updatedUsers = members.length;
+  } else {
+    await groupRef.update(updates);
+  }
+
+  return {
+    success: true,
+    groupId,
+    name: newName,
+    includeInGroupIncentives: updates.includeInGroupIncentives ??
+      groupDoc.data().includeInGroupIncentives !== false,
+    updatedUsers,
+  };
+});
+
+/**
+ * Admin: Merge source group into target group, then delete the source.
+ */
+exports.mergeGroups = onCall(async (request) => {
+  await assertActiveAdmin(request);
+  const {sourceGroupId, targetGroupId} = request.data || {};
+  if (!sourceGroupId || !targetGroupId ||
+      typeof sourceGroupId !== "string" || typeof targetGroupId !== "string") {
+    throw new HttpsError(
+        "invalid-argument",
+        "sourceGroupId and targetGroupId are required.",
+    );
+  }
+  if (sourceGroupId === targetGroupId) {
+    throw new HttpsError(
+        "invalid-argument",
+        "Cannot merge a group into itself.",
+    );
+  }
+
+  const [sourceDoc, targetDoc] = await Promise.all([
+    db.collection("groups").doc(sourceGroupId).get(),
+    db.collection("groups").doc(targetGroupId).get(),
+  ]);
+  if (!sourceDoc.exists || !targetDoc.exists) {
+    throw new HttpsError("not-found", "Source or target group not found.");
+  }
+
+  const targetName = targetDoc.data().name;
+  const members = await getGroupMemberDocs(
+      sourceGroupId, sourceDoc.data().nameKey,
+  );
+  // Delete the source first so the trigger cannot re-link to it.
+  await sourceDoc.ref.delete();
+  await batchUpdateDocs(members, {
+    groupId: targetGroupId,
+    groupOrClub: targetName,
+  });
+
+  return {
+    success: true,
+    targetGroupId,
+    targetName,
+    movedUsers: members.length,
+  };
+});
+
+/**
+ * Admin: Delete a group. Member users are set to "No group".
+ */
+exports.deleteGroup = onCall(async (request) => {
+  await assertActiveAdmin(request);
+  const {groupId} = request.data || {};
+  if (!groupId || typeof groupId !== "string") {
+    throw new HttpsError("invalid-argument", "groupId is required.");
+  }
+  const groupDoc = await db.collection("groups").doc(groupId).get();
+  if (!groupDoc.exists) {
+    throw new HttpsError("not-found", "Group does not exist.");
+  }
+
+  const members = await getGroupMemberDocs(groupId, groupDoc.data().nameKey);
+  await groupDoc.ref.delete();
+  await batchUpdateDocs(members, {groupId: null, groupOrClub: ""});
+
+  return {success: true, groupId, affectedUsers: members.length};
+});
+
+/**
+ * Admin: Assign a user to a group, or clear their group (groupId: null).
+ */
+exports.setUserGroup = onCall(async (request) => {
+  await assertActiveAdmin(request);
+  const {targetUserId, groupId} = request.data || {};
+  if (!targetUserId || typeof targetUserId !== "string") {
+    throw new HttpsError("invalid-argument", "targetUserId is required.");
+  }
+  if (groupId !== null && (typeof groupId !== "string" || !groupId)) {
+    throw new HttpsError(
+        "invalid-argument",
+        "groupId must be a group ID string or null.",
+    );
+  }
+
+  const userRef = db.collection("users").doc(targetUserId);
+  const userDoc = await userRef.get();
+  if (!userDoc.exists) {
+    throw new HttpsError("not-found", "Target user does not exist.");
+  }
+
+  let groupName = "";
+  if (groupId) {
+    const groupDoc = await db.collection("groups").doc(groupId).get();
+    if (!groupDoc.exists) {
+      throw new HttpsError("not-found", "Group does not exist.");
+    }
+    groupName = groupDoc.data().name;
+  }
+
+  await userRef.update({
+    groupId: groupId || null,
+    groupOrClub: groupName,
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: request.auth.uid,
+  });
+
+  return {
+    success: true,
+    userId: targetUserId,
+    groupId: groupId || null,
+    groupName,
   };
 });
 

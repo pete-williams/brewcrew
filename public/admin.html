@@ -140,6 +140,9 @@
       <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
       <polyline points="22,6 12,13 2,6" />
     </symbol>
+    <symbol id="icon-whatsapp" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+    </symbol>
     <symbol id="icon-slash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <circle cx="12" cy="12" r="10" />
       <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
@@ -194,6 +197,11 @@
     <symbol id="icon-arrow-left" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <line x1="19" y1="12" x2="5" y2="12" />
       <polyline points="12 19 5 12 12 5" />
+    </symbol>
+    <symbol id="icon-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="10" />
+      <line x1="12" y1="16" x2="12" y2="12" />
+      <line x1="12" y1="8" x2="12.01" y2="8" />
     </symbol>
     <symbol id="icon-logout" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -307,7 +315,7 @@
           <button type="button" onclick="switchAdminTab('broadcast')" id="tab-btn-broadcast"
             class="admin-tab-btn flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap transition min-h-[44px]">
             <svg class="w-3.5 h-3.5 shrink-0"><use href="#icon-mail" /></svg>
-            <span>Email Broadcast</span>
+            <span>Communications</span>
           </button>
 
           <button type="button" onclick="switchAdminTab('blocked')" id="tab-btn-blocked"
@@ -375,8 +383,24 @@
                   <option value="role">Role (Admin first)</option>
                   <option value="shifts-desc">Shifts (Most first)</option>
                   <option value="status">Status (Active first)</option>
+                  <option value="group">Group (A &rarr; Z)</option>
                 </select>
               </div>
+
+              <div class="flex items-center gap-1.5">
+                <label for="crew-group-filter" class="text-2xs font-bold text-slate-500 uppercase tracking-wider">Group</label>
+                <select id="crew-group-filter" onchange="setCrewGroupFilter(this.value)"
+                  class="text-xs px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 max-w-[12rem]">
+                  <option value="ALL">All groups</option>
+                  <option value="NONE">No group</option>
+                </select>
+              </div>
+
+              <button type="button" id="btn-open-manage-groups" onclick="openManageGroupsModal()"
+                class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition">
+                <svg class="w-3.5 h-3.5"><use href="#icon-users" /></svg>
+                Manage Groups
+              </button>
 
               <div class="flex items-center gap-1.5">
                 <label for="crew-page-size" class="text-2xs font-bold text-slate-500 uppercase tracking-wider">Show</label>
@@ -748,66 +772,322 @@
       </section>
 
       <!-- ==================================================================== -->
-      <!-- TAB 6: EMAIL ANNOUNCEMENTS & BROADCAST                               -->
+      <!-- TAB 6: OMNICHANNEL COMMUNICATIONS & ANNOUNCEMENTS                   -->
       <!-- ==================================================================== -->
       <section id="panel-broadcast" class="admin-panel hidden space-y-5">
-        <div class="bg-white p-5 rounded-xl border border-amber-200 shadow-sm space-y-4">
-          <div class="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-slate-100">
+        <!-- Main Console Card -->
+        <div class="bg-white p-5 sm:p-6 rounded-xl border border-amber-200 shadow-sm space-y-6">
+          <!-- Header & Live Breakdown Pill -->
+          <div class="flex flex-wrap justify-between items-center gap-3 pb-4 border-b border-slate-100">
             <div>
               <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
                 <svg class="w-4 h-4 text-amber-700 shrink-0"><use href="#icon-mail" /></svg>
-                Email Announcements &amp; Broadcast
+                Communications &amp; Announcements
               </h2>
-              <p class="text-xs text-slate-500">Dispatch mass notification emails directly to volunteers and managers via backend Cloud Functions.</p>
+              <p class="text-xs text-slate-500">Dispatch targeted email announcements and WhatsApp broadcast alerts with dynamic schedule personalization.</p>
             </div>
-            <span class="text-xs font-semibold px-2.5 py-1 bg-amber-100 text-amber-900 rounded-full flex items-center gap-1">
-              <svg class="w-3 h-3"><use href="#icon-users" /></svg>
-              <span id="admin-broadcast-recipient-preview">Target: All Volunteers</span>
-            </span>
+            <div id="comm-target-summary-badge" class="text-xs font-semibold px-3 py-1.5 bg-amber-100 text-amber-900 border border-amber-300 rounded-full flex items-center gap-2 tabular-nums shadow-xs">
+              <svg class="w-3.5 h-3.5 text-amber-800"><use href="#icon-users" /></svg>
+              <span id="comm-target-summary-text">Target: All Crew • Calculating...</span>
+            </div>
           </div>
 
+          <!-- Channel Selection Tabs -->
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" id="comm-channel-email-btn" onclick="switchCommChannel('email')"
+              class="flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition min-h-[44px] bg-amber-700 text-white shadow-xs">
+              <svg class="w-4 h-4 shrink-0"><use href="#icon-mail" /></svg>
+              <span>Email Announcement</span>
+            </button>
+            <button type="button" id="comm-channel-whatsapp-btn" onclick="switchCommChannel('whatsapp')"
+              class="flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold transition min-h-[44px] bg-stone-100 text-slate-700 hover:bg-stone-200 border border-slate-200">
+              <svg class="w-4 h-4 shrink-0 text-emerald-600"><use href="#icon-whatsapp" /></svg>
+              <span>WhatsApp Message</span>
+            </button>
+          </div>
+
+          <!-- Shared Cascading Target Controls -->
+          <div class="space-y-4 pt-3 border-t border-slate-100">
+            <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+              <svg class="w-3.5 h-3.5 text-amber-700"><use href="#icon-users" /></svg>
+              Recipient Targeting Matrix
+            </h3>
+
+            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <div>
+                <label class="block text-2xs font-bold text-slate-700 mb-1" for="comm-target-type">
+                  Target Group
+                </label>
+                <select id="comm-target-type" onchange="handleCommTargetTypeChange(this.value)"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 min-h-[40px]">
+                  <option value="all">All Festival Crew (Volunteers &amp; Managers)</option>
+                  <option value="role">Role Group (Volunteers only or Managers only)</option>
+                  <option value="category">Shift Area / Category (e.g. Keg Bar, Cider Bar)</option>
+                  <option value="shift">Specific Shift Slot (Date &amp; Time)</option>
+                  <option value="users">Specific Volunteer(s) (Search &amp; Pick)</option>
+                </select>
+              </div>
+
+              <!-- Context Secondary Selector (Dynamic) -->
+              <div id="comm-context-container">
+                <label class="block text-2xs font-bold text-slate-700 mb-1" for="comm-context-select" id="comm-context-label">
+                  Filter Option
+                </label>
+                <select id="comm-context-select" onchange="handleCommContextChange()"
+                  class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 min-h-[40px]">
+                  <!-- Populated dynamically via JS -->
+                </select>
+              </div>
+
+              <!-- Confirmed Shifts Filter Toggle -->
+              <div class="flex items-end pb-1">
+                <label class="flex items-center gap-2 cursor-pointer px-1 py-2 w-full min-h-[40px]">
+                  <input type="checkbox" id="comm-only-confirmed-shifts" onchange="updateCommTargetPreview()"
+                    class="rounded border-slate-300 text-amber-700 focus:ring-amber-500 w-4 h-4 cursor-pointer">
+                  <div class="leading-tight">
+                    <span class="block text-xs font-semibold text-slate-700">Confirmed Shifts Only</span>
+                    <span class="block text-2xs text-slate-500">Skip volunteers with 0 shifts</span>
+                  </div>
+                </label>
+              </div>
+            </div>
+
+            <!-- Specific Volunteer Multi-Select Picker (Shown when targetType === 'users') -->
+            <div id="comm-user-picker-container" class="hidden space-y-2 pt-2 border-t border-slate-100">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <span class="text-xs font-bold text-slate-700">Select Specific Volunteers:</span>
+                <div class="flex items-center gap-2">
+                  <button type="button" onclick="selectAllCommUsers(true)"
+                    class="text-2xs font-bold text-amber-800 hover:text-amber-900 bg-amber-100 hover:bg-amber-200 px-2.5 py-1 rounded transition">
+                    Select All Matching
+                  </button>
+                  <button type="button" onclick="selectAllCommUsers(false)"
+                    class="text-2xs font-bold text-slate-600 hover:text-slate-800 bg-slate-200 hover:bg-slate-300 px-2.5 py-1 rounded transition">
+                    Clear Selection
+                  </button>
+                </div>
+              </div>
+              <div class="relative">
+                <input type="text" id="comm-user-search-input" oninput="filterCommUserList(this.value)"
+                  placeholder="Filter crew by name, email, or phone..."
+                  class="w-full text-xs pl-8 pr-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500" />
+                <svg class="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-3 pointer-events-none"><use href="#icon-search" /></svg>
+              </div>
+              <div id="comm-user-list-items" class="max-h-52 overflow-y-auto divide-y divide-slate-100 border border-slate-200 rounded-lg p-1">
+                <!-- User rows populated via JS -->
+              </div>
+            </div>
+
+            <!-- Real-Time Target Metrics Strip -->
+            <div class="flex flex-wrap items-center gap-3 pt-2 text-xs border-t border-slate-100">
+              <div class="flex items-center gap-1.5 text-slate-700">
+                <span class="w-2 h-2 rounded-full bg-amber-500"></span>
+                <span>Matching: <strong id="comm-stat-matching" class="tabular-nums text-amber-950 font-bold">0</strong></span>
+              </div>
+              <div class="flex items-center gap-1.5 text-slate-700">
+                <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                <span>Email Ready: <strong id="comm-stat-email-ready" class="tabular-nums text-blue-900 font-bold">0</strong></span>
+              </div>
+              <div class="flex items-center gap-1.5 text-slate-700">
+                <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+                <span>WhatsApp Ready: <strong id="comm-stat-whatsapp-ready" class="tabular-nums text-emerald-900 font-bold">0</strong></span>
+              </div>
+              <div class="flex items-center gap-1.5 text-slate-500 ml-auto">
+                <span>Opted-Out / No Phone: <strong id="comm-stat-skipped" class="tabular-nums font-bold">0</strong></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Alert Container -->
           <div id="admin-broadcast-alert" class="hidden p-3 rounded-lg text-xs"></div>
 
-          <form id="admin-broadcast-form" onsubmit="handleSendAdminBroadcast(event)" class="space-y-4">
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div class="sm:col-span-2">
+          <!-- Message Composer & Live Preview Grid -->
+          <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+            <!-- Composer Column (7 cols) -->
+            <div class="lg:col-span-7 space-y-4">
+              <!-- Quick Starter Presets -->
+              <div>
+                <span class="block text-2xs font-bold text-slate-700 uppercase tracking-wider mb-1.5">Quick Starter Templates</span>
+                <div class="flex flex-wrap gap-1.5">
+                  <button type="button" onclick="applyCommStarter('briefing')"
+                    class="text-2xs font-semibold px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-md transition border border-amber-300">
+                    Shift Briefing &amp; Safety
+                  </button>
+                  <button type="button" onclick="applyCommStarter('age_rules')"
+                    class="text-2xs font-semibold px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-md transition border border-amber-300">
+                    Bar Age &amp; Token Rules
+                  </button>
+                  <button type="button" onclick="applyCommStarter('schedule_reminder')"
+                    class="text-2xs font-semibold px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-md transition border border-amber-300">
+                    Festival Schedule Reminder
+                  </button>
+                  <button type="button" onclick="applyCommStarter('thank_you')"
+                    class="text-2xs font-semibold px-2.5 py-1 bg-amber-100 hover:bg-amber-200 text-amber-900 rounded-md transition border border-amber-300">
+                    Shift Thank You
+                  </button>
+                </div>
+              </div>
+
+              <!-- Subject Input (Only visible in Email mode) -->
+              <div id="comm-subject-field-container">
                 <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-broadcast-subject">
                   Email Subject <span class="text-rose-500">*</span>
                 </label>
-                <input type="text" id="admin-broadcast-subject" required placeholder="e.g. Festival Shift Arrival Briefing &amp; Parking"
+                <input type="text" id="admin-broadcast-subject" oninput="updateCommLivePreview()"
+                  placeholder="e.g. {{first_name}}, important briefing for your {{category}} shift"
                   class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
               </div>
+
+              <!-- Dynamic Tag Insertion Chips -->
               <div>
-                <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-broadcast-target">
-                  Recipients
+                <span class="block text-2xs font-bold text-slate-700 uppercase tracking-wider mb-1">Click To Insert Dynamic Placeholders</span>
+                <div class="flex flex-wrap gap-1.5">
+                  <button type="button" onclick="insertCommPlaceholder('{{first_name}}')"
+                    class="text-2xs font-mono font-bold px-2 py-0.5 bg-stone-100 hover:bg-amber-200 text-amber-900 border border-slate-200 rounded transition" title="Insert recipient first name">
+                    + {{first_name}}
+                  </button>
+                  <button type="button" onclick="insertCommPlaceholder('{{name}}')"
+                    class="text-2xs font-mono font-bold px-2 py-0.5 bg-stone-100 hover:bg-amber-200 text-amber-900 border border-slate-200 rounded transition" title="Insert recipient full name">
+                    + {{name}}
+                  </button>
+                  <button type="button" onclick="insertCommPlaceholder('{{all_shifts}}')"
+                    class="text-2xs font-mono font-bold px-2 py-0.5 bg-amber-100 hover:bg-amber-200 text-amber-950 border border-amber-300 rounded transition" title="Insert chronological shift list">
+                    + {{all_shifts}}
+                  </button>
+                  <button type="button" onclick="insertCommPlaceholder('{{category}}')"
+                    class="text-2xs font-mono font-bold px-2 py-0.5 bg-stone-100 hover:bg-amber-200 text-amber-900 border border-slate-200 rounded transition" title="Insert shift area/role">
+                    + {{category}}
+                  </button>
+                  <button type="button" onclick="insertCommPlaceholder('{{date}}')"
+                    class="text-2xs font-mono font-bold px-2 py-0.5 bg-stone-100 hover:bg-amber-200 text-amber-900 border border-slate-200 rounded transition" title="Insert shift date">
+                    + {{date}}
+                  </button>
+                  <button type="button" onclick="insertCommPlaceholder('{{time}}')"
+                    class="text-2xs font-mono font-bold px-2 py-0.5 bg-stone-100 hover:bg-amber-200 text-amber-900 border border-slate-200 rounded transition" title="Insert shift time range">
+                    + {{time}}
+                  </button>
+                </div>
+              </div>
+
+              <!-- Message Body -->
+              <div>
+                <div class="flex justify-between items-center mb-1">
+                  <label class="block text-xs font-bold text-slate-700" for="admin-broadcast-body">
+                    Message Content <span class="text-rose-500">*</span>
+                  </label>
+                  <span id="comm-char-counter" class="text-2xs font-semibold tabular-nums text-slate-500">0 characters</span>
+                </div>
+                <textarea id="admin-broadcast-body" rows="7" oninput="handleCommBodyInput()"
+                  placeholder="Write your announcement or briefing here..."
+                  class="w-full text-xs p-3 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 font-sans"></textarea>
+                <p id="comm-formatting-hint" class="text-2xs text-slate-500 mt-1">
+                  Line breaks are converted into formatted paragraphs. Use dynamic placeholders to personalize each message.
+                </p>
+              </div>
+
+              <!-- Cross-Channel Mirroring Toggle -->
+              <div class="pt-1">
+                <label class="flex items-center gap-2 cursor-pointer pt-1">
+                  <input type="checkbox" id="comm-mirror-channel" onchange="updateCommTargetPreview()"
+                    class="rounded border-slate-300 text-amber-700 focus:ring-amber-500 w-4 h-4 cursor-pointer">
+                  <div>
+                    <span id="comm-mirror-label" class="block text-xs font-bold text-slate-800">Also mirror and send via WhatsApp</span>
+                    <span class="block text-2xs text-slate-500">Dispatches across both Email and WhatsApp in one simultaneous broadcast.</span>
+                  </div>
                 </label>
-                <select id="admin-broadcast-target" onchange="updateBroadcastTargetLabel(this.value)"
-                  class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 min-h-[38px]">
-                  <option value="volunteer">All Volunteers</option>
-                  <option value="manager">Shift Managers</option>
-                  <option value="all">All Crew (Volunteers, Managers &amp; Admins)</option>
-                </select>
+              </div>
+
+              <!-- Dispatch Action Button -->
+              <div class="flex items-center justify-between pt-2">
+                <p class="text-2xs text-slate-500 italic">Dispatches require confirmation. Disabled accounts are always excluded.</p>
+                <button type="button" id="btn-submit-broadcast" onclick="openCommReviewModal()"
+                  class="bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold px-6 py-2.5 rounded-xl transition shadow-sm flex items-center gap-2 min-h-[44px]">
+                  <svg class="w-4 h-4 shrink-0" id="btn-broadcast-icon"><use href="#icon-mail" /></svg>
+                  <span id="btn-broadcast-text">Review &amp; Dispatch Announcement</span>
+                </button>
               </div>
             </div>
 
-            <div>
-              <label class="block text-xs font-bold text-slate-700 mb-1" for="admin-broadcast-body">
-                Message Body <span class="text-rose-500">*</span>
-              </label>
-              <textarea id="admin-broadcast-body" required rows="6"
-                placeholder="Write your announcement here. Line breaks are converted into formatted paragraphs automatically."
-                class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500 font-sans"></textarea>
-            </div>
+            <!-- Live Preview Column (5 cols) -->
+            <div class="lg:col-span-5 space-y-3">
+              <div class="flex justify-between items-center">
+                <span class="text-2xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+                  <svg class="w-3.5 h-3.5 text-amber-700"><use href="#icon-clipboard" /></svg>
+                  Recipient Preview (<span id="comm-preview-channel-name">Email</span>)
+                </span>
+                <span class="text-2xs font-semibold text-slate-500">Sample Volunteer: Alex Green</span>
+              </div>
 
-            <div class="flex flex-wrap items-center justify-between gap-3 pt-2">
-              <p class="text-2xs text-slate-500 italic">Dispatched via festival email relay. Disabled accounts are automatically excluded.</p>
-              <button type="submit" id="btn-submit-broadcast"
-                class="bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold px-5 py-2.5 rounded-xl transition shadow-sm flex items-center gap-2 min-h-[44px]">
-                <svg class="w-4 h-4 shrink-0"><use href="#icon-mail" /></svg>
-                <span id="btn-broadcast-text">Send Announcement Email</span>
-              </button>
+              <!-- Email Live Preview Box -->
+              <div id="comm-preview-email-card" class="bg-stone-50 p-4 rounded-xl border border-amber-200/80 shadow-xs space-y-3 text-slate-800">
+                <div class="border-b-2 border-amber-700 pb-2">
+                  <span class="text-xs font-bold text-amber-950 flex items-center gap-1">
+                    🍺 <span id="comm-preview-festival-name">BrewCrew Festival</span>
+                  </span>
+                  <p class="text-2xs text-slate-500 mt-0.5">Subject: <span id="comm-preview-email-subject" class="font-semibold text-slate-700">Festival Shift Arrival Briefing</span></p>
+                </div>
+                <div id="comm-preview-email-body" class="text-xs leading-relaxed text-slate-700 space-y-2 max-h-72 overflow-y-auto">
+                  <!-- Rendered HTML preview -->
+                </div>
+                <div class="pt-2 border-t border-slate-200 text-3xs text-slate-400">
+                  Sent via BrewCrew Volunteer Platform • Sent to alex@example.com
+                </div>
+              </div>
+
+              <!-- WhatsApp Simulated Mobile Bubble -->
+              <div id="comm-preview-whatsapp-card" class="hidden rounded-xl border border-slate-300 overflow-hidden shadow-xs">
+                <div class="bg-emerald-800 text-white px-3 py-1.5 text-2xs font-bold flex items-center justify-between">
+                  <span class="flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5"><use href="#icon-whatsapp" /></svg>
+                    BrewCrew Coordinator
+                  </span>
+                  <span class="text-3xs text-emerald-200">Online</span>
+                </div>
+                <div class="bg-[#efeae2] p-3 space-y-2 min-h-[160px] max-h-72 overflow-y-auto text-xs">
+                  <div class="bg-white p-2.5 rounded-lg rounded-tl-none shadow-xs border border-slate-200 max-w-[95%] space-y-1 text-slate-800 leading-snug">
+                    <div id="comm-preview-whatsapp-body" class="text-xs whitespace-pre-wrap">
+                      <!-- Rendered WhatsApp text -->
+                    </div>
+                    <div class="text-right text-3xs text-slate-400 font-semibold tabular-nums pt-1">
+                      14:32 ✓✓
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
-          </form>
+          </div>
+        </div>
+
+        <!-- Recent Dispatches Card -->
+        <div class="bg-white p-5 rounded-xl border border-amber-200 shadow-sm space-y-3">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+              <svg class="w-3.5 h-3.5 text-amber-700"><use href="#icon-clipboard" /></svg>
+              Recent Broadcast Dispatches
+            </h3>
+            <span class="text-2xs text-slate-500">Session Audit History</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left text-xs divide-y divide-slate-100">
+              <thead class="bg-stone-50 text-slate-600 font-bold text-2xs uppercase">
+                <tr>
+                  <th class="py-2 px-3">Date &amp; Time</th>
+                  <th class="py-2 px-3">Channel</th>
+                  <th class="py-2 px-3">Target Scope</th>
+                  <th class="py-2 px-3 text-center">Delivered</th>
+                  <th class="py-2 px-3 text-center">Skipped</th>
+                  <th class="py-2 px-3">Subject / Excerpt</th>
+                </tr>
+              </thead>
+              <tbody id="comm-recent-history-tbody" class="divide-y divide-slate-100 text-slate-700">
+                <tr>
+                  <td colspan="6" class="text-center py-4 text-slate-400 italic text-2xs">
+                    No broadcasts dispatched yet in this session.
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
 
@@ -917,6 +1197,192 @@
             class="px-4 py-2 rounded-lg text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white transition shadow-xs min-h-[40px] flex items-center gap-1.5">
             <svg class="w-3.5 h-3.5"><use href="#icon-check" /></svg>
             <span id="btn-submit-assign-vol-text">Confirm Shift Assignment</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- MODAL: MANAGE GROUPS (Create / Rename / Merge / Delete / Incentives)  -->
+  <!-- ==================================================================== -->
+  <div id="modal-manage-groups" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 hidden">
+    <div class="bg-white border border-amber-200 rounded-xl max-w-2xl w-full p-5 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div>
+          <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+            <svg class="w-4 h-4 text-amber-700"><use href="#icon-users" /></svg>
+            Manage Groups
+          </h3>
+          <p class="text-2xs text-slate-500 mt-0.5">Groups volunteers can select at registration. Groups entered by volunteers appear here automatically.</p>
+        </div>
+        <button type="button" onclick="closeManageGroupsModal()" aria-label="Close" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <svg class="w-4 h-4"><use href="#icon-x" /></svg>
+        </button>
+      </div>
+
+      <!-- Explanatory banner for Group Incentives -->
+      <div class="bg-amber-50/70 border border-amber-200/80 rounded-lg p-3 text-2xs text-amber-900 leading-relaxed flex items-start gap-2">
+        <svg class="w-4 h-4 text-amber-700 shrink-0 mt-0.5"><use href="#icon-info" /></svg>
+        <div>
+          <strong>Group Incentives:</strong> Active groups aggregate volunteer shift hours towards festival club milestones and recognition. Toggle off external organizations or commercial groups that should not participate in volunteer group perks.
+        </div>
+      </div>
+
+      <div id="manage-groups-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+      <form id="form-create-group" onsubmit="handleCreateGroup(event)" class="flex flex-col sm:flex-row gap-2">
+        <input type="text" id="new-group-name" maxlength="50" required minlength="2" placeholder="New group name, e.g. CAMRA North Branch"
+          aria-label="New group name"
+          class="flex-grow text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+        <button type="submit" id="btn-create-group"
+          class="flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white transition shadow-xs min-h-[40px]">
+          <svg class="w-3.5 h-3.5"><use href="#icon-plus" /></svg>
+          Add Group
+        </button>
+      </form>
+
+      <div class="flex items-center justify-between text-2xs text-slate-500 font-bold uppercase tracking-wider px-1">
+        <span id="manage-groups-count">0 groups</span>
+        <span>Actions &amp; Settings</span>
+      </div>
+
+      <div id="manage-groups-list" class="overflow-y-auto divide-y divide-slate-100 flex-grow min-h-[6rem] max-h-[50vh] pr-0.5">
+        <div class="p-6 text-center text-slate-400 italic text-xs">No groups yet.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- MODAL: SET A USER'S GROUP                                            -->
+  <!-- ==================================================================== -->
+  <div id="modal-set-user-group" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 hidden">
+    <div class="bg-white border border-amber-200 rounded-xl max-w-sm w-full p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+          <svg class="w-4 h-4 text-amber-700"><use href="#icon-users" /></svg>
+          Set Group
+        </h3>
+        <button type="button" onclick="closeSetUserGroupModal()" aria-label="Close" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <svg class="w-4 h-4"><use href="#icon-x" /></svg>
+        </button>
+      </div>
+
+      <div id="set-user-group-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+      <form id="form-set-user-group" onsubmit="handleSetUserGroupSubmit(event)" class="space-y-3">
+        <input type="hidden" id="set-user-group-uid" value="">
+        <p class="text-xs text-slate-600">Group for <strong id="set-user-group-name" class="text-slate-800">this user</strong>:</p>
+        <select id="set-user-group-select" aria-label="Group"
+          class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+          <option value="">No group</option>
+        </select>
+        <p id="set-user-group-legacy" class="hidden text-2xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md p-2"></p>
+        <div class="flex justify-end items-center gap-2 pt-3 border-t border-slate-100">
+          <button type="button" onclick="closeSetUserGroupModal()"
+            class="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 transition min-h-[40px]">
+            Cancel
+          </button>
+          <button type="submit" id="btn-submit-set-user-group"
+            class="px-4 py-2 rounded-lg text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white transition shadow-xs min-h-[40px]">
+            Save Group
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- MODAL: MERGE GROUP (Themed In-App Dialog)                             -->
+  <!-- ==================================================================== -->
+  <div id="modal-merge-group" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 hidden">
+    <div class="bg-white border border-amber-200 rounded-xl max-w-md w-full p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+          <svg class="w-4 h-4 text-amber-700"><use href="#icon-users" /></svg>
+          Merge Group
+        </h3>
+        <button type="button" onclick="closeMergeGroupModal()" aria-label="Close" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <svg class="w-4 h-4"><use href="#icon-x" /></svg>
+        </button>
+      </div>
+
+      <div id="merge-group-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+      <form id="form-merge-group" onsubmit="handleMergeGroupSubmit(event)" class="space-y-3">
+        <input type="hidden" id="merge-group-source-id" value="">
+
+        <p class="text-xs text-slate-600 leading-relaxed">
+          Merge <strong id="merge-group-source-name" class="text-slate-800"></strong> into another managed group:
+        </p>
+
+        <div>
+          <label class="block text-2xs font-bold text-slate-600 mb-1" for="merge-group-target-select">Destination Group</label>
+          <select id="merge-group-target-select" required aria-label="Destination Group"
+            class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+          </select>
+        </div>
+
+        <div class="bg-amber-50/70 border border-amber-200/80 rounded-lg p-3 text-2xs text-amber-900 leading-relaxed flex items-start gap-2">
+          <svg class="w-4 h-4 text-amber-700 shrink-0 mt-0.5"><use href="#icon-info" /></svg>
+          <div>
+            <strong id="merge-group-members-count">0 volunteers</strong> will have their group reassigned to the destination group. <strong id="merge-group-source-delete-note"></strong> will then be removed from the system.
+          </div>
+        </div>
+
+        <div class="flex justify-end items-center gap-2 pt-3 border-t border-slate-100">
+          <button type="button" onclick="closeMergeGroupModal()"
+            class="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 transition min-h-[40px]">
+            Cancel
+          </button>
+          <button type="submit" id="btn-submit-merge-group"
+            class="px-4 py-2 rounded-lg text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white transition shadow-xs min-h-[40px]">
+            Confirm Merge
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- MODAL: DELETE GROUP (Themed In-App Dialog)                            -->
+  <!-- ==================================================================== -->
+  <div id="modal-delete-group" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 hidden">
+    <div class="bg-white border border-rose-200 rounded-xl max-w-md w-full p-5 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <h3 class="text-sm font-bold text-rose-800 flex items-center gap-2">
+          <svg class="w-4 h-4 text-rose-700"><use href="#icon-trash" /></svg>
+          Delete Group
+        </h3>
+        <button type="button" onclick="closeDeleteGroupModal()" aria-label="Close" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg">
+          <svg class="w-4 h-4"><use href="#icon-x" /></svg>
+        </button>
+      </div>
+
+      <div id="delete-group-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+      <form id="form-delete-group" onsubmit="handleDeleteGroupSubmit(event)" class="space-y-3">
+        <input type="hidden" id="delete-group-id" value="">
+
+        <p class="text-xs text-slate-700 leading-relaxed">
+          Are you sure you want to delete <strong id="delete-group-name" class="text-slate-900"></strong>?
+        </p>
+
+        <div class="bg-rose-50 border border-rose-200 rounded-lg p-3 text-2xs text-rose-900 leading-relaxed flex items-start gap-2">
+          <svg class="w-4 h-4 text-rose-700 shrink-0 mt-0.5"><use href="#icon-trash" /></svg>
+          <div>
+            <strong id="delete-group-members-count">0 volunteers</strong> currently linked to this group will have their group set to "No group". This action cannot be undone.
+          </div>
+        </div>
+
+        <div class="flex justify-end items-center gap-2 pt-3 border-t border-slate-100">
+          <button type="button" onclick="closeDeleteGroupModal()"
+            class="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 transition min-h-[40px]">
+            Cancel
+          </button>
+          <button type="submit" id="btn-submit-delete-group"
+            class="px-4 py-2 rounded-lg text-xs font-bold bg-rose-700 hover:bg-rose-800 text-white transition shadow-xs min-h-[40px]">
+            Delete Group
           </button>
         </div>
       </form>
@@ -1093,6 +1559,71 @@
           </button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- MODAL: BROADCAST SAFETY PRE-FLIGHT REVIEW                            -->
+  <!-- ==================================================================== -->
+  <div id="modal-comm-review" class="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 z-50 hidden">
+    <div class="bg-white rounded-xl border border-amber-200 shadow-2xl max-w-lg w-full p-5 sm:p-6 space-y-4">
+      <div class="flex justify-between items-center pb-3 border-b border-slate-100">
+        <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+          <svg class="w-4 h-4 text-amber-700"><use href="#icon-shield" /></svg>
+          Review Broadcast Pre-Flight
+        </h3>
+        <button type="button" onclick="closeCommReviewModal()" class="text-slate-400 hover:text-slate-600 p-1">
+          <svg class="w-4 h-4"><use href="#icon-x" /></svg>
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div class="grid grid-cols-2 gap-3 bg-stone-50 p-3 rounded-lg border border-slate-200">
+          <div>
+            <span class="text-2xs font-bold text-slate-500 uppercase">Channels</span>
+            <div id="comm-review-channels" class="font-bold text-slate-800 mt-0.5 flex gap-1">
+              <!-- Badges -->
+            </div>
+          </div>
+          <div>
+            <span class="text-2xs font-bold text-slate-500 uppercase">Target Audience</span>
+            <div id="comm-review-target" class="font-bold text-slate-800 mt-0.5 truncate">
+              <!-- Target description -->
+            </div>
+          </div>
+          <div>
+            <span class="text-2xs font-bold text-slate-500 uppercase">Recipients To Receive</span>
+            <div id="comm-review-count" class="font-bold text-emerald-700 mt-0.5 tabular-nums">
+              0
+            </div>
+          </div>
+          <div>
+            <span class="text-2xs font-bold text-slate-500 uppercase">Opted-Out / Skipped</span>
+            <div id="comm-review-skipped" class="font-bold text-slate-500 mt-0.5 tabular-nums">
+              0
+            </div>
+          </div>
+        </div>
+
+        <div>
+          <span class="text-2xs font-bold text-slate-500 uppercase">Personalized Message Preview (Alex Green)</span>
+          <div id="comm-review-preview-text" class="mt-1 p-3 rounded-lg bg-stone-100 border border-slate-200 text-slate-700 max-h-48 overflow-y-auto whitespace-pre-wrap leading-relaxed">
+            <!-- Sample preview -->
+          </div>
+        </div>
+      </div>
+
+      <div class="flex justify-end items-center gap-2 pt-3 border-t border-slate-100">
+        <button type="button" onclick="closeCommReviewModal()"
+          class="px-4 py-2.5 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 transition min-h-[44px]">
+          Back to Edit
+        </button>
+        <button type="button" id="btn-confirm-comm-dispatch" onclick="executeCommDispatch()"
+          class="px-5 py-2.5 rounded-lg text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white transition shadow-sm flex items-center gap-2 min-h-[44px]">
+          <svg class="w-4 h-4"><use href="#icon-check" /></svg>
+          <span id="btn-confirm-dispatch-text">Confirm &amp; Dispatch Now</span>
+        </button>
+      </div>
     </div>
   </div>
 

@@ -330,13 +330,162 @@ function updateAdminExports(isAdmin) {
 // Initial state: ensure admin functions are NOT available to non-admin users
 updateAdminExports(false);
 
+/**
+ * Normalizes a phone number to standard E.164 format.
+ * Defaults to UK (+44) for local 07... mobile numbers.
+ * @param {string} rawPhone Raw input phone number.
+ * @return {string|null} E.164 phone string (e.g. "+447123456789") or null.
+ */
+function normalizeE164(rawPhone) {
+  if (!rawPhone || typeof rawPhone !== "string") return null;
+  let cleaned = rawPhone.replace(/[^\d+]/g, "");
+  if (cleaned.startsWith("00")) cleaned = "+" + cleaned.slice(2);
+  if (cleaned.startsWith("07") && cleaned.length === 11) cleaned = "+44" + cleaned.slice(1);
+  if (!cleaned.startsWith("+") && cleaned.length >= 10) cleaned = "+" + cleaned;
+  return /^\+[1-9]\d{7,14}$/.test(cleaned) ? cleaned : null;
+}
+
+/**
+ * Attaches a live E.164 normalization preview to a phone input element.
+ * @param {string} inputId HTML ID of input element.
+ * @param {string} previewId HTML ID of preview container element.
+ */
+function setupPhonePreview(inputId, previewId) {
+  const input = document.getElementById(inputId);
+  const preview = document.getElementById(previewId);
+  if (!input || !preview) return;
+
+  function update() {
+    const val = input.value.trim();
+    if (!val) {
+      preview.classList.add("hidden");
+      preview.innerHTML = "";
+      return;
+    }
+    const e164 = normalizeE164(val);
+    if (e164) {
+      preview.className = "text-2xs text-emerald-700 font-mono mt-1 flex items-center gap-1";
+      preview.innerHTML = `<span class="font-bold">✓</span> WhatsApp ready: <strong>${escapeHtml(e164)}</strong>`;
+      preview.classList.remove("hidden");
+    } else {
+      preview.className = "text-2xs text-amber-700 font-mono mt-1 flex items-center gap-1";
+      preview.innerHTML = `<span>ℹ</span> UK mobile (07...) or international format (+44...) required for WhatsApp.`;
+      preview.classList.remove("hidden");
+    }
+  }
+
+  input.addEventListener("input", update);
+  input.addEventListener("change", update);
+}
+
+// ============================================================================
+// Volunteer Groups (public /groups list for signup & profile pickers)
+// ============================================================================
+let availableGroups = [];
+const GROUP_OTHER_VALUE = "__other__";
+
+function normalizeGroupNameClient(raw) {
+  return (raw || "").replace(/\s+/g, " ").trim();
+}
+
+function subscribeToGroups() {
+  db.collection("groups").orderBy("name").onSnapshot((snap) => {
+    availableGroups = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    populateGroupSelect("register");
+    populateGroupSelect("profile");
+  }, (err) => console.warn("Groups subscription error:", err));
+}
+
+/**
+ * Rebuilds a group <select>. If selectedName is given it is selected (matched
+ * case-insensitively); unknown names fall back to "Other" with the text filled.
+ * Without selectedName the current selection is preserved.
+ */
+function populateGroupSelect(prefix, selectedName) {
+  const select = document.getElementById(`${prefix}-group-select`);
+  const otherInput = document.getElementById(`${prefix}-group`);
+  if (!select) return;
+
+  let desiredName;
+  if (selectedName !== undefined) {
+    desiredName = normalizeGroupNameClient(selectedName);
+  } else if (select.value === GROUP_OTHER_VALUE) {
+    desiredName = null; // keep "Other" + typed text
+  } else {
+    desiredName = select.value ? (select.selectedOptions[0]?.textContent || "") : "";
+  }
+
+  select.innerHTML = "";
+  select.appendChild(new Option("No group", ""));
+  availableGroups.forEach((g) => select.appendChild(new Option(g.name, g.id)));
+  select.appendChild(new Option("Other (type a new group)\u2026", GROUP_OTHER_VALUE));
+
+  if (desiredName === null) {
+    select.value = GROUP_OTHER_VALUE;
+  } else if (!desiredName) {
+    select.value = "";
+    if (otherInput) otherInput.value = "";
+  } else {
+    const key = desiredName.toLowerCase();
+    const match = availableGroups.find((g) => (g.nameKey || g.name.toLowerCase()) === key);
+    if (match) {
+      select.value = match.id;
+      if (otherInput) otherInput.value = "";
+    } else {
+      select.value = GROUP_OTHER_VALUE;
+      if (otherInput) otherInput.value = desiredName;
+    }
+  }
+  handleGroupSelectChange(prefix, true);
+}
+
+function handleGroupSelectChange(prefix, silent) {
+  const select = document.getElementById(`${prefix}-group-select`);
+  const otherInput = document.getElementById(`${prefix}-group`);
+  const otherWrap = document.getElementById(`${prefix}-group-other-wrap`);
+  if (!select || !otherInput) return;
+  const isOther = select.value === GROUP_OTHER_VALUE;
+  if (otherWrap) {
+    otherWrap.classList.toggle("hidden", !isOther);
+  } else {
+    otherInput.classList.toggle("hidden", !isOther);
+  }
+  if (isOther && !silent) otherInput.focus();
+}
+
+/**
+ * Returns the chosen group name for a picker, or throws an Error with a
+ * user-facing message if the "Other" name is invalid.
+ */
+function getGroupPickerValue(prefix) {
+  const select = document.getElementById(`${prefix}-group-select`);
+  const otherInput = document.getElementById(`${prefix}-group`);
+  if (!select) return normalizeGroupNameClient(otherInput?.value);
+  if (select.value === GROUP_OTHER_VALUE) {
+    const name = normalizeGroupNameClient(otherInput?.value);
+    if (name.length < 2 || name.length > 50) {
+      throw new Error("Please enter a group name between 2 and 50 characters, or choose 'No group'.");
+    }
+    return name;
+  }
+  if (!select.value) return "";
+  const group = availableGroups.find((g) => g.id === select.value);
+  return group ? group.name : "";
+}
+
 // System Initialization
 document.addEventListener("DOMContentLoaded", () => {
   // Immediately subscribe to festival settings (public read document)
   subscribeToFestivalConfig();
   subscribeToIncentivesConfig();
   subscribeToRolesConfig();
+  subscribeToGroups();
   checkUrlAreaFilter();
+
+  // Setup phone normalization previews
+  setupPhonePreview("register-phone", "register-phone-preview");
+  setupPhonePreview("required-phone-input", "required-phone-preview");
+  setupPhonePreview("profile-phone", "profile-phone-preview");
 
   // Initialize schedule filter drawer state from localStorage
   try {
@@ -523,6 +672,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (signinForm) signinForm.reset();
       const registerForm = document.getElementById("form-register");
       if (registerForm) registerForm.reset();
+      populateGroupSelect("register", "");
       const forgotForm = document.getElementById("form-forgot-password");
       if (forgotForm) forgotForm.reset();
       showAuthSubView("tabs");
@@ -804,7 +954,14 @@ async function handleEmailSignUp(event) {
   const fullName = nameInput?.value?.trim();
   const email = emailInput?.value?.trim();
   const phoneNumber = phoneInput?.value?.trim();
-  const groupOrClub = groupInput?.value?.trim() || "";
+  let groupOrClub = "";
+  try {
+    groupOrClub = getGroupPickerValue("register");
+  } catch (groupErr) {
+    showAuthAlert("register-alert", groupErr.message);
+    groupInput?.focus();
+    return;
+  }
   const profileVisibility = visibilityInput?.value === "private" ? "private" : "public";
   const avatarPhotoUrl = pendingRegisterAvatarDataUrl || "";
   const password = passwordInput?.value;
@@ -822,6 +979,13 @@ async function handleEmailSignUp(event) {
     showAuthAlert("register-alert", "Contact phone number is mandatory for festival volunteer coordination.");
     return;
   }
+  const normalizedPhone = normalizeE164(phoneNumber);
+  if (!normalizedPhone) {
+    showAuthAlert("register-alert", "Please enter a valid mobile phone number (e.g. 07123 456789 or +44 7123 456789).");
+    return;
+  }
+  const whatsappOptIn = document.getElementById("register-whatsapp-optin") ? document.getElementById("register-whatsapp-optin").checked : true;
+  const emailOptIn = document.getElementById("register-email-optin") ? document.getElementById("register-email-optin").checked : true;
   if (!password || password.length < 6) {
     showAuthAlert("register-alert", "Password must be at least 6 characters.");
     return;
@@ -861,7 +1025,9 @@ async function handleEmailSignUp(event) {
     await db.collection("users").doc(user.uid).set({
       fullName: fullName,
       email: email.toLowerCase(),
-      phoneNumber: phoneNumber,
+      phoneNumber: normalizedPhone,
+      whatsappNotifications: whatsappOptIn,
+      emailNotifications: emailOptIn,
       groupOrClub: groupOrClub,
       profileVisibility: profileVisibility,
       photoURL: avatarPhotoUrl,
@@ -1078,6 +1244,8 @@ async function syncUserProfile(user) {
         email: user.email,
         role: "volunteer",
         phoneNumber: "",
+        whatsappNotifications: true,
+        emailNotifications: true,
         groupOrClub: "",
         profileVisibility: "public",
         photoURL: user.photoURL || "",
@@ -1254,13 +1422,27 @@ async function handleRequiredPhoneSubmit(event) {
     }
     return;
   }
+  const normalizedPhone = normalizeE164(phone);
+  if (!normalizedPhone) {
+    if (phoneAlert) {
+      phoneAlert.className = "p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-800 border border-rose-300";
+      phoneAlert.innerText = "Please enter a valid mobile phone number (e.g. 07123 456789 or +44 7123 456789).";
+      phoneAlert.classList.remove("hidden");
+    }
+    return;
+  }
+
+  const whatsappOptIn = document.getElementById("required-phone-whatsapp") ? document.getElementById("required-phone-whatsapp").checked : true;
+  const emailOptIn = document.getElementById("required-phone-email") ? document.getElementById("required-phone-email").checked : true;
 
   if (submitBtn) submitBtn.disabled = true;
   if (submitText) submitText.innerText = "Saving phone number...";
 
   try {
     await db.collection("users").doc(currentUser.uid).update({
-      phoneNumber: phone,
+      phoneNumber: normalizedPhone,
+      whatsappNotifications: whatsappOptIn,
+      emailNotifications: emailOptIn,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
     });
     const phoneModal = document.getElementById("phone-required-modal");
@@ -1350,8 +1532,25 @@ function openUserProfileModal() {
   if (nameInput) nameInput.value = profile.fullName || currentUser.displayName || "";
   if (emailInput) emailInput.value = currentUser.email || profile.email || "";
   if (phoneInput) phoneInput.value = profile.phoneNumber || "";
-  if (groupInput) groupInput.value = profile.groupOrClub || "";
+  if (groupInput) populateGroupSelect("profile", profile.groupOrClub || "");
   if (visibilitySelect) visibilitySelect.value = profile.profileVisibility === "private" ? "private" : "public";
+
+  const whatsappOptIn = document.getElementById("profile-whatsapp-optin");
+  const emailOptIn = document.getElementById("profile-email-optin");
+  if (whatsappOptIn) whatsappOptIn.checked = profile.whatsappNotifications !== false;
+  if (emailOptIn) emailOptIn.checked = profile.emailNotifications !== false;
+
+  const phonePreview = document.getElementById("profile-phone-preview");
+  if (phonePreview && phoneInput) {
+    const e164 = normalizeE164(phoneInput.value);
+    if (e164) {
+      phonePreview.className = "text-2xs text-emerald-700 font-mono mt-1 flex items-center gap-1";
+      phonePreview.innerHTML = `<span class="font-bold">✓</span> WhatsApp ready: <strong>${escapeHtml(e164)}</strong>`;
+      phonePreview.classList.remove("hidden");
+    } else {
+      phonePreview.classList.add("hidden");
+    }
+  }
 
   // Load avatar preview
   pendingProfileAvatarDataUrl = null;
@@ -1404,7 +1603,18 @@ async function handleSaveUserProfile(event) {
 
   const fullName = nameInput?.value?.trim();
   const phoneNumber = phoneInput?.value?.trim();
-  const groupOrClub = groupInput?.value?.trim() || "";
+  let groupOrClub = "";
+  try {
+    groupOrClub = getGroupPickerValue("profile");
+  } catch (groupErr) {
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-300";
+      alertEl.innerText = groupErr.message;
+      alertEl.classList.remove("hidden");
+    }
+    groupInput?.focus();
+    return;
+  }
   const profileVisibility = visibilitySelect?.value === "private" ? "private" : "public";
 
   if (!fullName) {
@@ -1424,6 +1634,18 @@ async function handleSaveUserProfile(event) {
     }
     return;
   }
+  const normalizedPhone = normalizeE164(phoneNumber);
+  if (!normalizedPhone) {
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-300";
+      alertEl.innerText = "Please enter a valid mobile phone number (e.g. 07123 456789 or +44 7123 456789).";
+      alertEl.classList.remove("hidden");
+    }
+    return;
+  }
+
+  const whatsappNotifications = document.getElementById("profile-whatsapp-optin")?.checked !== false;
+  const emailNotifications = document.getElementById("profile-email-optin")?.checked !== false;
 
   if (saveBtn) {
     saveBtn.disabled = true;
@@ -1439,7 +1661,9 @@ async function handleSaveUserProfile(event) {
     // 2. Update Firestore user profile
     const updates = {
       fullName: fullName,
-      phoneNumber: phoneNumber,
+      phoneNumber: normalizedPhone,
+      whatsappNotifications: whatsappNotifications,
+      emailNotifications: emailNotifications,
       groupOrClub: groupOrClub,
       profileVisibility: profileVisibility,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -4627,9 +4851,30 @@ async function openShiftRosterModal(shiftId) {
         let cancelBtnHtml = "";
         if (isAdminMode()) {
           cancelBtnHtml = `
-            <button onclick="adminCancelUserShift('${shiftId}', '${v.userId}', '${escapeJs(v.fullName)}')" class="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 transition shadow-xs flex-shrink-0">
+            <button onclick="adminCancelUserShift('${shiftId}', '${v.userId}', '${escapeJs(v.fullName)}')" class="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 transition shadow-xs flex-shrink-0 cursor-pointer">
               Cancel Shift
             </button>
+          `;
+        }
+
+        const e164 = normalizeE164(v.phoneNumber);
+        let whatsappBtnHtml = "";
+        if (e164) {
+          const cleanDigits = e164.replace(/[^\d]/g, "");
+          const shiftArea = currentShiftData?.categoryName || "Festival Shift";
+          const prefill = encodeURIComponent(
+            `Hi ${v.fullName || "there"}, this is your Shift Manager from BrewCrew regarding your shift for ${shiftArea}.`
+          );
+          whatsappBtnHtml = `
+            <a href="https://wa.me/${cleanDigits}?text=${prefill}"
+               target="_blank"
+               rel="noopener noreferrer"
+               class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 font-semibold text-xs transition shadow-2xs cursor-pointer touch-manipulation focus-visible:ring-2 focus-visible:ring-emerald-500"
+               title="Message ${escapeHtml(v.fullName)} on WhatsApp"
+               aria-label="Message ${escapeHtml(v.fullName)} on WhatsApp">
+              <svg class="w-3.5 h-3.5 text-emerald-700 shrink-0" aria-hidden="true"><use href="#icon-whatsapp"></use></svg>
+              <span>WhatsApp</span>
+            </a>
           `;
         }
 
@@ -4655,11 +4900,24 @@ async function openShiftRosterModal(shiftId) {
                 ${groupBadge}
                 ${visibilityBadge}
               </div>
-              <p class="text-[11px] text-slate-500 truncate">${escapeHtml(v.email || 'No email')} &bull; 📞 ${escapeHtml(v.phoneNumber || 'No phone')}</p>
+              <p class="text-[11px] text-slate-500 truncate flex items-center gap-1.5 mt-0.5">
+                <span class="inline-flex items-center gap-1">
+                  <svg class="w-3 h-3 text-slate-400 shrink-0" aria-hidden="true"><use href="#icon-mail"></use></svg>
+                  ${escapeHtml(v.email || 'No email')}
+                </span>
+                <span class="text-slate-300">&bull;</span>
+                <span class="inline-flex items-center gap-1 font-mono">
+                  <svg class="w-3 h-3 text-slate-400 shrink-0" aria-hidden="true"><use href="#icon-phone"></use></svg>
+                  ${escapeHtml(v.phoneNumber || 'No phone')}
+                </span>
+              </p>
               <p class="text-[10px] text-slate-400">Registered: ${registeredDateStr}</p>
             </div>
           </div>
-          ${cancelBtnHtml}
+          <div class="flex items-center gap-1.5 shrink-0 flex-wrap sm:flex-nowrap">
+            ${whatsappBtnHtml}
+            ${cancelBtnHtml}
+          </div>
         `;
       }
       // CASE B: Viewer is a Volunteer viewing themselves -> Sees self name, group/club, own privacy status & edit link
@@ -4826,6 +5084,28 @@ function renderRosterManagerSection(shiftId, shift) {
       // Manager users cannot assign or unassign other managers
       actionsHtml += `
         <span class="text-[11px] text-slate-500 italic bg-amber-100/60 border border-amber-200 px-2 py-1 rounded-md">Assigned to another manager</span>
+      `;
+    }
+  }
+
+  // If another manager is assigned, provide 1-tap WhatsApp outreach to coordinator/admin
+  if (shift.managerId && !isCurrentUserManager && isMgrOrAdmin) {
+    const mgrUser = allUsersMap.get(shift.managerId);
+    const mgrPhone = mgrUser?.phoneNumber ? normalizeE164(mgrUser.phoneNumber) : null;
+    if (mgrPhone) {
+      const cleanDigits = mgrPhone.replace(/[^\d]/g, "");
+      const shiftArea = shift.categoryName || "Festival Shift";
+      const prefill = encodeURIComponent(`Hi ${shift.managerName || "Manager"}, regarding your Shift Manager role for ${shiftArea}...`);
+      actionsHtml += `
+        <a href="https://wa.me/${cleanDigits}?text=${prefill}"
+           target="_blank"
+           rel="noopener noreferrer"
+           class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-900 border border-emerald-300 font-semibold text-xs transition shadow-2xs cursor-pointer touch-manipulation focus-visible:ring-2 focus-visible:ring-emerald-500"
+           title="Message Shift Manager on WhatsApp"
+           aria-label="Message Shift Manager on WhatsApp">
+          <svg class="w-3.5 h-3.5 text-emerald-700 shrink-0" aria-hidden="true"><use href="#icon-whatsapp"></use></svg>
+          <span>WhatsApp</span>
+        </a>
       `;
     }
   }

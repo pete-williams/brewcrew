@@ -13,10 +13,8 @@ firebase-debug.*.log*
 # Firebase config
 public/firebase-config.js
 
-# Uncomment this if you'd like others to create their own Firebase project.
-# For a team working on the same Firebase project(s), it is recommended to leave
-# it commented so all members can deploy to the same project(s) in .firebaserc.
-# .firebaserc
+# Firebase project mapping
+.firebaserc
 
 # Runtime data
 pids
@@ -65,11 +63,17 @@ node_modules/
 
 # dotenv environment variables file
 .env
+.env.*
+!.env.example
 
 # dataconnect generated files
 .dataconnect
+
+# Agent instruction files & generated schemas
 AGENTS.md
 GEMINI.md
+PRODUCT.md
+DESIGN.md
 
 # temp folder
 .temp
@@ -77,5 +81,11 @@ GEMINI.md
 # Graphify
 graphify-out/
 
-# Agents folder
+# Agent skills, lockfiles, and tool working caches
 .agents/
+.impeccable/
+skills-lock.json
+
+# Planning and WIP working documents
+docs/*_PLAN.md
+docs/plans/

@@ -1112,6 +1112,40 @@
             <span>Enter Admin Mode</span>
           </button>
         </div>
+
+        <!-- Floating Volunteer Commitment Policy Progress Bar / Action Bar -->
+        <div id="commitment-sticky-bar"
+          class="hidden fixed bottom-4 left-3 right-3 sm:left-6 sm:right-6 max-w-3xl mx-auto z-40 bg-white/95 backdrop-blur-md border-2 border-amber-400 shadow-2xl rounded-2xl p-3 sm:p-4 transition-all duration-300">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="flex items-center gap-3 min-w-0">
+              <div class="w-10 h-10 rounded-xl bg-amber-100 border border-amber-300 flex items-center justify-center shrink-0 text-amber-900 text-lg">
+                ⏱️
+              </div>
+              <div class="min-w-0">
+                <div class="flex items-center gap-2">
+                  <span class="text-xs font-bold text-amber-950 uppercase tracking-wide">Volunteer Commitment</span>
+                  <span id="commitment-sticky-status-badge" class="px-2 py-0.5 rounded-full text-2xs font-bold bg-amber-100 text-amber-900">
+                    0.0 / 0.0 hrs
+                  </span>
+                </div>
+                <p id="commitment-sticky-text" class="text-xs text-slate-600 truncate mt-0.5">
+                  Select more hours before shifts can be confirmed.
+                </p>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-2 shrink-0">
+              <button type="button" onclick="openCommitmentConfirmModal()" id="btn-commitment-sticky-action"
+                class="px-3.5 py-2 text-xs font-bold rounded-xl transition shadow-xs flex items-center gap-1.5 cursor-pointer bg-amber-700 hover:bg-amber-800 text-white">
+                <span>Review Selection</span>
+              </button>
+              <button type="button" onclick="clearPendingCommitmentShifts()" title="Clear selected shifts"
+                class="px-2.5 py-2 text-xs font-bold rounded-xl bg-slate-100 hover:bg-rose-50 hover:text-rose-700 text-slate-600 transition cursor-pointer">
+                ✕
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- VIEW 2: My Shifts View (Volunteer Schedule Hub) -->
@@ -1522,43 +1556,235 @@
       </div>
     </div>
 
-    <!-- Modal 4: Phone Number Required Modal (Mandatory Onboarding for Users Missing Phone) -->
-    <div id="phone-required-modal"
-      class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+    <!-- Modal: Minimum Commitment Requirement Prompt -->
+    <div id="commitment-requirement-modal"
+      class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
       <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 border border-amber-200">
-        <div class="text-center">
-          <div class="text-3xl mb-2">📱</div>
-          <h2 class="font-bold text-lg text-slate-900">Contact Phone Number Required</h2>
-          <p class="text-xs text-slate-500 mt-1">
-            To coordinate shifts and ensure festival safety, all volunteers must have a contact phone number on file.
+        <div class="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+          <div class="flex items-center gap-2.5">
+            <span class="p-2 rounded-xl bg-amber-100 text-amber-900 text-lg">⏱️</span>
+            <div>
+              <h2 class="font-bold text-base text-slate-900">Minimum Commitment Required</h2>
+              <p class="text-xs text-slate-500">Festival Volunteer Policy</p>
+            </div>
+          </div>
+          <button type="button" onclick="closeCommitmentRequirementModal()"
+            class="text-slate-400 hover:text-slate-700 text-lg font-bold p-1 cursor-pointer">&times;</button>
+        </div>
+
+        <div class="space-y-3 text-xs text-slate-600">
+          <p>
+            Our festival requires volunteers to commit to a minimum of <strong class="text-slate-900 font-bold" id="commitment-modal-min-hours">4</strong> hours across shifts before registrations can be confirmed.
+          </p>
+          <div class="p-3 rounded-xl bg-amber-50/70 border border-amber-200 space-y-1.5">
+            <div class="flex justify-between items-center text-xs">
+              <span class="font-bold text-amber-950" id="commitment-modal-shift-name">Shift Name</span>
+              <span class="font-mono font-bold text-amber-900" id="commitment-modal-shift-hours">2.0 hrs</span>
+            </div>
+            <p class="text-2xs text-slate-500" id="commitment-modal-shift-time">Saturday 12:00 &ndash; 14:00</p>
+            <div class="w-full bg-amber-200/60 rounded-full h-2 mt-2 overflow-hidden">
+              <div id="commitment-modal-progress-bar" class="bg-amber-600 h-2 rounded-full transition-all duration-300" style="width: 50%"></div>
+            </div>
+            <div class="flex justify-between text-2xs text-slate-500 pt-0.5">
+              <span>Selected: <strong class="text-slate-800" id="commitment-modal-current-hours">2.0 hrs</strong></span>
+              <span>Need: <strong class="text-amber-800" id="commitment-modal-needed-hours">2.0 more hrs</strong></span>
+            </div>
+          </div>
+          <p class="text-slate-500 italic">
+            This shift has been saved to your selection. Please select another shift to reach the <span id="commitment-modal-min-hours-text">4</span>-hour commitment, and both will be booked in together!
           </p>
         </div>
+
+        <div class="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+          <button type="button" onclick="removeLastPendingShift()"
+            class="px-3.5 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50 border border-rose-200 rounded-xl transition cursor-pointer">
+            Cancel Selection
+          </button>
+          <button type="button" onclick="closeCommitmentRequirementModal()"
+            class="px-4 py-2 text-xs font-bold text-white bg-amber-700 hover:bg-amber-800 rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5">
+            <span>Browse More Shifts</span> <span>→</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal: Confirm Volunteer Commitment Shifts -->
+    <div id="commitment-confirm-modal"
+      class="hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
+      <div class="bg-white rounded-2xl shadow-xl max-w-lg w-full p-6 space-y-4 border border-amber-200">
+        <div class="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+          <div class="flex items-center gap-2.5">
+            <span class="p-2 rounded-xl bg-emerald-100 text-emerald-900 text-lg">🎉</span>
+            <div>
+              <h2 class="font-bold text-base text-slate-900" id="commitment-confirm-modal-title">Review &amp; Confirm Shifts</h2>
+              <p class="text-xs text-slate-500" id="commitment-confirm-modal-subtitle">Minimum commitment requirement met</p>
+            </div>
+          </div>
+          <button type="button" onclick="closeCommitmentConfirmModal()"
+            class="text-slate-400 hover:text-slate-700 text-lg font-bold p-1 cursor-pointer">&times;</button>
+        </div>
+
+        <!-- Selected Shifts Container -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-xs text-slate-500 px-1">
+            <span class="font-semibold uppercase tracking-wider text-2xs">Selected Shifts (<span id="commitment-confirm-count">0</span>)</span>
+            <span class="font-bold text-slate-700">Total: <span id="commitment-confirm-total-hours" class="font-mono text-amber-900">0.0</span> hrs</span>
+          </div>
+
+          <div id="commitment-confirm-shifts-list" class="space-y-2 max-h-60 overflow-y-auto pr-1">
+            <!-- Dynamically populated selected shift cards -->
+          </div>
+        </div>
+
+        <!-- Notice / Status Note -->
+        <div id="commitment-confirm-alert" class="p-3 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 text-xs">
+          <!-- Dynamically populated notice -->
+        </div>
+
+        <!-- Modal Actions -->
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-100">
+          <button type="button" id="btn-clear-pending-shifts" onclick="clearPendingCommitmentShifts()"
+            class="px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 rounded-xl transition cursor-pointer">
+            Clear All
+          </button>
+          <div class="flex items-center gap-2">
+            <button type="button" onclick="closeCommitmentConfirmModal()"
+              class="px-3.5 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 border border-slate-200 rounded-xl transition cursor-pointer">
+              Add More Shifts
+            </button>
+            <button type="button" id="btn-confirm-commitment-shifts" onclick="confirmCommitmentShifts()"
+              class="px-4 py-2 text-xs font-bold text-white bg-amber-700 hover:bg-amber-800 rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5">
+              <span>✓ Confirm All Shifts</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal 4: Complete Profile / Phone Required Onboarding Modal -->
+    <div id="phone-required-modal"
+      class="hidden fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+      <div class="bg-white rounded-2xl shadow-xl max-w-md w-full p-6 space-y-4 my-8 max-h-[90vh] overflow-y-auto border border-amber-200">
+        <div class="text-center space-y-1">
+          <div class="inline-flex items-center justify-center w-12 h-12 rounded-2xl bg-amber-100 text-amber-900 text-2xl shadow-xs mb-1">
+            ✨
+          </div>
+          <h2 class="font-extrabold text-lg text-slate-900">Complete Your Volunteer Profile</h2>
+          <p class="text-xs text-slate-500 leading-relaxed">
+            Welcome to the crew! Please provide a contact phone number for shift coordination and customize your volunteer profile settings.
+          </p>
+        </div>
+
         <form id="form-phone-required" onsubmit="handleRequiredPhoneSubmit(event)" class="space-y-4">
-          <div id="phone-required-alert" class="hidden p-3 rounded-lg text-xs"></div>
+          <div id="phone-required-alert" class="hidden p-3 rounded-xl text-xs"></div>
+
+          <!-- Profile Photo Section -->
+          <div class="flex items-center gap-3.5 p-3 rounded-xl bg-stone-50 border border-slate-200">
+            <div class="relative group shrink-0">
+              <div id="required-avatar-wrap"
+                class="w-14 h-14 rounded-full bg-amber-800 border-2 border-amber-300 text-amber-100 font-extrabold text-lg flex items-center justify-center overflow-hidden shadow-inner">
+                <span id="required-avatar-initials">V</span>
+                <img id="required-avatar-img" class="hidden w-full h-full object-cover"
+                  src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'/%3E" alt="Profile avatar" />
+              </div>
+              <label for="required-avatar-file"
+                class="absolute -bottom-1 -right-1 bg-amber-700 hover:bg-amber-800 text-white p-1 rounded-full shadow-md cursor-pointer border border-white transition-transform hover:scale-110"
+                title="Upload photo">
+                <svg class="w-3 h-3">
+                  <use href="#icon-camera" />
+                </svg>
+              </label>
+              <input type="file" id="required-avatar-file" accept="image/jpeg,image/png,image/webp" class="hidden"
+                onchange="handleRequiredAvatarChange(event)" />
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center justify-between">
+                <div class="font-bold text-xs text-slate-900">Profile Photo <span class="text-slate-400 font-normal">(Optional)</span></div>
+                <button type="button" id="btn-required-remove-avatar" onclick="handleRemoveRequiredAvatar()"
+                  class="hidden text-2xs text-rose-600 hover:text-rose-800 font-semibold px-1.5 py-0.5 rounded hover:bg-rose-50 transition">
+                  Remove
+                </button>
+              </div>
+              <p class="text-2xs text-slate-500 mt-0.5 mb-1.5">Square auto-crop (JPEG, PNG, WebP up to 5MB)</p>
+              <label for="required-avatar-file"
+                class="cursor-pointer text-2xs font-bold px-2.5 py-1 rounded-lg bg-amber-700 hover:bg-amber-800 text-white transition shadow-2xs inline-flex items-center gap-1">
+                <svg class="w-3 h-3"><use href="#icon-upload" /></svg> Choose Photo
+              </label>
+            </div>
+          </div>
+
+          <!-- Mobile Phone Number -->
           <div>
-            <label class="block text-xs font-semibold text-slate-700 mb-1" for="required-phone-input">Mobile Phone
-              Number</label>
+            <label class="block text-xs font-bold text-slate-800 mb-1" for="required-phone-input">
+              Mobile Phone Number <span class="text-rose-500">*</span>
+            </label>
             <input type="tel" id="required-phone-input" required placeholder="e.g. 07123 456789 or +44 7123 456789"
-              class="w-full text-xs sm:text-sm px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+              class="w-full text-xs sm:text-sm px-3 py-2 rounded-xl border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
             <div id="required-phone-preview" class="hidden text-2xs text-emerald-700 font-mono mt-1"></div>
-            <p class="text-2xs text-slate-400 mt-1">Include country code if outside the UK (e.g. +44)</p>
+            <p class="text-2xs text-slate-400 mt-1">Essential for on-site festival safety and shift coordinator contact.</p>
           </div>
-          <!-- Notification Preferences -->
-          <div class="space-y-1.5 pt-1">
-            <label class="flex items-start gap-2 cursor-pointer text-xs text-slate-700">
-              <input type="checkbox" id="required-phone-whatsapp" checked
-                class="mt-0.5 rounded border-slate-300 text-amber-600 focus:ring-amber-500" />
-              <span>Receive shift updates &amp; alerts via <strong>WhatsApp</strong></span>
+
+          <!-- Group or Club Selection -->
+          <div>
+            <label class="block text-xs font-bold text-slate-800 mb-1" for="required-group-select">
+              Group or Club <span class="text-slate-400 font-normal">(Optional)</span>
             </label>
-            <label class="flex items-start gap-2 cursor-pointer text-xs text-slate-700">
-              <input type="checkbox" id="required-phone-email" checked
-                class="mt-0.5 rounded border-slate-300 text-amber-600 focus:ring-amber-500" />
-              <span>Receive shift updates &amp; announcements via <strong>Email</strong></span>
-            </label>
+            <select id="required-group-select" onchange="handleGroupSelectChange('required')"
+              class="w-full text-xs sm:text-sm px-3 py-2 rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+              <option value="">No group</option>
+              <option value="__other__">Other (type a new group)&hellip;</option>
+            </select>
+            <div id="required-group-other-wrap" class="hidden mt-2 space-y-1">
+              <input type="text" id="required-group" maxlength="50" minlength="2" placeholder="Type your group or club name (e.g. CAMRA Local)"
+                aria-label="New group or club name"
+                class="w-full text-xs sm:text-sm px-3 py-2 rounded-xl border border-amber-300 focus:outline-none focus:ring-2 focus:ring-amber-500 bg-amber-50/20" />
+              <p class="text-2xs text-slate-500">2–50 characters. Fellow volunteers will see your group name on rosters.</p>
+            </div>
           </div>
+
+          <!-- Profile Visibility / Privacy -->
+          <div>
+            <label class="block text-xs font-bold text-slate-800 mb-1" for="required-profile-visibility">
+              Roster Profile Visibility
+            </label>
+            <select id="required-profile-visibility"
+              class="w-full text-xs sm:text-sm px-3 py-2 rounded-xl border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 font-medium">
+              <option value="public" selected>🌐 Public (Name &amp; Group visible to volunteers)</option>
+              <option value="private">🔒 Private (Hide name &amp; group on volunteer rosters)</option>
+            </select>
+            <p class="text-2xs text-slate-500 mt-1">
+              Defaults to <strong>Public</strong> so your team knows who is working with them. Admins and shift managers can always view roster details.
+            </p>
+          </div>
+
+          <!-- Communication Preferences (Default: Opted In) -->
+          <div class="pt-2 border-t border-slate-100 space-y-2">
+            <label class="block text-xs font-bold text-slate-800">
+              Communication Preferences <span class="text-2xs font-normal text-slate-400">(Default: Opted In)</span>
+            </label>
+            <div class="space-y-2">
+              <label class="flex items-start gap-2.5 cursor-pointer text-xs text-slate-700">
+                <input type="checkbox" id="required-phone-whatsapp" checked
+                  class="mt-0.5 rounded border-slate-300 text-amber-600 focus:ring-amber-500" />
+                <div>
+                  <span class="font-medium text-slate-800">WhatsApp Shift Updates &amp; Alerts</span>
+                  <p class="text-2xs text-slate-500">Receive schedule confirmations and urgent festival notices via WhatsApp.</p>
+                </div>
+              </label>
+              <label class="flex items-start gap-2.5 cursor-pointer text-xs text-slate-700">
+                <input type="checkbox" id="required-phone-email" checked
+                  class="mt-0.5 rounded border-slate-300 text-amber-600 focus:ring-amber-500" />
+                <div>
+                  <span class="font-medium text-slate-800">Email Shift Updates &amp; Announcements</span>
+                  <p class="text-2xs text-slate-500">Receive shift summaries, changes, and crew announcements via email.</p>
+                </div>
+              </label>
+            </div>
+          </div>
+
           <button type="submit" id="btn-submit-required-phone"
-            class="w-full py-2.5 px-4 bg-amber-700 hover:bg-amber-600 text-white text-sm font-bold rounded-xl shadow transition flex items-center justify-center gap-2">
-            <span id="btn-required-phone-text">Save Phone Number &amp; Continue</span>
+            class="w-full py-2.5 px-4 bg-amber-700 hover:bg-amber-800 text-white text-xs sm:text-sm font-bold rounded-xl shadow-xs transition cursor-pointer flex items-center justify-center gap-2">
+            <span id="btn-required-phone-text">Save Profile &amp; Continue</span>
           </button>
         </form>
       </div>

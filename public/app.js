@@ -56,6 +56,7 @@ const defaultFestivalConfig = {
     email: "volunteer@festival.org",
     phone: ""
   },
+  minCommitmentHours: 0,
   sessions: [
     {
       id: "sess_1",
@@ -168,6 +169,10 @@ let adminRoleFilter = "ALL";
 let activeAssignModalShiftId = null;
 let activeRosterShiftId = null;
 
+// Volunteer Commitment Staging State
+let pendingCommitmentShiftIds = new Set();
+let lastAddedPendingShiftId = null;
+
 // Expose action functions to window explicitly for HTML onclick handlers
 window.switchView = switchView;
 window.loginWithGoogle = loginWithGoogle;
@@ -175,6 +180,9 @@ window.handleEmailSignIn = handleEmailSignIn;
 window.handleEmailSignUp = handleEmailSignUp;
 window.handlePasswordReset = handlePasswordReset;
 window.handleRequiredPhoneSubmit = handleRequiredPhoneSubmit;
+window.handleRequiredAvatarChange = handleRequiredAvatarChange;
+window.handleRemoveRequiredAvatar = handleRemoveRequiredAvatar;
+window.openRequiredProfileModal = openRequiredProfileModal;
 window.showAuthTab = showAuthTab;
 window.showAuthSubView = showAuthSubView;
 window.togglePasswordVisibility = togglePasswordVisibility;
@@ -188,6 +196,16 @@ window.handleMenuLogout = handleMenuLogout;
 window.filterCategory = filterCategory;
 window.claimShift = claimShift;
 window.cancelShift = cancelShift;
+window.togglePendingCommitmentShift = togglePendingCommitmentShift;
+window.openCommitmentConfirmModal = openCommitmentConfirmModal;
+window.closeCommitmentConfirmModal = closeCommitmentConfirmModal;
+window.openCommitmentRequirementModal = openCommitmentRequirementModal;
+window.closeCommitmentRequirementModal = closeCommitmentRequirementModal;
+window.removeLastPendingShift = removeLastPendingShift;
+window.removePendingShift = removePendingShift;
+window.clearPendingCommitmentShifts = clearPendingCommitmentShifts;
+window.renderFilteredShifts = renderFilteredShifts;
+window.confirmCommitmentShifts = confirmCommitmentShifts;
 window.stepSession = stepSession;
 window.toggleOpenSpotsOnly = toggleOpenSpotsOnly;
 window.updateFilterOpenOnlyButton = updateFilterOpenOnlyButton;
@@ -393,6 +411,7 @@ function subscribeToGroups() {
     availableGroups = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
     populateGroupSelect("register");
     populateGroupSelect("profile");
+    populateGroupSelect("required");
   }, (err) => console.warn("Groups subscription error:", err));
 }
 
@@ -610,6 +629,7 @@ document.addEventListener("DOMContentLoaded", () => {
       // 3. Sync User Profile & Initialize Authenticated Realtime Listeners
       adminModeActive = false; // Default to Manager view upon login as requested
       hasInitializedInitialShiftFocus = false;
+      loadPendingCommitmentShifts();
       syncUserProfile(user);
       subscribeToCurrentUserProfile(user.uid);
       subscribeToUserRegistrations(user.uid);
@@ -625,6 +645,8 @@ document.addEventListener("DOMContentLoaded", () => {
       currentUserRole = "volunteer";
       adminModeActive = false;
       hasInitializedInitialShiftFocus = false;
+      pendingCommitmentShiftIds.clear();
+      updateCommitmentUI();
 
       // 1. Hide Authenticated App, Show Login Prompt Screen
       if (authenticatedApp) {
@@ -1364,11 +1386,11 @@ function subscribeToCurrentUserProfile(uid) {
       currentUserRole = "volunteer";
     }
 
-    // Mandatory Phone Enforcement:
-    // If the authenticated user does not have a phone number on file, trigger blocking modal
+    // Mandatory Profile & Phone Enforcement:
+    // If the authenticated user does not have a phone number on file, trigger onboarding modal
     const phoneModal = document.getElementById("phone-required-modal");
     if (currentUser && currentUserProfile && !currentUserProfile.phoneNumber) {
-      if (phoneModal) phoneModal.classList.remove("hidden");
+      openRequiredProfileModal();
     } else {
       if (phoneModal) phoneModal.classList.add("hidden");
     }
@@ -1406,8 +1428,139 @@ function subscribeToCurrentUserProfile(uid) {
   });
 }
 
+// ============================================================================
+// Required Onboarding Profile & Phone Management
+// ============================================================================
+let pendingRequiredAvatarDataUrl = null;
+
+function openRequiredProfileModal() {
+  const modal = document.getElementById("phone-required-modal");
+  if (!modal || !currentUser) return;
+
+  const alertEl = document.getElementById("phone-required-alert");
+  if (alertEl) {
+    alertEl.className = "hidden p-3 rounded-xl text-xs";
+    alertEl.innerText = "";
+  }
+
+  const profile = currentUserProfile || {};
+
+  // Pre-fill Phone
+  const phoneInput = document.getElementById("required-phone-input");
+  if (phoneInput && !phoneInput.value) {
+    phoneInput.value = profile.phoneNumber || "";
+  }
+
+  // Pre-fill Group/Club Picker
+  populateGroupSelect("required", profile.groupOrClub || "");
+
+  // Pre-fill Roster Profile Visibility (Default: "public")
+  const visibilitySelect = document.getElementById("required-profile-visibility");
+  if (visibilitySelect) {
+    visibilitySelect.value = profile.profileVisibility === "private" ? "private" : "public";
+  }
+
+  // Pre-fill Communication Preferences (Default: opt-in / true)
+  const whatsappCheck = document.getElementById("required-phone-whatsapp");
+  if (whatsappCheck) {
+    whatsappCheck.checked = profile.whatsappNotifications !== false;
+  }
+  const emailCheck = document.getElementById("required-phone-email");
+  if (emailCheck) {
+    emailCheck.checked = profile.emailNotifications !== false;
+  }
+
+  // Pre-fill Avatar Preview
+  pendingRequiredAvatarDataUrl = null;
+  const currentPhoto = profile.photoURL || currentUser.photoURL || "";
+  const imgEl = document.getElementById("required-avatar-img");
+  const initialsEl = document.getElementById("required-avatar-initials");
+  const removeBtn = document.getElementById("btn-required-remove-avatar");
+  const fileInput = document.getElementById("required-avatar-file");
+  if (fileInput) fileInput.value = "";
+
+  const name = profile.fullName || currentUser.displayName || "Volunteer";
+  const initials = getUserInitials(name, currentUser.email || "");
+  if (initialsEl) initialsEl.innerText = initials;
+
+  if (currentPhoto) {
+    if (imgEl) {
+      imgEl.src = currentPhoto;
+      imgEl.classList.remove("hidden");
+    }
+    if (initialsEl) initialsEl.classList.add("hidden");
+    if (removeBtn) removeBtn.classList.remove("hidden");
+  } else {
+    if (imgEl) {
+      imgEl.src = "";
+      imgEl.classList.add("hidden");
+    }
+    if (initialsEl) initialsEl.classList.remove("hidden");
+    if (removeBtn) removeBtn.classList.add("hidden");
+  }
+
+  // Update phone live preview if value is present
+  if (phoneInput && phoneInput.value) {
+    const e164 = normalizeE164(phoneInput.value);
+    const phonePreview = document.getElementById("required-phone-preview");
+    if (phonePreview) {
+      if (e164) {
+        phonePreview.className = "text-2xs text-emerald-700 font-mono mt-1 flex items-center gap-1";
+        phonePreview.innerHTML = `<span class="font-bold">✓</span> WhatsApp ready: <strong>${escapeHtml(e164)}</strong>`;
+        phonePreview.classList.remove("hidden");
+      } else {
+        phonePreview.classList.add("hidden");
+      }
+    }
+  }
+
+  modal.classList.remove("hidden");
+}
+
+async function handleRequiredAvatarChange(event) {
+  const file = event?.target?.files?.[0];
+  if (!file) return;
+
+  try {
+    const dataUrl = await processImageToDataUrl(file, 128, 0.85);
+    pendingRequiredAvatarDataUrl = dataUrl;
+
+    const imgEl = document.getElementById("required-avatar-img");
+    const initialsEl = document.getElementById("required-avatar-initials");
+    const removeBtn = document.getElementById("btn-required-remove-avatar");
+
+    if (imgEl) {
+      imgEl.src = dataUrl;
+      imgEl.classList.remove("hidden");
+    }
+    if (initialsEl) initialsEl.classList.add("hidden");
+    if (removeBtn) removeBtn.classList.remove("hidden");
+  } catch (err) {
+    alert(err.message || "Failed to process profile photo.");
+    if (event.target) event.target.value = "";
+  }
+}
+
+function handleRemoveRequiredAvatar() {
+  pendingRequiredAvatarDataUrl = ""; // Explicitly mark as removed
+  const fileInput = document.getElementById("required-avatar-file");
+  const imgEl = document.getElementById("required-avatar-img");
+  const initialsEl = document.getElementById("required-avatar-initials");
+  const removeBtn = document.getElementById("btn-required-remove-avatar");
+
+  if (fileInput) fileInput.value = "";
+  if (imgEl) {
+    imgEl.src = "";
+    imgEl.classList.add("hidden");
+  }
+  if (initialsEl) initialsEl.classList.remove("hidden");
+  if (removeBtn) removeBtn.classList.add("hidden");
+}
+
 async function handleRequiredPhoneSubmit(event) {
   event.preventDefault();
+  if (!currentUser) return;
+
   const phoneInput = document.getElementById("required-phone-input");
   const phoneAlert = document.getElementById("phone-required-alert");
   const submitBtn = document.getElementById("btn-submit-required-phone");
@@ -1416,48 +1569,84 @@ async function handleRequiredPhoneSubmit(event) {
   const phone = phoneInput?.value?.trim();
   if (!phone) {
     if (phoneAlert) {
-      phoneAlert.className = "p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-800 border border-rose-300";
+      phoneAlert.className = "p-3 rounded-xl text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-300";
       phoneAlert.innerText = "Please enter a valid contact phone number.";
       phoneAlert.classList.remove("hidden");
     }
+    phoneInput?.focus();
     return;
   }
   const normalizedPhone = normalizeE164(phone);
   if (!normalizedPhone) {
     if (phoneAlert) {
-      phoneAlert.className = "p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-800 border border-rose-300";
+      phoneAlert.className = "p-3 rounded-xl text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-300";
       phoneAlert.innerText = "Please enter a valid mobile phone number (e.g. 07123 456789 or +44 7123 456789).";
       phoneAlert.classList.remove("hidden");
     }
+    phoneInput?.focus();
     return;
   }
+
+  let groupOrClub = "";
+  try {
+    groupOrClub = getGroupPickerValue("required");
+  } catch (groupErr) {
+    if (phoneAlert) {
+      phoneAlert.className = "p-3 rounded-xl text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-300";
+      phoneAlert.innerText = groupErr.message;
+      phoneAlert.classList.remove("hidden");
+    }
+    document.getElementById("required-group")?.focus();
+    return;
+  }
+
+  const visibilitySelect = document.getElementById("required-profile-visibility");
+  const profileVisibility = visibilitySelect?.value === "private" ? "private" : "public";
 
   const whatsappOptIn = document.getElementById("required-phone-whatsapp") ? document.getElementById("required-phone-whatsapp").checked : true;
   const emailOptIn = document.getElementById("required-phone-email") ? document.getElementById("required-phone-email").checked : true;
 
   if (submitBtn) submitBtn.disabled = true;
-  if (submitText) submitText.innerText = "Saving phone number...";
+  if (submitText) submitText.innerText = "Saving profile...";
 
   try {
-    await db.collection("users").doc(currentUser.uid).update({
+    const updates = {
       phoneNumber: normalizedPhone,
+      groupOrClub: groupOrClub,
+      profileVisibility: profileVisibility,
       whatsappNotifications: whatsappOptIn,
       emailNotifications: emailOptIn,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-    });
+    };
+
+    if (pendingRequiredAvatarDataUrl !== null) {
+      updates.photoURL = pendingRequiredAvatarDataUrl;
+      if (currentUser && typeof currentUser.updateProfile === "function") {
+        try {
+          await currentUser.updateProfile({ photoURL: pendingRequiredAvatarDataUrl });
+        } catch (pErr) {
+          console.warn("Could not update auth photoURL:", pErr);
+        }
+      }
+    }
+
+    await db.collection("users").doc(currentUser.uid).set(updates, { merge: true });
+
     const phoneModal = document.getElementById("phone-required-modal");
     if (phoneModal) phoneModal.classList.add("hidden");
     if (phoneAlert) phoneAlert.classList.add("hidden");
+
+    showNotificationToast("<span>✓</span><span>Profile configured! Welcome to the festival crew.</span>", "success");
   } catch (err) {
-    console.error("Failed to save phone number:", err);
+    console.error("Failed to save profile:", err);
     if (phoneAlert) {
-      phoneAlert.className = "p-3 rounded-lg text-xs font-medium bg-rose-50 text-rose-800 border border-rose-300";
-      phoneAlert.innerText = "Failed to update phone number: " + err.message;
+      phoneAlert.className = "p-3 rounded-xl text-xs font-semibold bg-rose-50 text-rose-800 border border-rose-300";
+      phoneAlert.innerText = "Failed to update profile: " + err.message;
       phoneAlert.classList.remove("hidden");
     }
   } finally {
     if (submitBtn) submitBtn.disabled = false;
-    if (submitText) submitText.innerText = "Save Phone Number & Continue";
+    if (submitText) submitText.innerText = "Save Profile & Continue";
   }
 }
 
@@ -2139,17 +2328,22 @@ function subscribeToFestivalConfig() {
           email: data.volunteerManager?.email || "",
           phone: data.volunteerManager?.phone || ""
         },
+        minCommitmentHours: (typeof data.minCommitmentHours === "number" || typeof data.minCommitmentHours === "string")
+          ? Math.max(0, Number(data.minCommitmentHours) || 0)
+          : 0,
         sessions: sortSessionsChronologically(rawSessions)
       };
     } else {
       currentFestivalConfig = {
         ...defaultFestivalConfig,
+        minCommitmentHours: 0,
         sessions: sortSessionsChronologically(defaultFestivalConfig.sessions)
       };
     }
 
     applyFestivalBranding();
     renderDayTabs();
+    updateCommitmentUI();
     if (currentUserRole === "admin" && currentView === "admin") {
       renderAdminFestivalConfig();
     }
@@ -3444,6 +3638,7 @@ function renderShifts(docs) {
     let totalBooked = 0;
     let openSpots = 0;
     let userBookedShift = null;
+    let userPendingShift = null;
     let hasClashes = false;
 
     group.shifts.forEach(s => {
@@ -3455,7 +3650,9 @@ function renderShifts(docs) {
 
       if (userRegistrations.has(s.id)) {
         userBookedShift = s;
-      } else if (currentUser && getConflictingRegisteredShift(s.id, s.data)) {
+      } else if (pendingCommitmentShiftIds.has(s.id)) {
+        userPendingShift = s;
+      } else if (currentUser && (getConflictingRegisteredShift(s.id, s.data) || getConflictingPendingShift(s.id, s.data))) {
         hasClashes = true;
       }
     });
@@ -3486,6 +3683,17 @@ function renderShifts(docs) {
       statusBadgeHtml = `
         <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-100 text-emerald-900 border border-emerald-300 shadow-2xs">
           <svg class="w-3 h-3 text-emerald-800 shrink-0"><use href="#icon-check"/></svg> You're booked: ${escapeHtml(shiftName)}
+        </span>
+      `;
+    } else if (userPendingShift) {
+      headerBorderClass = "border-violet-300 ring-1 ring-violet-200/80";
+      headerBgClass = "bg-violet-50/70 hover:bg-violet-100/60";
+      const shiftName = scheduleGroupingMode === "time"
+        ? (userPendingShift.data.categoryName || "Shift")
+        : `${formatTime(userPendingShift.data.startTime)} – ${formatTime(userPendingShift.data.endTime)}`;
+      statusBadgeHtml = `
+        <span class="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-bold bg-violet-100 text-violet-950 border border-violet-300 shadow-2xs">
+          <svg class="w-3 h-3 text-violet-700 shrink-0"><use href="#icon-clock"/></svg> Pending: ${escapeHtml(shiftName)}
         </span>
       `;
     } else if (isGroupAllFull) {
@@ -3519,9 +3727,12 @@ function renderShifts(docs) {
     const rowsHtml = group.shifts.map(s => {
       const shift = s.data;
       const isRegistered = userRegistrations.has(s.id);
+      const isPending = pendingCommitmentShiftIds.has(s.id);
       const isFull = (shift.assignedCount || 0) >= (shift.capacity || 0);
       const isLocked = isShiftLocked(shift.startTime);
       const conflict = (!isRegistered && currentUser) ? getConflictingRegisteredShift(s.id, shift) : null;
+      const pendingConflict = (!isRegistered && !isPending && currentUser) ? getConflictingPendingShift(s.id, shift) : null;
+      const shiftDuration = getShiftDurationHours(shift);
 
       const startTime = formatTime(shift.startTime);
       const endTime = formatTime(shift.endTime);
@@ -3551,6 +3762,21 @@ function renderShifts(docs) {
             </button>
           `;
         }
+      } else if (isPending) {
+        actionBtnHtml = `
+          <button onclick="togglePendingCommitmentShift('${s.id}')" class="h-8.5 sm:h-9 min-h-[34px] w-[80px] sm:w-[88px] px-1 py-1 rounded-xl text-xs font-bold text-violet-950 bg-violet-200/90 hover:bg-rose-100 hover:text-rose-700 hover:border-rose-300 border border-violet-400 transition-all duration-150 shadow-2xs flex items-center justify-center active:scale-95 cursor-pointer touch-manipulation shrink-0" title="Pending commitment (${shiftDuration}h). Click to remove.">
+            <svg class="w-3 h-3 text-violet-800 mr-0.5"><use href="#icon-clock"/></svg> Pending
+          </button>
+        `;
+      } else if (pendingConflict) {
+        const conflictName = pendingConflict.categoryName || "another shift";
+        const conflictStart = formatTime(pendingConflict.startTime);
+        const conflictEnd = formatTime(pendingConflict.endTime);
+        actionBtnHtml = `
+          <button disabled class="h-8.5 sm:h-9 min-h-[34px] w-[80px] sm:w-[88px] px-1 py-1 rounded-xl text-xs font-bold text-amber-800 bg-amber-50 border border-amber-300 cursor-not-allowed inline-flex items-center justify-center gap-1 shadow-2xs shrink-0" title="Time Clash: Overlaps with selected shift ${escapeHtml(conflictName)} (${conflictStart} &ndash; ${conflictEnd})">
+            <svg class="w-3 h-3 text-amber-700 shrink-0"><use href="#icon-alert"/></svg> Clash
+          </button>
+        `;
       } else if (conflict) {
         const conflictName = conflict.categoryName || "another shift";
         const conflictStart = formatTime(conflict.startTime);
@@ -3595,6 +3821,8 @@ function renderShifts(docs) {
       let urgencyHtml = "";
       if (isRegistered) {
         urgencyHtml = `<span class="inline-flex items-center text-emerald-800 font-bold text-xs"><svg class="w-3 h-3 text-emerald-600 mr-1"><use href="#icon-check"/></svg> Confirmed</span>`;
+      } else if (isPending) {
+        urgencyHtml = `<span class="inline-flex items-center text-violet-900 font-bold text-xs"><svg class="w-3 h-3 text-violet-700 mr-1"><use href="#icon-clock"/></svg> Pending (${shiftDuration}h)</span>`;
       } else if (isFull) {
         urgencyHtml = `<span class="inline-flex items-center text-slate-500 font-medium text-xs">All spots filled</span>`;
       } else {
@@ -3617,11 +3845,13 @@ function renderShifts(docs) {
         ? escapeHtml(shift.categoryName || 'General Area')
         : `<span class="tabular-nums">${startTime} &ndash; ${endTime}</span>`;
 
-      // Status background tints - aligned without border-l-4 per craft-floor guidance
+      // Status background tints - aligned with pastel violet shading for pending commitment shifts
       let rowBgClass = "hover:bg-amber-50/40";
       if (isRegistered) {
         rowBgClass = "bg-emerald-50/50 hover:bg-emerald-50/70";
-      } else if (conflict) {
+      } else if (isPending) {
+        rowBgClass = "bg-violet-50/90 border-l-4 border-violet-500 hover:bg-violet-100/70 shadow-2xs";
+      } else if (conflict || pendingConflict) {
         rowBgClass = "bg-amber-50/30 hover:bg-amber-50/50";
       }
 
@@ -3636,6 +3866,11 @@ function renderShifts(docs) {
               ${isRegistered ? `
                 <span class="inline-flex items-center px-1.5 py-0.2 rounded-full text-2xs font-extrabold bg-emerald-100 text-emerald-900 border border-emerald-300">
                   Booked
+                </span>
+              ` : ''}
+              ${isPending ? `
+                <span class="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full text-2xs font-bold bg-violet-100 text-violet-950 border border-violet-300 shadow-2xs">
+                  <svg class="w-2.5 h-2.5 text-violet-700 shrink-0"><use href="#icon-clock"/></svg> Pending
                 </span>
               ` : ''}
               ${conflict ? `
@@ -3703,6 +3938,7 @@ function renderShifts(docs) {
   updateExpandAllButton(anySectionCollapsed);
 
   grid.innerHTML = sectionsHtml;
+  updateCommitmentUI();
 }
 
 // Real-Time Registrations Listener
@@ -3720,11 +3956,16 @@ function subscribeToUserRegistrations(uid) {
       snapshot.docs.forEach(doc => {
         const data = doc.data();
         userRegistrations.set(data.shiftId, data);
+        if (pendingCommitmentShiftIds.has(data.shiftId)) {
+          pendingCommitmentShiftIds.delete(data.shiftId);
+        }
         const shiftDoc = currentShiftsDocs.find(d => d.id === data.shiftId);
         if (shiftDoc) {
           userRegisteredShifts.set(data.shiftId, shiftDoc.data());
         }
       });
+      savePendingCommitmentShifts();
+      updateCommitmentUI();
 
       // Update incentive calculation and My Shifts view
       await updateIncentiveAndMyShifts();
@@ -3998,12 +4239,6 @@ async function updateIncentiveAndMyShifts() {
                     class="text-xs font-bold px-3 py-1.5 rounded-xl bg-white hover:bg-amber-50 text-amber-950 border border-amber-300 transition shadow-2xs flex items-center gap-1.5 cursor-pointer" 
                     title="View shift roster and fellow volunteers">
               <span>👥</span> Roster
-            </button>
-            <button type="button" 
-                    onclick="exportSingleShiftToICS('${shift.id}')" 
-                    class="text-xs font-bold px-3 py-1.5 rounded-xl bg-white hover:bg-amber-50 text-amber-950 border border-amber-300 transition shadow-2xs flex items-center gap-1.5 cursor-pointer" 
-                    title="Export this shift to calendar (.ics)">
-              <span>📅</span> Calendar
             </button>
             ${isLocked ? `
               <span class="inline-flex items-center text-xs font-bold px-3 py-1.5 rounded-xl bg-slate-100 text-slate-500 border border-slate-200 cursor-not-allowed" title="Shifts cannot be cancelled within 7 days of shift date">
@@ -5012,27 +5247,395 @@ document.addEventListener("click", (e) => {
   }
 });
 
-// Volunteer Shift Actions
-async function claimShift(shiftId) {
+// ============================================================================
+// Volunteer Minimum Commitment Policy & Staging Management
+// ============================================================================
+
+function renderFilteredShifts() {
+  if (typeof renderShifts === "function") {
+    renderShifts(currentShiftsDocs);
+  }
+}
+
+function loadPendingCommitmentShifts() {
+  try {
+    const raw = sessionStorage.getItem("brewcrew_pending_commitments");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        pendingCommitmentShiftIds = new Set(parsed);
+      }
+    }
+  } catch (err) {
+    console.warn("Could not load pending shifts from session:", err);
+  }
+}
+
+function savePendingCommitmentShifts() {
+  try {
+    sessionStorage.setItem("brewcrew_pending_commitments", JSON.stringify(Array.from(pendingCommitmentShiftIds)));
+  } catch (err) {
+    // ignore
+  }
+}
+
+function clearPendingCommitmentShifts() {
+  if (pendingCommitmentShiftIds.size === 0) {
+    if (!document.getElementById("commitment-confirm-modal")?.classList.contains("hidden")) {
+      renderCommitmentModalList();
+    }
+    return;
+  }
+  pendingCommitmentShiftIds.clear();
+  lastAddedPendingShiftId = null;
+  savePendingCommitmentShifts();
+  updateCommitmentUI();
+  renderFilteredShifts();
+  if (!document.getElementById("commitment-confirm-modal")?.classList.contains("hidden")) {
+    renderCommitmentModalList();
+  }
+  showNotificationToast("<span>✕</span><span>Cleared all pending shift selections.</span>", "info");
+}
+
+function getShiftDurationHours(shiftData) {
+  if (!shiftData) return 0;
+  const startMs = getShiftStartTimeMs(shiftData.startTime);
+  const endMs = getShiftStartTimeMs(shiftData.endTime);
+  if (!startMs || !endMs || endMs <= startMs) return 0;
+  return Math.round(((endMs - startMs) / (1000 * 3600)) * 10) / 10;
+}
+
+function getUserConfirmedHours() {
+  let total = 0;
+  userRegistrations.forEach((reg, shiftId) => {
+    const shiftDoc = currentShiftsDocs.find(d => d.id === shiftId);
+    if (shiftDoc) {
+      total += getShiftDurationHours(shiftDoc.data());
+    }
+  });
+  return Math.round(total * 10) / 10;
+}
+
+function getPendingCommitmentHours() {
+  let total = 0;
+  pendingCommitmentShiftIds.forEach((shiftId) => {
+    const shiftDoc = currentShiftsDocs.find(d => d.id === shiftId);
+    if (shiftDoc) {
+      total += getShiftDurationHours(shiftDoc.data());
+    }
+  });
+  return Math.round(total * 10) / 10;
+}
+
+function getConflictingPendingShift(targetShiftId, targetShiftData) {
+  if (!targetShiftData || pendingCommitmentShiftIds.size === 0) return null;
+  if (pendingCommitmentShiftIds.has(targetShiftId)) return null;
+
+  const targetStart = getShiftStartTimeMs(targetShiftData.startTime);
+  const targetEnd = getShiftStartTimeMs(targetShiftData.endTime);
+  if (!targetStart || !targetEnd || targetStart >= targetEnd) return null;
+
+  for (const pendingId of pendingCommitmentShiftIds) {
+    if (pendingId === targetShiftId) continue;
+    const pendingDoc = currentShiftsDocs.find(d => d.id === pendingId);
+    if (!pendingDoc) continue;
+    const pData = pendingDoc.data();
+    const pStart = getShiftStartTimeMs(pData.startTime);
+    const pEnd = getShiftStartTimeMs(pData.endTime);
+    if (pStart && pEnd && targetStart < pEnd && pStart < targetEnd) {
+      return { id: pendingId, ...pData };
+    }
+  }
+  return null;
+}
+
+function togglePendingCommitmentShift(shiftId) {
+  if (pendingCommitmentShiftIds.has(shiftId)) {
+    pendingCommitmentShiftIds.delete(shiftId);
+    savePendingCommitmentShifts();
+    showNotificationToast("<span>✕</span><span>Removed shift from pending selection.</span>", "info");
+  } else {
+    pendingCommitmentShiftIds.add(shiftId);
+    lastAddedPendingShiftId = shiftId;
+    savePendingCommitmentShifts();
+  }
+  updateCommitmentUI();
+  renderFilteredShifts();
+  if (!document.getElementById("commitment-confirm-modal")?.classList.contains("hidden")) {
+    renderCommitmentModalList();
+  }
+}
+
+function removePendingShift(shiftId) {
+  if (pendingCommitmentShiftIds.has(shiftId)) {
+    pendingCommitmentShiftIds.delete(shiftId);
+    savePendingCommitmentShifts();
+    updateCommitmentUI();
+    renderFilteredShifts();
+    renderCommitmentModalList();
+    showNotificationToast("<span>✕</span><span>Removed shift from pending selection.</span>", "info");
+  }
+}
+
+function removeLastPendingShift() {
+  if (lastAddedPendingShiftId && pendingCommitmentShiftIds.has(lastAddedPendingShiftId)) {
+    pendingCommitmentShiftIds.delete(lastAddedPendingShiftId);
+    lastAddedPendingShiftId = null;
+    savePendingCommitmentShifts();
+    updateCommitmentUI();
+    renderFilteredShifts();
+  }
+  closeCommitmentRequirementModal();
+}
+
+function openCommitmentRequirementModal(shiftId, shiftData, cumulative, minHours) {
+  const modal = document.getElementById("commitment-requirement-modal");
+  if (!modal) return;
+
+  const minEl = document.getElementById("commitment-modal-min-hours");
+  const minTextEl = document.getElementById("commitment-modal-min-hours-text");
+  const nameEl = document.getElementById("commitment-modal-shift-name");
+  const hoursEl = document.getElementById("commitment-modal-shift-hours");
+  const timeEl = document.getElementById("commitment-modal-shift-time");
+  const currentEl = document.getElementById("commitment-modal-current-hours");
+  const neededEl = document.getElementById("commitment-modal-needed-hours");
+  const progressEl = document.getElementById("commitment-modal-progress-bar");
+
+  const duration = getShiftDurationHours(shiftData);
+  const needed = Math.max(0, Math.round((minHours - cumulative) * 10) / 10);
+  const pct = Math.min(100, Math.round((cumulative / minHours) * 100));
+
+  if (minEl) minEl.textContent = String(minHours);
+  if (minTextEl) minTextEl.textContent = String(minHours);
+  if (nameEl) nameEl.textContent = shiftData.categoryName || "Shift";
+  if (hoursEl) hoursEl.textContent = `${duration} hrs`;
+  if (timeEl) {
+    const day = formatDate(shiftData.startTime);
+    timeEl.innerHTML = `${day} &bull; ${formatTime(shiftData.startTime)} &ndash; ${formatTime(shiftData.endTime)}`;
+  }
+  if (currentEl) currentEl.textContent = `${cumulative} hrs`;
+  if (neededEl) neededEl.textContent = `${needed} more hrs`;
+  if (progressEl) progressEl.style.width = `${pct}%`;
+
+  modal.classList.remove("hidden");
+}
+
+function closeCommitmentRequirementModal() {
+  const modal = document.getElementById("commitment-requirement-modal");
+  if (modal) modal.classList.add("hidden");
+}
+
+function openCommitmentConfirmModal() {
+  renderCommitmentModalList();
+  const modal = document.getElementById("commitment-confirm-modal");
+  if (modal) modal.classList.remove("hidden");
+}
+
+function closeCommitmentConfirmModal() {
+  const modal = document.getElementById("commitment-confirm-modal");
+  if (modal) modal.classList.add("hidden");
+}
+
+function renderCommitmentModalList() {
+  const container = document.getElementById("commitment-confirm-shifts-list");
+  if (!container) return;
+
+  const countEl = document.getElementById("commitment-confirm-count");
+  const totalHoursEl = document.getElementById("commitment-confirm-total-hours");
+  const alertEl = document.getElementById("commitment-confirm-alert");
+  const confirmBtn = document.getElementById("btn-confirm-commitment-shifts");
+  const clearBtn = document.getElementById("btn-clear-pending-shifts");
+  const titleEl = document.getElementById("commitment-confirm-modal-title");
+  const subtitleEl = document.getElementById("commitment-confirm-modal-subtitle");
+
+  const pendingIds = Array.from(pendingCommitmentShiftIds);
+  const minHours = Number(currentFestivalConfig.minCommitmentHours) || 0;
+  const confirmedHours = getUserConfirmedHours();
+  const pendingHours = getPendingCommitmentHours();
+  const totalCumulative = Math.round((confirmedHours + pendingHours) * 10) / 10;
+  const pendingHoursFormatted = (Math.round(pendingHours * 10) / 10).toFixed(1);
+
+  if (countEl) countEl.textContent = String(pendingIds.length);
+  if (totalHoursEl) totalHoursEl.textContent = pendingHoursFormatted;
+
+  if (pendingIds.length === 0) {
+    container.innerHTML = `<div class="p-6 text-center text-slate-400 italic bg-stone-50 rounded-xl border border-slate-200">No shifts currently selected.</div>`;
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.className = "px-4 py-2 text-xs font-bold text-slate-400 bg-slate-200 rounded-xl cursor-not-allowed flex items-center gap-1.5";
+      confirmBtn.innerHTML = `<span>No Shifts Selected</span>`;
+    }
+    if (clearBtn) {
+      clearBtn.disabled = true;
+      clearBtn.classList.add("opacity-40", "cursor-not-allowed");
+    }
+    if (alertEl) alertEl.className = "hidden";
+    if (titleEl) titleEl.textContent = "Shifts Selected";
+    if (subtitleEl) subtitleEl.textContent = minHours > 0 ? `Minimum commitment is ${minHours} hours` : "";
+    return;
+  }
+
+  if (clearBtn) {
+    clearBtn.disabled = false;
+    clearBtn.classList.remove("opacity-40", "cursor-not-allowed");
+  }
+
+  container.innerHTML = "";
+  pendingIds.forEach(shiftId => {
+    const shiftDoc = currentShiftsDocs.find(d => d.id === shiftId);
+    if (!shiftDoc) return;
+    const shift = shiftDoc.data();
+    const duration = getShiftDurationHours(shift);
+    const day = formatDate(shift.startTime);
+    const timeStr = `${formatTime(shift.startTime)} &ndash; ${formatTime(shift.endTime)}`;
+
+    const card = document.createElement("div");
+    card.className = "flex items-center justify-between gap-3 p-3 rounded-xl bg-violet-50/60 border border-violet-200 text-xs";
+    card.innerHTML = `
+      <div class="min-w-0">
+        <div class="flex items-center gap-2">
+          <strong class="text-slate-900">${escapeHtml(shift.categoryName || 'Shift')}</strong>
+          <span class="px-2 py-0.5 rounded-full font-bold bg-violet-100 text-violet-950 font-mono text-2xs">${duration} hrs</span>
+        </div>
+        <p class="text-2xs text-slate-500 mt-0.5">${day} &bull; ${timeStr}</p>
+      </div>
+      <button type="button" onclick="removePendingShift('${shiftId}')"
+        class="text-xs font-semibold px-2 py-1 rounded-lg text-rose-700 hover:bg-rose-50 border border-rose-200 transition cursor-pointer shrink-0"
+        title="Remove shift from selection">
+        Remove
+      </button>
+    `;
+    container.appendChild(card);
+  });
+
+  const meetsCommitment = minHours <= 0 || totalCumulative >= minHours;
+
+  if (meetsCommitment) {
+    if (confirmBtn) {
+      confirmBtn.disabled = false;
+      confirmBtn.className = "px-4 py-2 text-xs font-bold text-white bg-amber-700 hover:bg-amber-800 rounded-xl shadow-xs transition cursor-pointer flex items-center gap-1.5";
+      confirmBtn.innerHTML = `<span>✓ Confirm &amp; Book ${pendingIds.length} Shift${pendingIds.length === 1 ? '' : 's'} (${pendingHoursFormatted}h)</span>`;
+    }
+    if (titleEl) titleEl.textContent = "Ready to Confirm Shifts";
+    if (subtitleEl) subtitleEl.textContent = `You've met the minimum commitment of ${minHours} hours!`;
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-xl bg-emerald-50 text-emerald-900 border border-emerald-200 text-xs flex items-center gap-2";
+      alertEl.innerHTML = `<span>✓</span><span><strong>Commitment met!</strong> You have selected ${pendingHoursFormatted} hrs (Total volunteer commitment: ${totalCumulative} hrs / ${minHours} hrs required).</span>`;
+    }
+  } else {
+    const needed = Math.round((minHours - totalCumulative) * 10) / 10;
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.className = "px-4 py-2 text-xs font-bold text-slate-400 bg-slate-200 rounded-xl cursor-not-allowed flex items-center gap-1.5";
+      confirmBtn.innerHTML = `<span>Need ${needed} More Hour${needed === 1 ? '' : 's'} to Confirm</span>`;
+    }
+    if (titleEl) titleEl.textContent = "Shifts Selected";
+    if (subtitleEl) subtitleEl.textContent = `Minimum commitment is ${minHours} hours`;
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-xl bg-amber-50 text-amber-900 border border-amber-200 text-xs flex items-center gap-2";
+      alertEl.innerHTML = `<span>ℹ</span><span>Please select at least <strong>${needed} more hour${needed === 1 ? '' : 's'}</strong> to reach the festival's ${minHours}-hour minimum commitment.</span>`;
+    }
+  }
+}
+
+function updateCommitmentUI() {
+  const bar = document.getElementById("commitment-sticky-bar");
+  if (!bar) return;
+
+  const minHours = Number(currentFestivalConfig.minCommitmentHours) || 0;
+  const pendingCount = pendingCommitmentShiftIds.size;
+
+  if (pendingCount === 0 || minHours <= 0) {
+    bar.classList.add("hidden");
+    return;
+  }
+
+  bar.classList.remove("hidden");
+
+  const confirmedHours = getUserConfirmedHours();
+  const pendingHours = getPendingCommitmentHours();
+  const totalCumulative = Math.round((confirmedHours + pendingHours) * 10) / 10;
+  const badgeEl = document.getElementById("commitment-sticky-status-badge");
+  const textEl = document.getElementById("commitment-sticky-text");
+  const actionBtn = document.getElementById("btn-commitment-sticky-action");
+
+  if (badgeEl) {
+    badgeEl.textContent = `${totalCumulative} / ${minHours} hrs`;
+  }
+
+  if (totalCumulative >= minHours) {
+    if (badgeEl) {
+      badgeEl.className = "px-2 py-0.5 rounded-full text-2xs font-bold bg-emerald-100 text-emerald-900";
+    }
+    if (textEl) {
+      textEl.innerHTML = `✓ <strong class="text-emerald-900">Commitment met!</strong> Ready to confirm ${pendingCount} shift${pendingCount === 1 ? '' : 's'} (${pendingHours} hrs).`;
+    }
+    if (actionBtn) {
+      actionBtn.className = "px-3.5 py-2 text-xs font-bold rounded-xl transition shadow-xs flex items-center gap-1.5 cursor-pointer bg-emerald-700 hover:bg-emerald-800 text-white";
+      actionBtn.innerHTML = `<span>✓ Confirm Shifts (${pendingHours}h)</span>`;
+    }
+  } else {
+    const needed = Math.round((minHours - totalCumulative) * 10) / 10;
+    if (badgeEl) {
+      badgeEl.className = "px-2 py-0.5 rounded-full text-2xs font-bold bg-amber-100 text-amber-900";
+    }
+    if (textEl) {
+      textEl.textContent = `Select ${needed} more hour${needed === 1 ? "" : "s"} before shifts can be confirmed.`;
+    }
+    if (actionBtn) {
+      actionBtn.className = "px-3.5 py-2 text-xs font-bold rounded-xl transition shadow-xs flex items-center gap-1.5 cursor-pointer bg-amber-700 hover:bg-amber-800 text-white";
+      actionBtn.innerHTML = `<span>Review Selected (${pendingCount})</span>`;
+    }
+  }
+}
+
+async function confirmCommitmentShifts() {
   if (!currentUser) {
     showNotificationToast("<span>🔒</span><span>Please sign in to register for shifts.</span>", "warning");
     return;
   }
 
-  // Pre-check for conflicting shifts on client side
-  const shiftDoc = currentShiftsDocs.find(d => d.id === shiftId);
-  if (shiftDoc) {
-    const shiftData = shiftDoc.data();
-    const conflict = getConflictingRegisteredShift(shiftId, shiftData);
-    if (conflict) {
-      const conflictName = conflict.categoryName || "another area";
-      const conflictStart = formatTime(conflict.startTime);
-      const conflictEnd = formatTime(conflict.endTime);
-      showNotificationToast(`<span>⚠️</span><span>Cannot register: overlaps with "${escapeHtml(conflictName)}" (${conflictStart} &ndash; ${conflictEnd})</span>`, "warning");
-      return;
-    }
+  const ids = Array.from(pendingCommitmentShiftIds);
+  if (ids.length === 0) return;
+
+  const btn = document.getElementById("btn-confirm-commitment-shifts");
+  const originalHtml = btn ? btn.innerHTML : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span>⏳</span> Confirming...`;
   }
 
+  try {
+    const claimFn = functions.httpsCallable("claimShift");
+    await claimFn({ shiftIds: ids });
+    const count = ids.length;
+    const hours = getPendingCommitmentHours();
+    clearPendingCommitmentShifts();
+    closeCommitmentConfirmModal();
+    updateCommitmentUI();
+    renderFilteredShifts();
+    showNotificationToast(`<span>🎉</span><span>Successfully registered for <strong>${count} shift${count === 1 ? '' : 's'} (${hours} hrs)</strong>!</span>`, "success");
+  } catch (err) {
+    let friendlyMessage = err.message || "An unexpected error occurred.";
+    if (friendlyMessage.includes("ALREADY_REGISTERED") || friendlyMessage.includes("already-exists")) {
+      friendlyMessage = "You are already registered for one of the selected shifts.";
+    } else if (friendlyMessage.includes("SHIFT_FULL") || friendlyMessage.includes("full")) {
+      friendlyMessage = "One of the selected shifts is now full. Please select an alternate shift.";
+    } else if (friendlyMessage.includes("overlaps") || friendlyMessage.includes("overlap") || friendlyMessage.includes("TIME_CONFLICT")) {
+      friendlyMessage = "Shift conflict: Overlapping hours detected between selected shifts.";
+    } else if (friendlyMessage.includes("minimum commitment") || friendlyMessage.includes("policy requires")) {
+      friendlyMessage = err.message;
+    }
+    showNotificationToast(`<span>⚠️</span><span>Registration failed: ${escapeHtml(friendlyMessage)}</span>`, "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+    }
+  }
+}
+
+async function executeSingleShiftBooking(shiftId) {
   try {
     const claimFn = functions.httpsCallable("claimShift");
     await claimFn({ shiftId: shiftId });
@@ -5047,8 +5650,89 @@ async function claimShift(shiftId) {
       friendlyMessage = "This shift conflicts with another shift on your schedule.";
     } else if (friendlyMessage.includes("PERMISSION_DENIED")) {
       friendlyMessage = "Sign-in required to register for shifts.";
+    } else if (friendlyMessage.includes("minimum commitment") || friendlyMessage.includes("policy requires")) {
+      friendlyMessage = err.message;
     }
     showNotificationToast(`<span>⚠️</span><span>Registration failed: ${escapeHtml(friendlyMessage)}</span>`, "error");
+  }
+}
+
+// Volunteer Shift Actions
+async function claimShift(shiftId) {
+  if (!currentUser) {
+    showNotificationToast("<span>🔒</span><span>Please sign in to register for shifts.</span>", "warning");
+    return;
+  }
+
+  const shiftDoc = currentShiftsDocs.find(d => d.id === shiftId);
+  if (!shiftDoc) return;
+  const shiftData = shiftDoc.data();
+
+  // Pre-check for conflicting shifts with confirmed registrations
+  const conflict = getConflictingRegisteredShift(shiftId, shiftData);
+  if (conflict) {
+    const conflictName = conflict.categoryName || "another area";
+    const conflictStart = formatTime(conflict.startTime);
+    const conflictEnd = formatTime(conflict.endTime);
+    showNotificationToast(`<span>⚠️</span><span>Cannot register: overlaps with "${escapeHtml(conflictName)}" (${conflictStart} &ndash; ${conflictEnd})</span>`, "warning");
+    return;
+  }
+
+  // Pre-check for conflicting shifts with pending staged shifts
+  const pendingConflict = getConflictingPendingShift(shiftId, shiftData);
+  if (pendingConflict) {
+    const conflictName = pendingConflict.categoryName || "another area";
+    const conflictStart = formatTime(pendingConflict.startTime);
+    const conflictEnd = formatTime(pendingConflict.endTime);
+    showNotificationToast(`<span>⚠️</span><span>Cannot select: overlaps with selected shift "${escapeHtml(conflictName)}" (${conflictStart} &ndash; ${conflictEnd})</span>`, "warning");
+    return;
+  }
+
+  const minHours = Number(currentFestivalConfig.minCommitmentHours) || 0;
+  const confirmedHours = getUserConfirmedHours();
+  const shiftDuration = getShiftDurationHours(shiftData);
+
+  // If already selected in pending commitment, remove it (toggle behavior)
+  if (pendingCommitmentShiftIds.has(shiftId)) {
+    togglePendingCommitmentShift(shiftId);
+    return;
+  }
+
+  // If no minimum requirement configured OR user already met minimum commitment via confirmed shifts
+  if (minHours <= 0 || confirmedHours >= minHours) {
+    if (pendingCommitmentShiftIds.size === 0) {
+      await executeSingleShiftBooking(shiftId);
+      return;
+    }
+  }
+
+  // If adding this shift alone meets or exceeds the minimum commitment on the first click (e.g. 4-hour shift alone)
+  // and there were no other pending shifts:
+  if (pendingCommitmentShiftIds.size === 0 && (confirmedHours + shiftDuration) >= minHours && minHours > 0) {
+    lastAddedPendingShiftId = shiftId;
+    pendingCommitmentShiftIds.add(shiftId);
+    savePendingCommitmentShifts();
+    updateCommitmentUI();
+    renderFilteredShifts();
+    openCommitmentConfirmModal();
+    return;
+  }
+
+  // Volunteer needs more hours: stage shift
+  lastAddedPendingShiftId = shiftId;
+  pendingCommitmentShiftIds.add(shiftId);
+  savePendingCommitmentShifts();
+  updateCommitmentUI();
+  renderFilteredShifts();
+
+  const totalCumulative = Math.round((confirmedHours + getPendingCommitmentHours()) * 10) / 10;
+
+  if (totalCumulative < minHours) {
+    // Under minimum: show prompt asking user to register for another shift
+    openCommitmentRequirementModal(shiftId, shiftData, totalCumulative, minHours);
+  } else {
+    // Minimum met: open confirmation modal
+    openCommitmentConfirmModal();
   }
 }
 
@@ -6310,6 +6994,11 @@ function renderAdminFestivalConfig() {
   if (mgrEmailInput) mgrEmailInput.value = mgr.email || "";
   if (mgrPhoneInput) mgrPhoneInput.value = mgr.phone || "";
 
+  const minHoursInput = document.getElementById("admin-cfg-min-hours");
+  if (minHoursInput) {
+    minHoursInput.value = currentFestivalConfig.minCommitmentHours !== undefined ? currentFestivalConfig.minCommitmentHours : 0;
+  }
+
   adminEditingSessions = sortSessionsChronologically(currentFestivalConfig.sessions || defaultFestivalConfig.sessions);
   adminInlineEditingSessionId = null;
   renderAdminSessionsTable();
@@ -6631,6 +7320,8 @@ async function handleSaveFestivalConfig() {
   const mgrName = document.getElementById("admin-cfg-manager-name")?.value?.trim() || "";
   const mgrEmail = document.getElementById("admin-cfg-manager-email")?.value?.trim() || "";
   const mgrPhone = document.getElementById("admin-cfg-manager-phone")?.value?.trim() || "";
+  const minHoursRaw = document.getElementById("admin-cfg-min-hours")?.value;
+  const minCommitmentHours = Math.max(0, parseFloat(minHoursRaw) || 0);
   const saveBtn = document.getElementById("btn-save-festival-config");
   const alertEl = document.getElementById("admin-config-alert");
 
@@ -6662,6 +7353,7 @@ async function handleSaveFestivalConfig() {
         phone: mgrPhone
       },
       sessions: adminEditingSessions,
+      minCommitmentHours: minCommitmentHours,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       updatedBy: currentUser.uid
     };

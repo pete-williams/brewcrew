@@ -103,7 +103,7 @@ All callable Cloud Functions throw `HttpsError` from `firebase-functions/v2/http
 
 ### 1. `claimShift`
 
-Registers an authenticated volunteer for an open festival shift atomically, ensuring no capacity overbooking occurs under concurrent requests and preventing concurrent/overlapping shift bookings for the same volunteer. Also supports administrators directly assigning shifts to registered volunteers.
+Registers an authenticated volunteer for an open festival shift (or atomic batch of shifts), ensuring no capacity overbooking occurs under concurrent requests, preventing concurrent/overlapping shift bookings for the same volunteer, and enforcing the festival's minimum commitment hours policy before confirmation. Also supports administrators directly assigning shifts to registered volunteers.
 
 - **Trigger**: `onCall`
 - **Permissions**:
@@ -114,7 +114,8 @@ Registers an authenticated volunteer for an open festival shift atomically, ensu
 
 | Field | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
-| `shiftId` | `string` | **Yes** | Firestore document ID of the shift in `/shifts`. |
+| `shiftId` | `string` | Conditional | Firestore document ID of the shift in `/shifts`. Required if `shiftIds` is omitted. |
+| `shiftIds` | `string[]` | Conditional | Array of shift document IDs to register concurrently in a single atomic transaction. Required if `shiftId` is omitted. |
 | `targetUserId` | `string` | No | Target volunteer UID to register/assign (Admin only). Defaults to caller UID. |
 
 #### Response (`result`)
@@ -122,7 +123,12 @@ Registers an authenticated volunteer for an open festival shift atomically, ensu
 ```json
 {
   "success": true,
-  "assignedUserId": "user456"
+  "assignedUserId": "user456",
+  "registeredCount": 2,
+  "shiftIds": [
+    "shift123",
+    "shift456"
+  ]
 }
 ```
 
@@ -131,19 +137,17 @@ Registers an authenticated volunteer for an open festival shift atomically, ensu
    - Throws `permission-denied` if caller account has `disabled: true`.
    - If `targetUserId` is specified and `targetUserId !== callerUid` and caller is **not** an admin, throws `permission-denied` (`"Only administrators can assign shifts to other volunteers."`).
 2. Determines `assignedUid = (targetUserId && isAdmin) ? targetUserId : callerUid`.
-3. Executes within a Firestore transaction (`db.runTransaction`):
-   - Reads `/shifts/{shiftId}`. Throws `not-found` if the shift does not exist.
-   - If `assignedUid !== callerUid`, verifies `/users/{assignedUid}` exists and does not have `disabled: true`. Throws `failed-precondition` if the target volunteer account is disabled.
-   - Compares `shift.assignedCount >= shift.capacity`. If full, throws `failed-precondition` (`"This shift is already full."`).
-   - Checks `/registrations/{shiftId}_{assignedUid}`. If a registration exists with `status: "confirmed"`, throws `already-exists` (`"You are already registered for this shift."` or `"This volunteer is already registered for this shift."`).
-   - **Overlapping & Simultaneous Shift Registration Safeguard**:
-     - Parses target shift `startTime` and `endTime` into epoch timestamps.
-     - Queries assigned volunteer's active registrations (`/registrations` where `userId == assignedUid` and `status == "confirmed"`).
-     - Within the transaction, fetches all other registered shift documents (`transaction.getAll`).
-     - Validates for time conflicts using interval intersection: `targetStart < otherEnd && otherStart < targetEnd`.
-     - If an overlapping shift is detected, aborts the transaction and throws `failed-precondition` with shift conflict details.
-   - Atomically executes:
-     - Increments `/shifts/{shiftId}.assignedCount` by `1`.
+3. If `assignedUid !== callerUid`, verifies target volunteer account exists and is not disabled.
+4. Queries `/config/festival` to resolve `minCommitmentHours` (defaults to `0` if unset).
+5. Executes within a single atomic Firestore transaction (`db.runTransaction`):
+   - Reads all requested shifts in `/shifts`. Throws `not-found` if any shift does not exist.
+   - For each shift, verifies `shift.assignedCount < shift.capacity`. If any shift is full, throws `failed-precondition` (`"The shift \"...\" is already full."`).
+   - Checks `/registrations/{shiftId}_{assignedUid}` for each requested shift. If a registration already exists with `status: "confirmed"`, throws `already-exists` (`"You are already registered for \"...\""`).
+   - **Intra-Batch Pairwise Overlap Safeguard**: Validates that no two requested shifts in the batch overlap with one another (`startA < endB && startB < endA`). If a clash exists, throws `failed-precondition`.
+   - **Cross-Registration Overlap Safeguard**: Queries volunteer's existing confirmed registrations (`/registrations` where `userId == assignedUid` and `status == "confirmed"`, excluding current batch). Fetches active shift records and verifies no requested shift overlaps in time with any previously confirmed shift.
+   - **Minimum Commitment Hours Enforcement**: Computes cumulative hours as `existingConfirmedHours + batchRequestedHours`. If `minCommitmentHours > 0` and volunteer is self-registering (`assignedUid === callerUid`), verifies cumulative hours `>= minCommitmentHours`. If cumulative hours are below the threshold, aborts the transaction and throws `failed-precondition` detailing current hours selected and hours remaining.
+   - Atomically updates all requested shifts and creates corresponding `/registrations` records:
+     - Increments `/shifts/{shiftId}.assignedCount` by `1` for each shift.
      - Writes `/registrations/{shiftId}_{assignedUid}`:
        ```json
        {
@@ -155,10 +159,7 @@ Registers an authenticated volunteer for an open festival shift atomically, ensu
        }
        ```
        *(Note: `assignedBy` is recorded only when assigned by an administrator).*
-4. **Asynchronous WhatsApp Booking Confirmation**:
-   - Following successful transaction commit, queries `/users/{assignedUid}`.
-   - If `whatsappNotifications !== false` and a valid `phoneNumber` is registered, dispatches an automated WhatsApp booking confirmation via Twilio containing shift area name, date, and formatted working hours.
-   - Delivery errors are non-blocking and logged without rolling back the confirmed registration.
+6. **Messaging Policy**: Transactional shift bookings do **not** dispatch automatic WhatsApp messages to prevent alert fatigue. Broadcast and mass communications are managed explicitly by administrators via `sendWhatsAppBroadcast`.
 
 ---
 

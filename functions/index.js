@@ -243,10 +243,29 @@ exports.claimShift = onCall(async (request) => {
     throw new HttpsError("unauthenticated", "User must be logged in.");
   }
 
-  const {shiftId, targetUserId} = request.data;
-  if (!shiftId) {
-    throw new HttpsError("invalid-argument", "shiftId is required.");
+  const {shiftId, shiftIds, targetUserId} = request.data || {};
+  let requestedShiftIds = [];
+  if (Array.isArray(shiftIds) && shiftIds.length > 0) {
+    requestedShiftIds = shiftIds
+        .filter((id) => typeof id === "string" && id.trim().length > 0)
+        .map((id) => id.trim());
+  } else if (
+    shiftId &&
+    typeof shiftId === "string" &&
+    shiftId.trim().length > 0
+  ) {
+    requestedShiftIds = [shiftId.trim()];
   }
+
+  if (requestedShiftIds.length === 0) {
+    throw new HttpsError(
+        "invalid-argument",
+        "shiftId or shiftIds array is required.",
+    );
+  }
+
+  // Deduplicate requested IDs
+  requestedShiftIds = Array.from(new Set(requestedShiftIds));
 
   const callerUid = request.auth.uid;
   const callerDoc = await db.collection("users").doc(callerUid).get();
@@ -266,80 +285,134 @@ exports.claimShift = onCall(async (request) => {
   }
 
   const assignedUid = (targetUserId && isAdmin) ? targetUserId : callerUid;
-  const shiftRef = db.collection("shifts").doc(shiftId);
-  const regDocId = `${shiftId}_${assignedUid}`;
-  const registrationRef = db.collection("registrations").doc(regDocId);
 
-  const txResult = await db.runTransaction(async (transaction) => {
-    const shiftDoc = await transaction.get(shiftRef);
-    if (!shiftDoc.exists) {
-      throw new HttpsError("not-found", "Shift does not exist.");
+  // Verify target user is active if assigned by admin
+  if (assignedUid !== callerUid) {
+    const targetUserDoc = await db.collection("users").doc(assignedUid).get();
+    if (!targetUserDoc.exists) {
+      throw new HttpsError("not-found", "Target volunteer does not exist.");
     }
-
-    if (assignedUid !== callerUid) {
-      const targetUserDoc = await transaction.get(
-          db.collection("users").doc(assignedUid),
-      );
-      if (!targetUserDoc.exists) {
-        throw new HttpsError("not-found", "Target volunteer does not exist.");
-      }
-      if (targetUserDoc.data().disabled) {
-        throw new HttpsError(
-            "failed-precondition",
-            "Cannot assign shifts to a disabled user account.",
-        );
-      }
-    }
-
-    const shiftData = shiftDoc.data();
-
-    if (shiftData.assignedCount >= shiftData.capacity) {
+    if (targetUserDoc.data().disabled) {
       throw new HttpsError(
           "failed-precondition",
-          "This shift is already full.",
+          "Cannot assign shifts to a disabled user account.",
       );
     }
+  }
 
-    const existingReg = await transaction.get(registrationRef);
-    if (existingReg.exists && existingReg.data().status === "confirmed") {
-      const alreadyText = (assignedUid === callerUid) ?
-          "You are already registered for this shift." :
-          "This volunteer is already registered for this shift.";
-      throw new HttpsError("already-exists", alreadyText);
-    }
+  // Retrieve festival config to check minimum commitment hours
+  const configDoc = await db.collection("config").doc("festival").get();
+  const festivalConfig = configDoc.exists ? configDoc.data() : {};
+  const minCommitmentHours = Number(festivalConfig.minCommitmentHours) || 0;
 
-    // Safeguard against overlapping or simultaneous shift registrations
-    const targetStartMs = getTimestampMs(shiftData.startTime);
-    const targetEndMs = getTimestampMs(shiftData.endTime);
+  const txResult = await db.runTransaction(async (transaction) => {
+    // 1. Fetch all requested shift documents
+    const shiftRefs = requestedShiftIds.map((id) =>
+      db.collection("shifts").doc(id),
+    );
+    const shiftDocs = await transaction.getAll(...shiftRefs);
 
-    if (targetStartMs && targetEndMs && targetStartMs < targetEndMs) {
-      const userRegsSnap = await transaction.get(
-          db.collection("registrations")
-              .where("userId", "==", assignedUid)
-              .where("status", "==", "confirmed"),
-      );
-
-      const otherShiftIds = userRegsSnap.docs
-          .map((d) => d.data().shiftId)
-          .filter((id) => id && id !== shiftId);
-
-      if (otherShiftIds.length > 0) {
-        const otherShiftRefs = otherShiftIds.map((id) =>
-          db.collection("shifts").doc(id),
+    for (let i = 0; i < shiftDocs.length; i++) {
+      const shiftDoc = shiftDocs[i];
+      if (!shiftDoc.exists) {
+        throw new HttpsError(
+            "not-found",
+            `Shift ${requestedShiftIds[i]} does not exist.`,
         );
-        const otherShiftDocs = await transaction.getAll(...otherShiftRefs);
+      }
+      const shiftData = shiftDoc.data();
+      if (shiftData.assignedCount >= shiftData.capacity) {
+        const catName = shiftData.categoryName || "Shift";
+        throw new HttpsError(
+            "failed-precondition",
+            `The shift "${catName}" is already full.`,
+        );
+      }
+    }
 
-        for (const otherDoc of otherShiftDocs) {
-          if (!otherDoc.exists) continue;
-          const otherData = otherDoc.data();
-          const otherStartMs = getTimestampMs(otherData.startTime);
-          const otherEndMs = getTimestampMs(otherData.endTime);
+    // 2. Verify assigned volunteer is not already registered
+    const regRefs = requestedShiftIds.map((sId) =>
+      db.collection("registrations").doc(`${sId}_${assignedUid}`),
+    );
+    const existingRegDocs = await transaction.getAll(...regRefs);
+
+    for (let i = 0; i < existingRegDocs.length; i++) {
+      const regDoc = existingRegDocs[i];
+      if (regDoc.exists && regDoc.data().status === "confirmed") {
+        const shiftData = shiftDocs[i].data();
+        const catName = shiftData.categoryName || "selected shift";
+        const alreadyText = (assignedUid === callerUid) ?
+            `You are already registered for "${catName}".` :
+            `This volunteer is already registered for "${catName}".`;
+        throw new HttpsError("already-exists", alreadyText);
+      }
+    }
+
+    // 3. Prevent pairwise overlaps between the requested shifts themselves
+    for (let i = 0; i < shiftDocs.length; i++) {
+      const dataA = shiftDocs[i].data();
+      const startA = getTimestampMs(dataA.startTime);
+      const endA = getTimestampMs(dataA.endTime);
+      for (let j = i + 1; j < shiftDocs.length; j++) {
+        const dataB = shiftDocs[j].data();
+        const startB = getTimestampMs(dataB.startTime);
+        const endB = getTimestampMs(dataB.endTime);
+        if (
+          startA && endA && startB && endB &&
+          startA < endB && startB < endA
+        ) {
+          const nameA = dataA.categoryName || "Shift A";
+          const nameB = dataB.categoryName || "Shift B";
+          throw new HttpsError(
+              "failed-precondition",
+              `Cannot register: selected shifts "${nameA}" and ` +
+              `"${nameB}" overlap in time.`,
+          );
+        }
+      }
+    }
+
+    // 4. Check overlaps with other existing confirmed shifts for volunteer
+    const userRegsSnap = await transaction.get(
+        db.collection("registrations")
+            .where("userId", "==", assignedUid)
+            .where("status", "==", "confirmed"),
+    );
+
+    const otherShiftIds = userRegsSnap.docs
+        .map((d) => d.data().shiftId)
+        .filter((id) => id && !requestedShiftIds.includes(id));
+
+    let existingHours = 0;
+    if (otherShiftIds.length > 0) {
+      const otherShiftRefs = otherShiftIds.map((id) =>
+        db.collection("shifts").doc(id),
+      );
+      const otherShiftDocs = await transaction.getAll(...otherShiftRefs);
+
+      for (const otherDoc of otherShiftDocs) {
+        if (!otherDoc.exists) continue;
+        const otherData = otherDoc.data();
+        const otherStartMs = getTimestampMs(otherData.startTime);
+        const otherEndMs = getTimestampMs(otherData.endTime);
+
+        if (otherStartMs && otherEndMs && otherEndMs > otherStartMs) {
+          existingHours += (otherEndMs - otherStartMs) / (1000 * 3600);
+        }
+
+        // Overlap check
+        for (const reqDoc of shiftDocs) {
+          const reqData = reqDoc.data();
+          const reqStartMs = getTimestampMs(reqData.startTime);
+          const reqEndMs = getTimestampMs(reqData.endTime);
 
           if (
+            reqStartMs &&
+            reqEndMs &&
             otherStartMs &&
             otherEndMs &&
-            targetStartMs < otherEndMs &&
-            otherStartMs < targetEndMs
+            reqStartMs < otherEndMs &&
+            otherStartMs < reqEndMs
           ) {
             const conflictName = otherData.categoryName || "another shift";
             const whoText = (assignedUid === callerUid) ?
@@ -347,84 +420,73 @@ exports.claimShift = onCall(async (request) => {
                 "their registered shift";
             throw new HttpsError(
                 "failed-precondition",
-                `Cannot register: this shift overlaps with ${whoText} ` +
-                `for "${conflictName}".`,
+                `Cannot register: "${reqData.categoryName || "Shift"}" ` +
+                `overlaps with ${whoText} for "${conflictName}".`,
             );
           }
         }
       }
     }
 
-    // Execute atomic updates
-    transaction.update(shiftRef, {
-      assignedCount: admin.firestore.FieldValue.increment(1),
-    });
-
-    const regPayload = {
-      shiftId: shiftId,
-      userId: assignedUid,
-      registeredAt: admin.firestore.FieldValue.serverTimestamp(),
-      status: "confirmed",
-    };
-    if (assignedUid !== callerUid) {
-      regPayload.assignedBy = callerUid;
+    // 5. Calculate cumulative hours and enforce minimum commitment policy
+    let requestedHours = 0;
+    for (const reqDoc of shiftDocs) {
+      const reqData = reqDoc.data();
+      const reqStartMs = getTimestampMs(reqData.startTime);
+      const reqEndMs = getTimestampMs(reqData.endTime);
+      if (reqStartMs && reqEndMs && reqEndMs > reqStartMs) {
+        requestedHours += (reqEndMs - reqStartMs) / (1000 * 3600);
+      }
     }
 
-    transaction.set(registrationRef, regPayload);
+    const cumulativeHours = existingHours + requestedHours;
+
+    if (minCommitmentHours > 0 && assignedUid === callerUid) {
+      if (cumulativeHours < (minCommitmentHours - 0.01)) {
+        const needed = Math.round(
+            (minCommitmentHours - cumulativeHours) * 10,
+        ) / 10;
+        const currentTotal = Math.round(cumulativeHours * 10) / 10;
+        throw new HttpsError(
+            "failed-precondition",
+            `Festival volunteer policy requires a minimum commitment of ` +
+            `${minCommitmentHours} hours. You currently have ` +
+            `${currentTotal} hours selected/booked. Please register for at ` +
+            `least ${needed} more hour${needed === 1 ? "" : "s"} before ` +
+            `shifts can be confirmed.`,
+        );
+      }
+    }
+
+    // 6. Execute atomic updates
+    for (let i = 0; i < shiftDocs.length; i++) {
+      const shiftDoc = shiftDocs[i];
+      transaction.update(shiftDoc.ref, {
+        assignedCount: admin.firestore.FieldValue.increment(1),
+      });
+
+      const regPayload = {
+        shiftId: shiftDoc.id,
+        userId: assignedUid,
+        registeredAt: admin.firestore.FieldValue.serverTimestamp(),
+        status: "confirmed",
+      };
+      if (assignedUid !== callerUid) {
+        regPayload.assignedBy = callerUid;
+      }
+
+      transaction.set(regRefs[i], regPayload);
+    }
 
     return {
       success: true,
       assignedUserId: assignedUid,
-      categoryName: shiftData.categoryName || "Festival Shift",
-      startTime: shiftData.startTime,
-      endTime: shiftData.endTime,
+      registeredCount: requestedShiftIds.length,
+      shiftIds: requestedShiftIds,
     };
   });
 
-  // Out-of-transaction asynchronous alert dispatch:
-  // Trigger WhatsApp booking confirmation if volunteer has opted in
-  try {
-    const userDoc = await db.collection("users").doc(assignedUid).get();
-    if (userDoc.exists) {
-      const userData = userDoc.data();
-      if (userData.whatsappNotifications !== false && userData.phoneNumber) {
-        const startMs = getTimestampMs(txResult.startTime);
-        const endMs = getTimestampMs(txResult.endTime);
-        const dateStr = startMs ?
-            new Date(startMs).toLocaleDateString("en-GB", {
-              weekday: "short",
-              day: "numeric",
-              month: "short",
-            }) : "Festival";
-        const timeStr = (startMs && endMs) ?
-            `${new Date(startMs).toLocaleTimeString("en-GB", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })} - ${new Date(endMs).toLocaleTimeString("en-GB", {
-              hour: "2-digit",
-              minute: "2-digit",
-            })}` : "";
-
-        const volunteerName = userData.fullName || "Volunteer";
-        const category = txResult.categoryName;
-        const alertMsg =
-            `🍺 *BrewCrew Shift Confirmed*\n\n` +
-            `Hi ${volunteerName}, you're booked for *${category}* on ` +
-            `*${dateStr}* (${timeStr}).\n\n` +
-            `You can view your roster anytime in the BrewCrew app. ` +
-            `Thank you for volunteering!`;
-
-        await sendWhatsAppAlert({
-          to: userData.phoneNumber,
-          body: alertMsg,
-        });
-      }
-    }
-  } catch (alertErr) {
-    console.warn("Could not dispatch WhatsApp booking confirmation:", alertErr);
-  }
-
-  return {success: true, assignedUserId: assignedUid};
+  return txResult;
 });
 
 /**

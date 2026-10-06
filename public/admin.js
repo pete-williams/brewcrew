@@ -26,6 +26,7 @@ let currentFestivalConfig = {
   festivalWebsite: "",
   festivalLogoUrl: "",
   volunteerManager: { name: "", email: "", phone: "" },
+  minCommitmentHours: 0,
   sessions: []
 };
 let currentIncentivesConfig = {
@@ -2544,6 +2545,7 @@ function populateFestivalConfigForm() {
   const mgrName = document.getElementById("admin-cfg-manager-name");
   const mgrEmail = document.getElementById("admin-cfg-manager-email");
   const mgrPhone = document.getElementById("admin-cfg-manager-phone");
+  const minHoursInput = document.getElementById("admin-cfg-min-hours");
 
   if (nameInput) nameInput.value = currentFestivalConfig.festivalName || "";
   if (webInput) webInput.value = currentFestivalConfig.festivalWebsite || "";
@@ -2556,6 +2558,10 @@ function populateFestivalConfigForm() {
   if (mgrName) mgrName.value = mgr.name || "";
   if (mgrEmail) mgrEmail.value = mgr.email || "";
   if (mgrPhone) mgrPhone.value = mgr.phone || "";
+
+  if (minHoursInput) {
+    minHoursInput.value = currentFestivalConfig.minCommitmentHours !== undefined ? currentFestivalConfig.minCommitmentHours : 0;
+  }
 }
 
 function previewFestivalLogo(url) {
@@ -2618,6 +2624,8 @@ async function handleSaveFestivalConfig() {
   const mgrName = document.getElementById("admin-cfg-manager-name")?.value?.trim() || "";
   const mgrEmail = document.getElementById("admin-cfg-manager-email")?.value?.trim() || "";
   const mgrPhone = document.getElementById("admin-cfg-manager-phone")?.value?.trim() || "";
+  const minHoursRaw = document.getElementById("admin-cfg-min-hours")?.value;
+  const minCommitmentHours = Math.max(0, parseFloat(minHoursRaw) || 0);
   const btn = document.getElementById("btn-save-sessions-cfg");
 
   if (btn) btn.disabled = true;
@@ -2628,6 +2636,7 @@ async function handleSaveFestivalConfig() {
       festivalLogoUrl: logo,
       volunteerManager: { name: mgrName, email: mgrEmail, phone: mgrPhone },
       sessions: currentFestivalConfig.sessions || [],
+      minCommitmentHours: minCommitmentHours,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
       updatedBy: currentAdminUser.uid
     }, { merge: true });

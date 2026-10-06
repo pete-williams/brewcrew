@@ -2740,12 +2740,12 @@ async function handleAddIncentive() {
   const nameInput = document.getElementById("admin-new-incentive-name");
   const descInput = document.getElementById("admin-new-incentive-desc");
 
-  const hrs = parseFloat(hrsInput?.value);
+  const hrs = Math.round(parseFloat(hrsInput?.value));
   const name = nameInput?.value?.trim();
   const desc = descInput?.value?.trim() || "";
 
   if (isNaN(hrs) || hrs <= 0 || !name) {
-    alert("Please enter a valid hours milestone and reward name.");
+    alert("Please enter a valid whole hours milestone and reward name.");
     return;
   }
 

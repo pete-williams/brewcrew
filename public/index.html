@@ -177,6 +177,71 @@
       -webkit-font-feature-settings: "tnum";
       font-feature-settings: "tnum";
     }
+
+    /* Duolingo milestone node pulse & foam animations */
+    @keyframes node-pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.5); }
+      50% { box-shadow: 0 0 0 8px rgba(245, 158, 11, 0); }
+    }
+    .active-milestone-node {
+      animation: node-pulse 2s infinite;
+    }
+
+    @keyframes foam-bob {
+      0%, 100% { transform: translateY(0px) rotate(0deg); }
+      50% { transform: translateY(-2px) rotate(0.5deg); }
+    }
+    .animate-foam {
+      animation: foam-bob 3s ease-in-out infinite;
+    }
+
+    @keyframes bubble-rise {
+      0% { transform: translateY(8px); opacity: 0; }
+      50% { opacity: 0.8; }
+      100% { transform: translateY(-20px); opacity: 0; }
+    }
+    .bubble-1 { animation: bubble-rise 2.4s ease-in infinite 0.2s; }
+    .bubble-2 { animation: bubble-rise 2.8s ease-in infinite 0.8s; }
+    .bubble-3 { animation: bubble-rise 2.2s ease-in infinite 1.4s; }
+
+    /* Responsive Incentives Popover / Sheet Container */
+    #incentive-popover {
+      bottom: 0;
+      left: 0;
+      right: 0;
+      max-height: 88vh;
+      max-height: 88dvh;
+    }
+
+    @media (min-width: 640px) {
+      #incentive-popover {
+        bottom: 5.25rem;
+        right: 1.25rem;
+        left: auto;
+        width: 440px;
+        /* Dynamic viewport height adaptation: ensures top edge is always safely below viewport top */
+        max-height: min(620px, calc(100vh - 6.75rem));
+        max-height: min(620px, calc(100dvh - 6.75rem));
+      }
+    }
+
+    /* Medium & Short Desktop Viewports (viewport height <= 720px, e.g. 1366x768 laptops, docked DevTools) */
+    @media (min-width: 640px) and (max-height: 720px) {
+      #incentive-popover {
+        bottom: 1.25rem !important;
+        max-height: calc(100vh - 2.5rem) !important;
+        max-height: calc(100dvh - 2.5rem) !important;
+      }
+    }
+
+    /* Ultra-compact Desktop Viewports (height <= 540px) */
+    @media (min-width: 640px) and (max-height: 540px) {
+      #incentive-popover {
+        bottom: 0.5rem !important;
+        max-height: calc(100vh - 1rem) !important;
+        max-height: calc(100dvh - 1rem) !important;
+      }
+    }
   </style>
 </head>
 
@@ -1778,126 +1843,389 @@
   <div id="incentive-popover-backdrop" onclick="closeIncentivePopover()"
     class="hidden fixed inset-0 bg-slate-950/40 backdrop-blur-2xs z-50 transition-opacity duration-200"></div>
 
-  <!-- Popover / Bottom Sheet Container -->
+  <!-- Popover / Bottom Sheet Container (Overdrive 3-Tab League & Pot Edition) -->
   <div id="incentive-popover"
     class="hidden fixed z-50 transition-all duration-300 transform opacity-0 translate-y-4 pointer-events-none
-              bottom-0 inset-x-0 sm:bottom-24 sm:right-5 sm:left-auto sm:w-[420px]
-              bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl border border-amber-200 flex flex-col max-h-[85vh] sm:max-h-[620px] overflow-hidden">
+           bg-white rounded-t-3xl sm:rounded-2xl shadow-2xl border border-amber-200 flex flex-col overflow-hidden">
 
-    <!-- Popover Header -->
+    <!-- Mobile Drag Pull Pill (Tactile affordance) -->
+    <div class="w-full flex justify-center pt-2.5 pb-1 sm:hidden">
+      <div class="w-12 h-1.5 rounded-full bg-slate-300"></div>
+    </div>
+
+    <!-- 1. Header -->
     <div
-      class="p-4 bg-gradient-to-r from-amber-900 via-amber-800 to-amber-900 text-white flex items-center justify-between border-b border-amber-700/60 shrink-0">
-      <div class="flex items-center gap-2.5">
-        <span class="text-2xl select-none" id="popover-header-icon">🍺</span>
-        <div>
-          <h3 class="font-extrabold text-sm sm:text-base leading-tight text-amber-100" id="popover-header-title">
-            Volunteer Perks &amp; Brew Progress</h3>
-          <p class="text-xs text-amber-200/80 leading-none mt-0.5" id="popover-header-subtitle">Earn festival rewards by
-            helping out</p>
+      class="p-3.5 sm:p-4 bg-gradient-to-r from-amber-950 via-amber-900 to-amber-950 text-white flex items-center justify-between border-b border-amber-800/60 shrink-0">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <span class="text-2xl select-none shrink-0" id="popover-header-icon">🏆</span>
+        <div class="min-w-0">
+          <div class="flex items-center gap-2">
+            <h3 class="font-extrabold text-sm sm:text-base leading-tight text-amber-100 truncate" id="popover-header-title">
+              Perks &amp; Leaderboard
+            </h3>
+            <span id="popover-header-badge" class="text-2xs bg-amber-500/20 text-amber-300 font-extrabold px-1.5 py-0.5 rounded-full border border-amber-400/30 shrink-0">
+              Season
+            </span>
+          </div>
+          <p class="text-2xs text-amber-200/80 leading-none mt-1 truncate" id="popover-header-subtitle">
+            Earn rewards &amp; boost your group pot
+          </p>
         </div>
       </div>
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 shrink-0">
         <span id="popover-hours-pill"
           class="text-xs font-bold px-2.5 py-0.5 rounded-full bg-amber-700/80 text-amber-100 border border-amber-500/50 tabular-nums">
-          0 / 8h
+          0 hrs
         </span>
         <button type="button" onclick="closeIncentivePopover()"
-          class="w-7 h-7 rounded-full bg-black/20 hover:bg-black/40 text-white flex items-center justify-center text-lg leading-none transition cursor-pointer"
-          aria-label="Close popover">
+          class="w-7 h-7 rounded-full bg-black/25 hover:bg-black/45 text-white flex items-center justify-center text-lg leading-none transition cursor-pointer"
+          aria-label="Close modal">
           &times;
         </button>
       </div>
     </div>
 
-    <!-- Popover Body (Scrollable) -->
-    <div class="p-4 overflow-y-auto space-y-4 text-slate-800 flex-grow">
+    <!-- 2. Streamlined 3-Tab Navigation Bar (No Truncation) -->
+    <nav class="bg-amber-950/95 p-1.5 border-b border-amber-800/40 shrink-0">
+      <div class="grid grid-cols-3 gap-1.5 text-xs font-bold text-center">
+        <button id="tab-btn-you" type="button" onclick="switchIncentiveTab('you')"
+          class="py-2 px-2 rounded-xl transition-all duration-200 bg-amber-500 text-amber-950 shadow-sm flex items-center justify-center gap-1.5 cursor-pointer font-extrabold">
+          <span class="text-sm">👤</span>
+          <span>My Pint</span>
+        </button>
+        <button id="tab-btn-group" type="button" onclick="switchIncentiveTab('group')"
+          class="py-2 px-2 rounded-xl transition-all duration-200 text-amber-200 hover:text-white hover:bg-white/10 flex items-center justify-center gap-1.5 cursor-pointer font-semibold">
+          <span class="text-sm">🪵</span>
+          <span>Group Pot</span>
+        </button>
+        <button id="tab-btn-leaderboard" type="button" onclick="switchIncentiveTab('leaderboard')"
+          class="py-2 px-2 rounded-xl transition-all duration-200 text-amber-200 hover:text-white hover:bg-white/10 flex items-center justify-center gap-1.5 cursor-pointer font-semibold">
+          <span class="text-sm">🏆</span>
+          <span>Leaderboard</span>
+        </button>
+      </div>
+    </nav>
 
-      <!-- Unauthenticated Guest Welcome Card -->
-      <div id="incentive-guest-welcome-card" class="hidden space-y-2.5 pb-4 border-b border-slate-100">
-        <div class="flex items-start gap-2.5">
-          <span class="text-2xl shrink-0">👋</span>
-          <div>
-            <h4 id="incentive-guest-title" class="font-extrabold text-sm text-amber-950">Welcome to BrewCrew!</h4>
-            <p id="incentive-guest-text" class="text-xs text-slate-600 leading-relaxed mt-1">
-              Join our volunteer crew to keep the festival flowing smoothly! Lend a hand for a few hours and earn
-              exclusive perks like free festival entry and official volunteer t-shirts.
-            </p>
+    <!-- 3. Scrollable Tab Content Body -->
+    <div class="p-3.5 sm:p-4 overflow-y-auto min-h-0 space-y-4 text-slate-800 flex-grow">
+
+      <!-- =================================================================== -->
+      <!-- TAB 1: 👤 MY PINT (Fill level, Serpentine Trail & Badges)            -->
+      <!-- =================================================================== -->
+      <section id="tab-content-you" class="space-y-3.5">
+        <!-- Guest Welcome Card -->
+        <div id="incentive-guest-welcome-card" class="hidden space-y-2.5 pb-4 border-b border-slate-100">
+          <div class="flex items-start gap-2.5">
+            <span class="text-2xl shrink-0">👋</span>
+            <div>
+              <h4 id="incentive-guest-title" class="font-extrabold text-sm text-amber-950">Welcome to BrewCrew!</h4>
+              <p id="incentive-guest-text" class="text-xs text-slate-600 leading-relaxed mt-1">
+                Join our volunteer crew to keep the festival flowing smoothly! Lend a hand for a few shifts and earn
+                exclusive perks while raising money for your group's pot.
+              </p>
+            </div>
+          </div>
+          <div class="pt-2 border-t border-amber-200/60 flex items-center justify-between gap-2">
+            <span class="text-xs font-medium text-amber-900">Sign in to track hours &amp; power your group &rarr;</span>
+            <button type="button" onclick="handleGuestPopoverSignIn()"
+              class="bg-amber-800 hover:bg-amber-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition flex items-center gap-1.5 shrink-0 cursor-pointer">
+              <svg class="w-3.5 h-3.5"><use href="#icon-user" /></svg> Sign In
+            </button>
           </div>
         </div>
-        <div class="pt-2 border-t border-amber-200/60 flex items-center justify-between gap-2">
-          <span class="text-xs font-medium text-amber-900">Sign in to track hours &amp; earn rewards &rarr;</span>
-          <button type="button" onclick="handleGuestPopoverSignIn()"
-            class="bg-amber-800 hover:bg-amber-700 text-white text-xs font-bold px-3 py-1.5 rounded-lg shadow-sm transition flex items-center gap-1.5 shrink-0 cursor-pointer">
-            <svg class="w-3.5 h-3.5">
-              <use href="#icon-user" />
-            </svg> Sign In
+
+        <!-- Authenticated Progress Card -->
+        <div id="incentive-auth-progress-card" class="bg-gradient-to-br from-amber-50 to-amber-100/70 border border-amber-300 rounded-2xl p-3.5 shadow-xs flex items-center justify-between gap-3">
+          <div class="space-y-1.5 flex-1 min-w-0">
+            <div class="flex items-center gap-1.5">
+              <span class="text-xs font-bold text-amber-950 uppercase tracking-wide">Pint Fill Level</span>
+              <span id="popover-progress-percent" class="text-2xs bg-amber-200 text-amber-900 font-extrabold px-1.5 py-0.2 rounded-full border border-amber-400">0%</span>
+            </div>
+            <div class="text-xl font-black text-amber-950 tabular-nums">
+              <span id="popover-hours-current">0</span> <span class="text-xs font-semibold text-amber-800">/ <span id="popover-hours-max">8</span> hrs</span>
+            </div>
+            <p id="popover-status-text" class="text-xs text-amber-900 leading-snug">
+              Book shifts to fill your pint and unlock festival perks!
+            </p>
+            <div class="w-full bg-amber-200/80 rounded-full h-2 overflow-hidden shadow-inner mt-1.5">
+              <div id="popover-progress-bar" class="bg-gradient-to-r from-amber-500 to-amber-600 h-full rounded-full transition-all duration-500" style="width: 0%"></div>
+            </div>
+          </div>
+
+          <!-- Dynamic Pint SVG in Tab -->
+          <div class="w-14 h-20 shrink-0 flex items-center justify-center">
+            <svg id="tab1-pint-svg" class="w-full h-full drop-shadow-md" viewBox="0 0 32 44" fill="none">
+              <defs>
+                <linearGradient id="beer-grad-tab1" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stop-color="#fde68a" />
+                  <stop offset="35%" stop-color="#f59e0b" />
+                  <stop offset="85%" stop-color="#d97706" />
+                  <stop offset="100%" stop-color="#78350f" />
+                </linearGradient>
+                <clipPath id="tab1-pint-clip">
+                  <path d="M 6.5 6 L 9.5 38.5 C 9.7 40 11.5 40.2 16 40.2 C 20.5 40.2 22.3 40 22.5 38.5 L 25.5 6 Z" />
+                </clipPath>
+              </defs>
+              <path d="M 6.5 6 L 9.5 38.5 C 9.7 40 11.5 40.2 16 40.2 C 20.5 40.2 22.3 40 22.5 38.5 L 25.5 6 Z" fill="rgba(255, 255, 255, 0.4)" />
+              <g clip-path="url(#tab1-pint-clip)">
+                <rect id="tab1-liquid-rect" x="0" y="41" width="32" height="0" fill="url(#beer-grad-tab1)" class="transition-all duration-700" />
+                <rect id="tab1-foam-rect" x="4" y="39" width="24" height="4" rx="2" fill="#fffef0" class="animate-foam opacity-0 transition-opacity" />
+                <circle cx="12" cy="30" r="1.1" fill="rgba(255,255,255,0.7)" class="bubble-1" />
+                <circle cx="19" cy="25" r="1.3" fill="rgba(255,255,255,0.7)" class="bubble-2" />
+              </g>
+              <path d="M 6.5 6 L 9.5 38.5 C 9.7 40.2 11.5 40.5 16 40.5 C 20.5 40.5 22.3 40.2 22.5 38.5 L 25.5 6" stroke="#d97706" stroke-width="1.8" stroke-linecap="round" />
+              <ellipse cx="16" cy="6" rx="9.5" ry="1.9" stroke="#d97706" stroke-width="1.6" />
+            </svg>
+          </div>
+        </div>
+
+        <!-- Duolingo-Style Vertical Milestone Trail -->
+        <div class="bg-white rounded-2xl border border-amber-200 p-3.5 shadow-xs space-y-3">
+          <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+            <div>
+              <h4 class="font-extrabold text-xs text-amber-950 flex items-center gap-1.5 uppercase tracking-wide">
+                <span>🗺️</span> The Brewer's Milestone Path
+              </h4>
+              <p class="text-2xs text-slate-500">Reach hour milestones to unlock festival rewards</p>
+            </div>
+            <span id="popover-milestones-summary" class="text-2xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded-full"></span>
+          </div>
+          <div id="popover-milestones-path" class="relative flex flex-col items-center space-y-3 py-1">
+            <!-- Dynamically populated Duolingo milestone trail nodes -->
+          </div>
+        </div>
+
+        <!-- 6-Badge Achievement Grid -->
+        <div class="bg-white rounded-2xl border border-amber-200 p-3.5 shadow-xs space-y-2.5">
+          <div class="flex items-center justify-between">
+            <h4 class="font-extrabold text-xs text-amber-950 uppercase tracking-wider flex items-center gap-1.5">
+              <span>🏅</span> Individual Achievements
+            </h4>
+            <span id="popover-achievements-summary" class="text-2xs text-slate-500"></span>
+          </div>
+          <div id="popover-achievements-grid" class="grid grid-cols-3 gap-2">
+            <!-- Dynamically populated achievement cards -->
+          </div>
+        </div>
+      </section>
+
+      <!-- =================================================================== -->
+      <!-- TAB 2: 🪵 GROUP POT (% Share of Total Festival Hours)              -->
+      <!-- =================================================================== -->
+      <section id="tab-content-group" class="hidden space-y-3.5">
+        <!-- Unassigned state -->
+        <div id="group-pot-empty-state" class="hidden text-center py-8 bg-stone-50 rounded-2xl border border-stone-200 p-5 space-y-3">
+          <span class="text-3xl block">👥</span>
+          <h4 class="text-sm font-bold text-slate-900">No Volunteer Group Selected</h4>
+          <p class="text-xs text-slate-600 max-w-sm mx-auto leading-relaxed">
+            Join a club, CAMRA branch, or brewery crew to pool your volunteer hours together and raise money for your organization's pot!
+          </p>
+          <button type="button" onclick="closeIncentivePopover(); openProfileModal();"
+            class="bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold px-3.5 py-2 rounded-xl transition shadow-xs cursor-pointer">
+            Select Group in Profile
           </button>
         </div>
-      </div>
 
-      <!-- Authenticated Progress Tracker Card -->
-      <div id="incentive-auth-progress-card" class="space-y-2.5 pb-4 border-b border-slate-100">
-        <div class="flex items-center justify-between text-xs">
-          <span class="font-bold text-amber-950 flex items-center gap-1.5">
-            <svg class="w-3.5 h-3.5">
-              <use href="#icon-trophy" />
-            </svg> Your Brew Fill Level
-          </span>
-          <span id="popover-progress-percent" class="font-extrabold text-amber-800">0%</span>
+        <!-- Active Group State -->
+        <div id="group-pot-active-state" class="space-y-3.5">
+          <!-- Hero Card -->
+          <div class="bg-gradient-to-br from-amber-900 via-amber-950 to-stone-900 text-white rounded-2xl p-4 shadow-lg border border-amber-500/40 space-y-3.5">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2 min-w-0">
+                <span class="text-2xl shrink-0">👥</span>
+                <div class="min-w-0">
+                  <span class="text-2xs uppercase tracking-wider font-extrabold text-amber-400">Your Volunteer Group</span>
+                  <h4 id="group-pot-name" class="text-sm sm:text-base font-black text-white truncate">Loading...</h4>
+                </div>
+              </div>
+              <span id="group-pot-status-badge" class="text-2xs font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 shrink-0">
+                Incentives Active
+              </span>
+            </div>
+
+            <!-- Oak Cask & Pot Allocation Meter -->
+            <div class="bg-black/35 border border-amber-400/30 rounded-xl p-3 flex items-center justify-between gap-3">
+              <div class="space-y-1 flex-1 min-w-0">
+                <span class="text-2xs font-extrabold uppercase text-amber-300 tracking-wider">Group Pot Allocation</span>
+                <div class="flex items-baseline gap-2">
+                  <span id="group-pot-percent" class="text-2xl font-black text-amber-300 tabular-nums">0%</span>
+                  <span class="text-xs text-amber-100 font-semibold">of Total Pot</span>
+                </div>
+                <p class="text-2xs text-amber-200/90 leading-tight">
+                  <strong id="group-pot-hours">0 hrs</strong> logged out of <strong id="group-pot-total-hours">0 hrs</strong> total group hours.
+                </p>
+                <div class="w-full bg-amber-950 rounded-full h-2.5 overflow-hidden shadow-inner mt-1.5 border border-amber-800">
+                  <div id="group-pot-progress-bar" class="bg-gradient-to-r from-amber-400 to-amber-500 h-full rounded-full transition-all duration-500" style="width: 0%;"></div>
+                </div>
+              </div>
+
+              <!-- Stylized Wooden Cask / Barrel SVG -->
+              <div class="w-16 h-20 shrink-0 flex items-center justify-center">
+                <svg class="w-full h-full drop-shadow-lg" viewBox="0 0 40 48" fill="none">
+                  <defs>
+                    <linearGradient id="cask-wood-grad" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stop-color="#451a03" />
+                      <stop offset="25%" stop-color="#78350f" />
+                      <stop offset="50%" stop-color="#92400e" />
+                      <stop offset="75%" stop-color="#78350f" />
+                      <stop offset="100%" stop-color="#451a03" />
+                    </linearGradient>
+                    <linearGradient id="cask-hoop-grad" x1="0" y1="0" x2="1" y2="0">
+                      <stop offset="0%" stop-color="#92400e" />
+                      <stop offset="50%" stop-color="#f59e0b" />
+                      <stop offset="100%" stop-color="#92400e" />
+                    </linearGradient>
+                  </defs>
+                  <path d="M 10 4 C 4 16, 4 32, 10 44 L 30 44 C 36 32, 36 16, 30 4 Z" fill="url(#cask-wood-grad)" stroke="#fde68a" stroke-width="1.2" />
+                  <path d="M 9 9 C 6 12, 6 12, 8 13 L 32 13 C 34 12, 34 12, 31 9 Z" fill="url(#cask-hoop-grad)" />
+                  <path d="M 6 22 L 34 22 L 34 26 L 6 26 Z" fill="url(#cask-hoop-grad)" />
+                  <path d="M 8 35 C 6 36, 6 36, 9 39 L 31 39 C 34 36, 34 36, 32 35 Z" fill="url(#cask-hoop-grad)" />
+                  <circle cx="20" cy="24" r="2.5" fill="#1e293b" stroke="#f59e0b" stroke-width="1" />
+                  <rect x="18.5" y="24" width="3" height="4" fill="#f59e0b" rx="0.5" />
+                </svg>
+              </div>
+            </div>
+
+            <p class="text-2xs text-amber-200/80 leading-relaxed bg-white/5 p-2 rounded-xl border border-white/10">
+              💡 <strong>How it works:</strong> The festival group pot is shared between participating clubs based on their percentage of total volunteer hours. The final payout is calculated after the event.
+            </p>
+
+            <div class="grid grid-cols-3 gap-2 pt-1 border-t border-amber-800/60 text-center">
+              <div class="p-1.5 bg-white/5 rounded-xl border border-white/10">
+                <span class="text-2xs text-amber-300 block">Members</span>
+                <span id="group-pot-member-count" class="text-sm font-extrabold text-white tabular-nums">0</span>
+              </div>
+              <div class="p-1.5 bg-white/5 rounded-xl border border-white/10">
+                <span class="text-2xs text-amber-300 block">Avg / Vol</span>
+                <span id="group-pot-avg-hours" class="text-sm font-extrabold text-white tabular-nums">0h</span>
+              </div>
+              <div class="p-1.5 bg-white/5 rounded-xl border border-white/10">
+                <span class="text-2xs text-amber-300 block">Rank</span>
+                <span id="group-pot-rank" class="text-sm font-extrabold text-amber-400 tabular-nums">—</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Group Member Contribution Breakdown -->
+          <div class="bg-white rounded-2xl border border-amber-200 p-3.5 shadow-xs space-y-2.5">
+            <div class="flex items-center justify-between pb-2 border-b border-slate-100">
+              <h4 class="font-extrabold text-xs text-amber-950 uppercase tracking-wider flex items-center gap-1.5">
+                <span>⭐</span> Team Contributors
+              </h4>
+              <span id="group-pot-roster-count" class="text-2xs font-semibold text-slate-500"></span>
+            </div>
+            <div id="group-pot-roster-list" class="space-y-1.5">
+              <!-- Dynamically populated team contributors with clean 🔒 lock icons for private profiles -->
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- =================================================================== -->
+      <!-- TAB 3: 🏆 LEADERBOARD (Groups % Pot & Privacy-Protected Volunteers)  -->
+      <!-- =================================================================== -->
+      <section id="tab-content-leaderboard" class="hidden space-y-3.5">
+        <!-- Sub-View Segmented Toggle -->
+        <div class="bg-amber-100/80 p-1 rounded-xl border border-amber-300 flex items-center text-xs font-extrabold text-center">
+          <button id="subtab-btn-groups" type="button" onclick="switchLeaderboardSubTab('groups')"
+            class="flex-1 py-1.5 px-2 rounded-lg bg-amber-700 text-white shadow-xs transition cursor-pointer">
+            👥 Groups (% Pot)
+          </button>
+          <button id="subtab-btn-volunteers" type="button" onclick="switchLeaderboardSubTab('volunteers')"
+            class="flex-1 py-1.5 px-2 rounded-lg text-amber-950 hover:bg-amber-200/60 transition cursor-pointer font-medium">
+            🏅 Volunteers
+          </button>
         </div>
 
-        <!-- Custom Progress Bar -->
-        <div class="w-full bg-slate-200 rounded-full h-3 overflow-hidden shadow-inner">
-          <div id="popover-progress-bar"
-            class="bg-gradient-to-r from-amber-500 to-amber-600 h-3 rounded-full transition-all duration-500"
-            style="width: 0%"></div>
+        <!-- SUB-VIEW A: Groups League (% Pot Share) -->
+        <div id="subview-groups" class="space-y-3.5">
+          <!-- League Header Banner with updated copy -->
+          <div class="bg-gradient-to-r from-amber-800 via-amber-700 to-amber-800 text-white rounded-2xl p-3.5 shadow-sm flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <span class="text-2xl shrink-0">🛡️</span>
+              <div class="min-w-0">
+                <h4 class="text-xs sm:text-sm font-black text-white truncate">The Golden Cask League</h4>
+                <p class="text-2xs text-amber-100/90 leading-tight mt-0.5">
+                  Groups earn a share of the festival pot proportional to their volunteer hours.
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top 3 Podium -->
+          <div class="bg-white rounded-2xl border border-amber-200 p-3 shadow-xs">
+            <div class="text-center mb-2">
+              <h5 class="text-2xs font-extrabold uppercase tracking-wider text-slate-400">Podium Standings</h5>
+            </div>
+            <div id="leaderboard-groups-podium" class="grid grid-cols-3 gap-1.5 items-end pt-1 pb-0.5">
+              <!-- Dynamically populated 1st, 2nd, 3rd podium cards with % Pot Share -->
+            </div>
+          </div>
+
+          <!-- Group Standings Table with % Pot Share Column -->
+          <div class="bg-white rounded-2xl border border-amber-200 overflow-hidden shadow-xs">
+            <div class="p-2.5 bg-stone-50 border-b border-stone-200 flex items-center justify-between text-2xs font-bold text-slate-500 uppercase tracking-wider">
+              <span>Group Name</span>
+              <div class="flex items-center gap-4 text-right">
+                <span>Hours</span>
+                <span class="text-amber-900 font-extrabold">% Pot</span>
+              </div>
+            </div>
+            <div id="leaderboard-groups-table" class="divide-y divide-slate-100 text-xs">
+              <!-- Dynamically populated group rows -->
+            </div>
+          </div>
+
+          <!-- Sticky Your Group Callout Strip -->
+          <div id="leaderboard-your-group-strip" class="hidden bg-amber-100 border border-amber-300 rounded-xl p-2.5 flex items-center justify-between gap-2 shadow-xs">
+            <div id="leaderboard-your-group-text" class="text-2xs text-amber-950 font-bold leading-tight"></div>
+            <button type="button" onclick="switchIncentiveTab('group')" class="text-2xs bg-amber-800 hover:bg-amber-900 text-white font-bold px-2 py-1 rounded-lg transition shrink-0 cursor-pointer">
+              View Pot &rarr;
+            </button>
+          </div>
         </div>
 
-        <p id="popover-status-text" class="text-xs text-slate-600 font-medium leading-relaxed">
-          Book shifts to fill your pint and unlock festival rewards!
-        </p>
-      </div>
+        <!-- SUB-VIEW B: Volunteers Arena (Privacy Masked) -->
+        <div id="subview-volunteers" class="hidden space-y-3.5">
+          <!-- Volunteer Table (Clean privacy display without banner) -->
+          <div class="bg-white rounded-2xl border border-amber-200 overflow-hidden shadow-xs">
+            <div class="p-2.5 bg-stone-50 border-b border-stone-200 flex items-center justify-between text-2xs font-bold text-slate-500 uppercase tracking-wider">
+              <span>Volunteer &amp; Group</span>
+              <span>Total Hours</span>
+            </div>
+            <div id="leaderboard-volunteers-table" class="divide-y divide-slate-100 text-xs">
+              <!-- Dynamically populated volunteer rows (clean 🔒 lock icon for private profiles) -->
+            </div>
+          </div>
 
-      <!-- Milestone Roadmap Section -->
-      <div class="space-y-2">
-        <div class="flex items-center justify-between">
-          <h4 class="text-xs font-bold text-amber-950 uppercase tracking-wide flex items-center gap-1">
-            <svg class="w-3.5 h-3.5 text-amber-700">
-              <use href="#icon-trophy" />
-            </svg> Reward Milestones
-          </h4>
-          <span class="text-xs text-slate-400 font-medium" id="popover-milestones-summary"></span>
+          <!-- Sticky Your Position Strip -->
+          <div id="leaderboard-your-volunteer-strip" class="hidden bg-amber-50 border border-amber-300 rounded-xl p-2.5 flex items-center justify-between gap-2 shadow-xs">
+            <div id="leaderboard-your-volunteer-text" class="text-2xs text-amber-950 font-bold leading-tight"></div>
+            <button type="button" onclick="switchView('schedule'); closeIncentivePopover();" class="text-2xs bg-amber-800 hover:bg-amber-900 text-white font-bold px-2 py-1 rounded-lg transition shrink-0 cursor-pointer">
+              Book &rarr;
+            </button>
+          </div>
         </div>
+      </section>
 
-        <!-- Dynamic Tier Roadmap Cards -->
-        <div id="popover-milestones-list" class="space-y-2">
-          <!-- Populated by JavaScript -->
-        </div>
-      </div>
     </div>
 
-    <!-- Popover Footer -->
+    <!-- 4. Popover Footer -->
     <footer class="p-3 border-t border-slate-100 flex items-center justify-between gap-2 shrink-0">
       <div id="popover-footer-auth" class="w-full flex items-center gap-2">
         <button type="button" onclick="switchView('schedule'); closeIncentivePopover();"
           class="flex-1 py-2 px-3 bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold rounded-xl transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer">
-          <svg class="w-3.5 h-3.5">
-            <use href="#icon-calendar" />
-          </svg> Browse Shifts
+          <svg class="w-3.5 h-3.5"><use href="#icon-calendar" /></svg> Browse Shifts
         </button>
         <button type="button" onclick="switchView('my-shifts'); closeIncentivePopover();"
           class="py-2 px-3 bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 text-xs font-bold rounded-xl transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer">
-          <svg class="w-3.5 h-3.5">
-            <use href="#icon-clipboard" />
-          </svg> My Shifts
+          <svg class="w-3.5 h-3.5"><use href="#icon-clipboard" /></svg> My Shifts
         </button>
       </div>
       <div id="popover-footer-guest" class="hidden w-full">
         <button type="button" onclick="handleGuestPopoverSignIn()"
           class="w-full py-2.5 px-4 bg-amber-700 hover:bg-amber-800 text-white text-xs font-bold rounded-xl transition shadow-sm flex items-center justify-center gap-2 cursor-pointer">
-          <svg class="w-3.5 h-3.5">
-            <use href="#icon-user" />
-          </svg> Sign In
+          <svg class="w-3.5 h-3.5"><use href="#icon-user" /></svg> Sign In
         </button>
       </div>
     </footer>

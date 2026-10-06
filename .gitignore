@@ -89,3 +89,6 @@ skills-lock.json
 # Planning and WIP working documents
 docs/*_PLAN.md
 docs/plans/
+
+# Mockups
+public/mockup-*

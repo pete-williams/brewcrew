@@ -2723,7 +2723,7 @@ async function exportAllShiftsToICS() {
 
     const startDate = new Date(startMs);
     const endDate = new Date(endMs);
-    const durationHours = Math.max(0, Math.round(((endMs - startMs) / (1000 * 3600)) * 10) / 10);
+    const durationHours = Math.max(0, Math.round((endMs - startMs) / (1000 * 3600)));
     const role = shift.categoryName || "Volunteer";
     const manager = shift.managerName || "Assigned On-Site";
 
@@ -2775,7 +2775,7 @@ async function exportSingleShiftToICS(shiftId) {
   const endMs = getShiftStartTimeMs(shift.endTime);
   const startDate = new Date(startMs);
   const endDate = new Date(endMs);
-  const durationHours = Math.max(0, Math.round(((endMs - startMs) / (1000 * 3600)) * 10) / 10);
+  const durationHours = Math.max(0, Math.round((endMs - startMs) / (1000 * 3600)));
   const role = shift.categoryName || "Volunteer";
   const manager = shift.managerName || "Assigned On-Site";
 
@@ -3850,7 +3850,7 @@ async function updateIncentiveAndMyShifts() {
       userRegisteredShifts.set(shiftDoc.id, data);
       const startMs = getShiftStartTimeMs(data.startTime);
       const endMs = getShiftStartTimeMs(data.endTime);
-      const durationHours = Math.max(0, Math.round(((endMs - startMs) / (1000 * 3600)) * 10) / 10);
+      const durationHours = Math.max(0, Math.round((endMs - startMs) / (1000 * 3600)));
       totalHours += durationHours;
       userShifts.push({ id: shiftDoc.id, ...data, durationHours });
     }
@@ -3867,7 +3867,7 @@ async function updateIncentiveAndMyShifts() {
     return (a.categoryName || "").localeCompare(b.categoryName || "");
   });
 
-  totalHours = Math.round(totalHours * 10) / 10;
+  totalHours = Math.round(totalHours);
 
   // Update Summary Metrics Bar
   if (statCountEl) statCountEl.textContent = String(userShifts.length);
@@ -3906,10 +3906,10 @@ async function updateIncentiveAndMyShifts() {
       statusText += `🎉 All rewards unlocked: ${allNames}!`;
     } else if (unlocked.length > 0) {
       const unlockedNames = unlocked.map(inc => inc.name).join(" + ");
-      const hoursRemaining = Math.max(0, Math.round((nextLocked.hoursRequired - totalHours) * 10) / 10);
+      const hoursRemaining = Math.max(0, Math.round(nextLocked.hoursRequired - totalHours));
       statusText += `🎉 Unlocked: ${unlockedNames}! (Book ${hoursRemaining} more hour${hoursRemaining === 1 ? '' : 's'} for ${nextLocked.name})`;
     } else {
-      const hoursRemaining = Math.max(0, Math.round((nextLocked.hoursRequired - totalHours) * 10) / 10);
+      const hoursRemaining = Math.max(0, Math.round(nextLocked.hoursRequired - totalHours));
       statusText += `Book ${hoursRemaining} more hour${hoursRemaining === 1 ? '' : 's'} to unlock your ${nextLocked.name}.`;
     }
   }
@@ -3917,7 +3917,7 @@ async function updateIncentiveAndMyShifts() {
   if (isEl) isEl.innerText = statusText;
 
   // Update Interactive Floating Pint Glass Widget & Roadmap Popover
-  updateFloatingIncentiveWidget(totalHours, maxMilestoneHours, incentives, false);
+  updateFloatingIncentiveWidget(totalHours, maxMilestoneHours, incentives, false, userShifts);
 
   // Render Day-Grouped Modernized My Shifts Hub
   if (listContainer) {
@@ -3936,7 +3936,7 @@ async function updateIncentiveAndMyShifts() {
     const sessionsList = currentFestivalConfig.sessions || defaultFestivalConfig.sessions || [];
 
     dayGroups.forEach((groupShifts, dayLabel) => {
-      const groupHours = Math.round(groupShifts.reduce((acc, s) => acc + s.durationHours, 0) * 10) / 10;
+      const groupHours = Math.round(groupShifts.reduce((acc, s) => acc + s.durationHours, 0));
 
       const dayCard = document.createElement("div");
       dayCard.className = "bg-white rounded-2xl shadow-xs border border-amber-200 overflow-hidden";
@@ -4028,9 +4028,761 @@ async function updateIncentiveAndMyShifts() {
 }
 
 // ============================================================================
-// Floating Incentive Progress Pint Glass Widget & Milestone Popover
+// Floating Incentive Progress Pint Glass Widget & Overdrive Arena Popover
 // ============================================================================
-function updateFloatingIncentiveWidget(totalHours, maxMilestoneHours, incentives, isGuest) {
+let currentIncentiveTab = "you";
+let currentLeaderboardSubTab = "groups";
+let allGroupsCache = [];
+let allUsersCache = new Map();
+let allRegistrationsCache = [];
+let isLeaderboardDataLoading = false;
+let lastLeaderboardFetchTime = 0;
+
+function switchIncentiveTab(tabId) {
+  currentIncentiveTab = tabId;
+  const tabs = ["you", "group", "leaderboard"];
+
+  tabs.forEach(t => {
+    const btn = document.getElementById("tab-btn-" + t);
+    const content = document.getElementById("tab-content-" + t);
+
+    if (t === tabId) {
+      if (btn) btn.className = "py-2 px-2 rounded-xl transition-all duration-200 bg-amber-500 text-amber-950 shadow-sm flex items-center justify-center gap-1.5 cursor-pointer font-extrabold";
+      if (content) content.classList.remove("hidden");
+    } else {
+      if (btn) btn.className = "py-2 px-2 rounded-xl transition-all duration-200 text-amber-200 hover:text-white hover:bg-white/10 flex items-center justify-center gap-1.5 cursor-pointer font-semibold";
+      if (content) content.classList.add("hidden");
+    }
+  });
+
+  const subtitleEl = document.getElementById("popover-header-subtitle");
+  if (subtitleEl) {
+    if (tabId === "you") {
+      subtitleEl.innerText = "Earn rewards & boost your group pot";
+    } else if (tabId === "group") {
+      const gName = currentUserProfile?.groupOrClub || "Your Group";
+      subtitleEl.innerText = `${escapeHtml(gName)} • Raise money for your pot`;
+    } else if (tabId === "leaderboard") {
+      subtitleEl.innerText = "The Golden Cask League & Volunteer Standings";
+    }
+  }
+
+  if (tabId === "group" || tabId === "leaderboard") {
+    fetchLeaderboardAndGroupData();
+  }
+}
+window.switchIncentiveTab = switchIncentiveTab;
+
+function switchLeaderboardSubTab(subTabId) {
+  currentLeaderboardSubTab = subTabId;
+  const btnGroups = document.getElementById("subtab-btn-groups");
+  const btnVolunteers = document.getElementById("subtab-btn-volunteers");
+  const viewGroups = document.getElementById("subview-groups");
+  const viewVolunteers = document.getElementById("subview-volunteers");
+
+  if (subTabId === "groups") {
+    if (btnGroups) btnGroups.className = "flex-1 py-1.5 px-2 rounded-lg bg-amber-700 text-white shadow-xs transition cursor-pointer font-extrabold";
+    if (btnVolunteers) btnVolunteers.className = "flex-1 py-1.5 px-2 rounded-lg text-amber-950 hover:bg-amber-200/60 transition cursor-pointer font-medium";
+    if (viewGroups) viewGroups.classList.remove("hidden");
+    if (viewVolunteers) viewVolunteers.classList.add("hidden");
+  } else {
+    if (btnVolunteers) btnVolunteers.className = "flex-1 py-1.5 px-2 rounded-lg bg-amber-700 text-white shadow-xs transition cursor-pointer font-extrabold";
+    if (btnGroups) btnGroups.className = "flex-1 py-1.5 px-2 rounded-lg text-amber-950 hover:bg-amber-200/60 transition cursor-pointer font-medium";
+    if (viewVolunteers) viewVolunteers.classList.remove("hidden");
+    if (viewGroups) viewGroups.classList.add("hidden");
+  }
+}
+window.switchLeaderboardSubTab = switchLeaderboardSubTab;
+
+function getMaskedVolunteerName(user) {
+  const uid = (user && (user.id || user.uid)) ? String(user.id || user.uid) : "";
+  let hash = 0;
+  for (let i = 0; i < uid.length; i++) {
+    hash = (hash * 31 + uid.charCodeAt(i)) % 900;
+  }
+  const idNum = Math.abs(hash) + 11;
+  return `🔒 Volunteer #${idNum}`;
+}
+
+async function fetchLeaderboardAndGroupData(force = false) {
+  const now = Date.now();
+  if (!force && lastLeaderboardFetchTime && (now - lastLeaderboardFetchTime < 15000)) {
+    computeAndRenderLeaderboardData();
+    return;
+  }
+
+  if (isLeaderboardDataLoading) return;
+  isLeaderboardDataLoading = true;
+
+  try {
+    const promises = [
+      db.collection("groups").get().catch(err => {
+        console.warn("Could not fetch groups:", err);
+        return { docs: [] };
+      })
+    ];
+
+    if (currentUser) {
+      promises.push(
+        db.collection("users").get().catch(err => {
+          console.warn("Could not fetch users:", err);
+          return { docs: [] };
+        })
+      );
+      promises.push(
+        db.collection("registrations").where("status", "==", "confirmed").get().catch(err => {
+          console.warn("Could not fetch confirmed registrations:", err);
+          return { docs: [] };
+        })
+      );
+    }
+
+    const [groupsSnap, usersSnap, regSnap] = await Promise.all(promises);
+
+    allGroupsCache = (groupsSnap?.docs || []).map(doc => ({ id: doc.id, ...doc.data() }));
+
+    if (usersSnap) {
+      allUsersCache.clear();
+      (usersSnap.docs || []).forEach(doc => {
+        allUsersCache.set(doc.id, { id: doc.id, ...doc.data() });
+      });
+    }
+
+    if (regSnap) {
+      allRegistrationsCache = (regSnap.docs || []).map(doc => ({ id: doc.id, ...doc.data() }));
+    }
+
+    lastLeaderboardFetchTime = Date.now();
+    computeAndRenderLeaderboardData();
+  } catch (err) {
+    console.error("Error fetching leaderboard data:", err);
+  } finally {
+    isLeaderboardDataLoading = false;
+  }
+}
+
+function computeAndRenderLeaderboardData() {
+  const shiftDurationMap = new Map();
+  (currentShiftsDocs || []).forEach(d => {
+    const data = d.data();
+    const startMs = getShiftStartTimeMs(data.startTime);
+    const endMs = getShiftStartTimeMs(data.endTime);
+    const dur = Math.max(0, Math.round((endMs - startMs) / (1000 * 3600)));
+    shiftDurationMap.set(d.id, dur);
+  });
+
+  const userHoursMap = new Map();
+  allRegistrationsCache.forEach(reg => {
+    if (reg.status !== "confirmed") return;
+    const dur = shiftDurationMap.get(reg.shiftId) || 0;
+    const uid = reg.userId;
+    userHoursMap.set(uid, (userHoursMap.get(uid) || 0) + dur);
+  });
+
+  if (currentUser) {
+    const curUid = currentUser.uid;
+    let localHours = 0;
+    userRegisteredShifts.forEach(shiftData => {
+      const startMs = getShiftStartTimeMs(shiftData.startTime);
+      const endMs = getShiftStartTimeMs(shiftData.endTime);
+      localHours += Math.max(0, Math.round((endMs - startMs) / (1000 * 3600)));
+    });
+    if (localHours > 0 || !userHoursMap.has(curUid)) {
+      userHoursMap.set(curUid, Math.max(localHours, userHoursMap.get(curUid) || 0));
+    }
+  }
+
+  const groupById = new Map();
+  const groupByName = new Map();
+  allGroupsCache.forEach(g => {
+    groupById.set(g.id, g);
+    if (g.name) groupByName.set(g.name.trim().toLowerCase(), g);
+  });
+
+  const groupHoursMap = new Map();
+  const groupMembersMap = new Map();
+  allGroupsCache.forEach(g => {
+    groupHoursMap.set(g.id, 0);
+    groupMembersMap.set(g.id, new Set());
+  });
+
+  allUsersCache.forEach((u, uid) => {
+    let matchedGroup = null;
+    if (u.groupId && groupById.has(u.groupId)) {
+      matchedGroup = groupById.get(u.groupId);
+    } else if (u.groupOrClub && groupByName.has(u.groupOrClub.trim().toLowerCase())) {
+      matchedGroup = groupByName.get(u.groupOrClub.trim().toLowerCase());
+    }
+
+    if (matchedGroup) {
+      const uHours = userHoursMap.get(uid) || 0;
+      groupHoursMap.set(matchedGroup.id, (groupHoursMap.get(matchedGroup.id) || 0) + uHours);
+      groupMembersMap.get(matchedGroup.id).add(uid);
+    }
+  });
+
+  if (currentUser && currentUserProfile) {
+    const curUid = currentUser.uid;
+    const curGroup = currentUserProfile.groupOrClub || "";
+    if (curGroup) {
+      let matched = null;
+      if (currentUserProfile.groupId && groupById.has(currentUserProfile.groupId)) {
+        matched = groupById.get(currentUserProfile.groupId);
+      } else if (groupByName.has(curGroup.trim().toLowerCase())) {
+        matched = groupByName.get(curGroup.trim().toLowerCase());
+      }
+      if (matched) {
+        if (!groupMembersMap.has(matched.id)) {
+          groupMembersMap.set(matched.id, new Set());
+        }
+        if (!groupMembersMap.get(matched.id).has(curUid)) {
+          groupMembersMap.get(matched.id).add(curUid);
+          const uHours = userHoursMap.get(curUid) || 0;
+          groupHoursMap.set(matched.id, (groupHoursMap.get(matched.id) || 0) + uHours);
+        }
+      }
+    }
+  }
+
+  const participatingGroups = allGroupsCache.filter(g => g.includeInGroupIncentives !== false);
+  let totalFestivalGroupHours = 0;
+  participatingGroups.forEach(g => {
+    totalFestivalGroupHours += (groupHoursMap.get(g.id) || 0);
+  });
+  totalFestivalGroupHours = Math.round(totalFestivalGroupHours);
+
+  participatingGroups.sort((a, b) => {
+    const hA = groupHoursMap.get(a.id) || 0;
+    const hB = groupHoursMap.get(b.id) || 0;
+    if (hB !== hA) return hB - hA;
+    return (a.name || "").localeCompare(b.name || "");
+  });
+
+  renderGroupPotView(participatingGroups, groupHoursMap, groupMembersMap, totalFestivalGroupHours, userHoursMap);
+  renderLeaderboardView(participatingGroups, groupHoursMap, groupMembersMap, totalFestivalGroupHours, userHoursMap);
+}
+
+function renderGroupPotView(participatingGroups, groupHoursMap, groupMembersMap, totalFestivalGroupHours, userHoursMap) {
+  const emptyState = document.getElementById("group-pot-empty-state");
+  const activeState = document.getElementById("group-pot-active-state");
+  if (!emptyState || !activeState) return;
+
+  if (!currentUser) {
+    emptyState.classList.remove("hidden");
+    activeState.classList.add("hidden");
+    return;
+  }
+
+  const userGroupOrClub = (currentUserProfile?.groupOrClub || "").trim();
+  const userGroupId = (currentUserProfile?.groupId || "").trim();
+
+  if (!userGroupOrClub && !userGroupId) {
+    emptyState.classList.remove("hidden");
+    activeState.classList.add("hidden");
+    return;
+  }
+
+  emptyState.classList.add("hidden");
+  activeState.classList.remove("hidden");
+
+  let userGroup = null;
+  if (userGroupId) {
+    userGroup = allGroupsCache.find(g => g.id === userGroupId);
+  }
+  if (!userGroup && userGroupOrClub) {
+    userGroup = allGroupsCache.find(g => (g.name || "").trim().toLowerCase() === userGroupOrClub.toLowerCase());
+  }
+
+  const groupName = userGroup ? userGroup.name : userGroupOrClub;
+  const isIncluded = userGroup ? userGroup.includeInGroupIncentives !== false : true;
+  const gHours = userGroup ? Math.round(groupHoursMap.get(userGroup.id) || 0) : 0;
+  const potShare = totalFestivalGroupHours > 0 ? ((gHours / totalFestivalGroupHours) * 100).toFixed(1) : "0.0";
+
+  const nameEl = document.getElementById("group-pot-name");
+  if (nameEl) nameEl.textContent = groupName;
+
+  const badgeEl = document.getElementById("group-pot-status-badge");
+  if (badgeEl) {
+    if (isIncluded) {
+      badgeEl.className = "text-2xs font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 shrink-0";
+      badgeEl.textContent = "Incentives Active";
+    } else {
+      badgeEl.className = "text-2xs font-bold px-2 py-0.5 rounded-full bg-slate-500/20 text-slate-300 border border-slate-400/30 shrink-0";
+      badgeEl.textContent = "Excluded";
+    }
+  }
+
+  const percentEl = document.getElementById("group-pot-percent");
+  if (percentEl) percentEl.textContent = `${potShare}%`;
+
+  const hoursEl = document.getElementById("group-pot-hours");
+  if (hoursEl) hoursEl.textContent = `${gHours} hrs`;
+
+  const totalHoursEl = document.getElementById("group-pot-total-hours");
+  if (totalHoursEl) totalHoursEl.textContent = `${totalFestivalGroupHours} hrs`;
+
+  const progBar = document.getElementById("group-pot-progress-bar");
+  if (progBar) progBar.style.width = `${Math.min(100, parseFloat(potShare))}%`;
+
+  const membersSet = userGroup ? (groupMembersMap.get(userGroup.id) || new Set()) : new Set();
+  const memberCount = Math.max(membersSet.size, (gHours > 0 ? 1 : 0));
+  const memberCountEl = document.getElementById("group-pot-member-count");
+  if (memberCountEl) memberCountEl.textContent = String(memberCount);
+
+  const avgHours = memberCount > 0 ? Math.round(gHours / memberCount) : 0;
+  const avgHoursEl = document.getElementById("group-pot-avg-hours");
+  if (avgHoursEl) avgHoursEl.textContent = `${avgHours} hrs`;
+
+  const rankIdx = userGroup ? participatingGroups.findIndex(g => g.id === userGroup.id) : -1;
+  const rankEl = document.getElementById("group-pot-rank");
+  if (rankEl) {
+    if (rankIdx === 0) rankEl.textContent = "#1 🥇";
+    else if (rankIdx === 1) rankEl.textContent = "#2 🥈";
+    else if (rankIdx === 2) rankEl.textContent = "#3 🥉";
+    else if (rankIdx > 2) rankEl.textContent = `#${rankIdx + 1}`;
+    else rankEl.textContent = "—";
+  }
+
+  // Team Contributors Breakdown
+  const rosterCountEl = document.getElementById("group-pot-roster-count");
+  if (rosterCountEl) rosterCountEl.textContent = `${memberCount} Volunteer${memberCount === 1 ? '' : 's'}`;
+
+  const rosterList = document.getElementById("group-pot-roster-list");
+  if (rosterList) {
+    const contributors = [];
+    membersSet.forEach(uid => {
+      const u = allUsersCache.get(uid) || (uid === currentUser?.uid ? currentUserProfile : {});
+      contributors.push({
+        uid,
+        user: u,
+        hours: Math.round(userHoursMap.get(uid) || 0)
+      });
+    });
+
+    if (contributors.length === 0 && currentUser) {
+      contributors.push({
+        uid: currentUser.uid,
+        user: currentUserProfile || {},
+        hours: Math.round(userHoursMap.get(currentUser.uid) || 0)
+      });
+    }
+
+    contributors.sort((a, b) => b.hours - a.hours);
+
+    if (contributors.length === 0) {
+      rosterList.innerHTML = `<p class="text-xs text-slate-500 italic text-center py-2">No volunteer hours logged for this group yet.</p>`;
+    } else {
+      rosterList.innerHTML = contributors.map((c, idx) => {
+        const isCurrent = currentUser && c.uid === currentUser.uid;
+        const isPrivate = c.user?.profileVisibility === "private";
+        const displayName = isCurrent
+          ? `${escapeHtml(c.user?.fullName || currentUser.displayName || 'Volunteer')}`
+          : (isPrivate ? getMaskedVolunteerName(c.user) : escapeHtml(c.user?.fullName || 'Volunteer'));
+
+        const cardBg = isCurrent
+          ? "bg-amber-100/90 border border-amber-400 ring-1 ring-amber-400 shadow-2xs"
+          : (idx === 0 ? "bg-amber-50/60 border border-amber-200" : "bg-stone-50 border border-stone-200");
+
+        const rankBadge = isCurrent
+          ? `<span class="w-5 h-5 rounded-full bg-amber-400 text-amber-950 font-black text-2xs flex items-center justify-center shrink-0">${idx + 1}</span>`
+          : `<span class="w-5 h-5 rounded-full bg-stone-200 text-stone-700 font-extrabold text-2xs flex items-center justify-center shrink-0">${idx + 1}</span>`;
+
+        return `
+          <div class="p-2 rounded-xl ${cardBg} flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2 min-w-0">
+              ${rankBadge}
+              <div class="flex items-center gap-1.5 min-w-0">
+                <span class="text-xs ${isCurrent ? 'font-extrabold text-amber-950' : isPrivate ? 'font-medium text-slate-600' : 'font-bold text-slate-900'} truncate">
+                  ${displayName}
+                </span>
+                ${isCurrent ? '<span class="text-2xs bg-amber-800 text-white font-black px-1.5 py-0.2 rounded-full shrink-0">YOU</span>' : ''}
+              </div>
+            </div>
+            <span class="text-xs font-black ${isCurrent ? 'text-amber-950' : 'text-slate-800'} tabular-nums shrink-0">
+              ${c.hours} hrs
+            </span>
+          </div>
+        `;
+      }).join("");
+    }
+  }
+}
+
+function renderLeaderboardView(participatingGroups, groupHoursMap, groupMembersMap, totalFestivalGroupHours, userHoursMap) {
+  // ── SUB-VIEW A: GROUPS LEAGUE (% POT SHARE) ──
+  const podiumEl = document.getElementById("leaderboard-groups-podium");
+  const tableEl = document.getElementById("leaderboard-groups-table");
+  const yourGroupStrip = document.getElementById("leaderboard-your-group-strip");
+  const yourGroupText = document.getElementById("leaderboard-your-group-text");
+
+  const userGroupOrClub = (currentUserProfile?.groupOrClub || "").trim();
+  const userGroupId = (currentUserProfile?.groupId || "").trim();
+
+  // Top 3 Podium
+  if (podiumEl) {
+    if (participatingGroups.length === 0) {
+      podiumEl.innerHTML = `<div class="col-span-3 text-center py-4 text-xs text-slate-400 italic">No groups registered yet.</div>`;
+    } else {
+      const top1 = participatingGroups[0];
+      const top2 = participatingGroups.length > 1 ? participatingGroups[1] : null;
+      const top3 = participatingGroups.length > 2 ? participatingGroups[2] : null;
+
+      const renderPodiumCard = (g, rank, placeNum, heightClass, bgClass, medalEmoji, crownEmoji = "") => {
+        if (!g) {
+          return `
+            <div class="flex flex-col items-center text-center opacity-40">
+              <span class="text-base mb-0.5">${medalEmoji}</span>
+              <div class="w-8 h-8 rounded-full bg-slate-100 border border-slate-300 text-slate-400 font-bold text-xs flex items-center justify-center">—</div>
+              <h5 class="text-2xs font-semibold text-slate-400 mt-1">Empty</h5>
+              <div class="w-full ${heightClass} bg-slate-100 rounded-t-xl mt-1.5 flex items-center justify-center font-bold text-slate-400 text-xs">#${placeNum}</div>
+            </div>
+          `;
+        }
+        const gHours = Math.round(groupHoursMap.get(g.id) || 0);
+        const potShare = totalFestivalGroupHours > 0 ? ((gHours / totalFestivalGroupHours) * 100).toFixed(1) : "0.0";
+        const isUserGroup = currentUser && (g.id === userGroupId || (userGroupOrClub && (g.name || "").toLowerCase() === userGroupOrClub.toLowerCase()));
+        const initials = (g.name || "Group").split(/\s+/).map(w => w[0]).slice(0, 2).join("").toUpperCase();
+
+        return `
+          <div class="flex flex-col items-center text-center">
+            ${crownEmoji ? `<div class="relative"><span class="text-2xl mb-0.5 block">${crownEmoji}</span><span class="text-xl block -mt-2">${medalEmoji}</span></div>` : `<span class="text-xl mb-0.5">${medalEmoji}</span>`}
+            <div class="w-10 h-10 rounded-full ${placeNum === 1 ? 'bg-amber-400 border-2 border-amber-500 text-amber-950 shadow-gold-glow' : 'bg-slate-200 border-2 border-slate-300 text-slate-800'} font-black text-xs flex items-center justify-center shadow-xs">
+              ${escapeHtml(initials)}
+            </div>
+            <h5 class="text-2xs font-extrabold text-amber-950 truncate max-w-[90px] mt-1">${escapeHtml(g.name)}</h5>
+            ${isUserGroup ? '<span class="text-2xs bg-amber-400 text-amber-950 font-black px-1.5 py-0.2 rounded-full mt-0.5">YOU</span>' : ''}
+            <span class="text-2xs font-black ${placeNum === 1 ? 'text-amber-950' : 'text-amber-800'} mt-0.5 tabular-nums">${potShare}% Pot</span>
+            <span class="text-2xs font-semibold text-slate-500 tabular-nums">${gHours} hrs</span>
+            <div class="w-full ${heightClass} ${bgClass} rounded-t-xl mt-1.5 flex items-center justify-center font-black ${placeNum === 1 ? 'text-amber-950 text-sm shadow-sm' : 'text-slate-700 text-xs shadow-inner'}">
+              #${placeNum}
+            </div>
+          </div>
+        `;
+      };
+
+      podiumEl.innerHTML = `
+        ${renderPodiumCard(top2, "2nd", 2, "h-14", "bg-gradient-to-t from-slate-300 to-slate-200", "🥈")}
+        ${renderPodiumCard(top1, "1st", 1, "h-20", "bg-gradient-to-t from-amber-400 to-amber-300", "🥇", "👑")}
+        ${renderPodiumCard(top3, "3rd", 3, "h-10", "bg-gradient-to-t from-amber-200 to-amber-100", "🥉")}
+      `;
+    }
+  }
+
+  // Groups Table
+  if (tableEl) {
+    if (participatingGroups.length === 0) {
+      tableEl.innerHTML = `<p class="p-4 text-xs text-slate-400 italic text-center">No group standings available yet.</p>`;
+    } else {
+      tableEl.innerHTML = participatingGroups.map((g, idx) => {
+        const gHours = Math.round(groupHoursMap.get(g.id) || 0);
+        const potShare = totalFestivalGroupHours > 0 ? ((gHours / totalFestivalGroupHours) * 100).toFixed(1) : "0.0";
+        const members = (groupMembersMap.get(g.id) || new Set()).size;
+        const isUserGroup = currentUser && (g.id === userGroupId || (userGroupOrClub && (g.name || "").toLowerCase() === userGroupOrClub.toLowerCase()));
+        const medal = idx === 0 ? "🥇" : idx === 1 ? "🥈" : idx === 2 ? "🥉" : "";
+
+        return `
+          <div class="p-2.5 flex items-center justify-between hover:bg-stone-50 transition ${isUserGroup ? 'bg-amber-50/80 border-l-4 border-l-amber-600' : ''}">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="w-4 font-black text-amber-800 text-center">${idx + 1}</span>
+              ${medal ? `<span class="text-sm shrink-0">${medal}</span>` : ''}
+              <div class="min-w-0">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <h5 class="font-bold text-slate-900 truncate">${escapeHtml(g.name)}</h5>
+                  ${isUserGroup ? '<span class="text-2xs bg-amber-800 text-white font-black px-1.5 py-0.2 rounded-full shrink-0">YOU</span>' : ''}
+                </div>
+                <span class="text-2xs text-slate-400">${members} volunteer${members === 1 ? '' : 's'}</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-4 shrink-0 text-right">
+              <span class="font-bold text-slate-700 tabular-nums">${gHours} hrs</span>
+              <span class="font-extrabold text-amber-900 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300 tabular-nums text-2xs">${potShare}%</span>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
+  }
+
+  // Sticky Strip for User's Group
+  if (yourGroupStrip && yourGroupText) {
+    let userGroup = null;
+    if (userGroupId) userGroup = participatingGroups.find(g => g.id === userGroupId);
+    if (!userGroup && userGroupOrClub) userGroup = participatingGroups.find(g => (g.name || "").toLowerCase() === userGroupOrClub.toLowerCase());
+
+    if (userGroup) {
+      const gHours = Math.round(groupHoursMap.get(userGroup.id) || 0);
+      const potShare = totalFestivalGroupHours > 0 ? ((gHours / totalFestivalGroupHours) * 100).toFixed(1) : "0.0";
+      yourGroupText.innerHTML = `⚡ <strong>${escapeHtml(userGroup.name)}</strong> holds <strong>${potShare}%</strong> of the festival pot (${gHours} hrs).`;
+      yourGroupStrip.classList.remove("hidden");
+    } else {
+      yourGroupStrip.classList.add("hidden");
+    }
+  }
+
+  // ── SUB-VIEW B: VOLUNTEERS ARENA ──
+  const volTable = document.getElementById("leaderboard-volunteers-table");
+  const yourVolStrip = document.getElementById("leaderboard-your-volunteer-strip");
+  const yourVolText = document.getElementById("leaderboard-your-volunteer-text");
+
+  if (volTable) {
+    const rankedVolunteers = [];
+    userHoursMap.forEach((hrs, uid) => {
+      const u = allUsersCache.get(uid) || (uid === currentUser?.uid ? currentUserProfile : {});
+      if (hrs > 0 || (currentUser && uid === currentUser.uid)) {
+        rankedVolunteers.push({
+          uid,
+          user: u,
+          hours: Math.round(hrs)
+        });
+      }
+    });
+
+    rankedVolunteers.sort((a, b) => b.hours - a.hours);
+
+    if (rankedVolunteers.length === 0) {
+      volTable.innerHTML = `<p class="p-4 text-xs text-slate-400 italic text-center">No volunteer shifts logged yet.</p>`;
+    } else {
+      volTable.innerHTML = rankedVolunteers.map((v, idx) => {
+        const isCurrent = currentUser && v.uid === currentUser.uid;
+        const isPrivate = v.user?.profileVisibility === "private";
+        const displayName = isCurrent
+          ? escapeHtml(v.user?.fullName || currentUser.displayName || 'Volunteer')
+          : (isPrivate ? getMaskedVolunteerName(v.user) : escapeHtml(v.user?.fullName || 'Volunteer'));
+
+        const initials = isPrivate ? "🔒" : getUserInitials(v.user?.fullName, v.user?.email);
+        const groupTag = v.user?.groupOrClub || "Independent";
+
+        return `
+          <div class="p-2.5 flex items-center justify-between hover:bg-stone-50 transition ${isCurrent ? 'bg-amber-100/90 border-l-4 border-l-amber-600' : ''}">
+            <div class="flex items-center gap-2 min-w-0">
+              <span class="w-4 font-black ${idx < 3 ? 'text-amber-800' : 'text-slate-500'} text-center">${idx + 1}</span>
+              <div class="w-7 h-7 rounded-full ${isCurrent ? 'bg-amber-400 text-amber-950 border border-amber-600' : isPrivate ? 'bg-stone-300 text-stone-600 border border-stone-400' : 'bg-amber-200 text-amber-900 border border-amber-300'} font-bold text-xs flex items-center justify-center shrink-0">
+                ${initials}
+              </div>
+              <div class="min-w-0">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <h5 class="${isCurrent ? 'font-black text-amber-950' : isPrivate ? 'font-semibold text-slate-700 italic' : 'font-bold text-slate-900'} truncate">
+                    ${displayName}
+                  </h5>
+                  ${isCurrent ? '<span class="text-2xs bg-amber-800 text-white font-black px-1.5 py-0.2 rounded-full shrink-0">YOU</span>' : ''}
+                </div>
+                <span class="text-2xs text-slate-500 font-medium bg-white border border-stone-200 px-1 py-0.1 rounded">${escapeHtml(groupTag)}</span>
+              </div>
+            </div>
+            <span class="font-black ${isCurrent ? 'text-amber-950' : 'text-slate-900'} tabular-nums shrink-0">${v.hours} hrs</span>
+          </div>
+        `;
+      }).join("");
+    }
+
+    // Sticky Strip for Volunteer Position
+    if (yourVolStrip && yourVolText) {
+      if (currentUser) {
+        const curUid = currentUser.uid;
+        const curIdx = rankedVolunteers.findIndex(v => v.uid === curUid);
+        const curHours = curIdx >= 0 ? rankedVolunteers[curIdx].hours : 0;
+        const curRank = curIdx >= 0 ? curIdx + 1 : rankedVolunteers.length + 1;
+
+        let diffText = "";
+        if (curRank > 5 && rankedVolunteers.length >= 5) {
+          const top5Hours = rankedVolunteers[4].hours;
+          const diff = Math.max(1, top5Hours - curHours + 1);
+          diffText = ` &bull; Only ${diff} hrs to enter the Top 5!`;
+        }
+
+        yourVolText.innerHTML = `🎯 <strong>Rank #${curRank} (${curHours} hrs)</strong>${diffText}`;
+        yourVolStrip.classList.remove("hidden");
+      } else {
+        yourVolStrip.classList.add("hidden");
+      }
+    }
+  }
+}
+
+function renderMilestonePath(incentives, totalHours, isGuest) {
+  const pathEl = document.getElementById("popover-milestones-path");
+  const summaryEl = document.getElementById("popover-milestones-summary");
+  if (!pathEl) return;
+
+  if (!incentives || incentives.length === 0) {
+    pathEl.innerHTML = `<p class="text-xs text-slate-500 italic text-center py-2">No reward milestones currently defined.</p>`;
+    if (summaryEl) summaryEl.textContent = "";
+    return;
+  }
+
+  let claimedCount = 0;
+  let foundNextGoal = false;
+
+  const nodesHtml = incentives.map((item, idx) => {
+    const req = Math.round(Number(item.hoursRequired ?? item.hours ?? 0));
+    const isUnlocked = !isGuest && totalHours >= req;
+    let isNext = false;
+
+    if (isUnlocked) {
+      claimedCount++;
+    } else if (!isGuest && !foundNextGoal) {
+      isNext = true;
+      foundNextGoal = true;
+    }
+
+    const nameLower = (item.name || "").toLowerCase();
+    let icon = "🎁";
+    if (nameLower.includes("entry") || nameLower.includes("pass") || nameLower.includes("ticket")) icon = "🎟️";
+    else if (nameLower.includes("shirt") || nameLower.includes("t-shirt") || nameLower.includes("tee")) icon = "👕";
+    else if (nameLower.includes("pint") || nameLower.includes("beer") || nameLower.includes("drink")) icon = "🍺";
+    else if (nameLower.includes("vip") || nameLower.includes("gold") || nameLower.includes("exclusive") || nameLower.includes("hall")) icon = "👑";
+
+    if (isUnlocked) {
+      return `
+        <div class="relative z-10 flex items-center w-full justify-between pl-3 pr-2">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <div class="w-10 h-10 rounded-full bg-emerald-500 text-white font-black text-xs flex items-center justify-center border-3 border-emerald-200 shadow-sm shrink-0">
+              ✓
+            </div>
+            <div class="min-w-0">
+              <h5 class="text-xs font-bold text-slate-900 leading-tight truncate">${escapeHtml(item.name)}</h5>
+              <p class="text-2xs text-slate-500 truncate">${req} hrs &bull; ${escapeHtml(item.description || 'Milestone achieved')}</p>
+            </div>
+          </div>
+          <span class="text-2xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full shrink-0">
+            Claimed 🍺
+          </span>
+        </div>
+      `;
+    } else if (isNext) {
+      const hoursLeft = Math.max(0, req - totalHours);
+      return `
+        <div class="relative z-10 flex items-center w-full justify-between pl-3 pr-2 bg-amber-50/90 border border-amber-400 rounded-xl p-2 shadow-sm active-milestone-node">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <div class="w-10 h-10 rounded-full bg-amber-500 text-amber-950 font-black text-base flex items-center justify-center border-3 border-amber-300 shadow-md shrink-0">
+              ${icon}
+            </div>
+            <div class="min-w-0">
+              <div class="flex items-center gap-1.5 min-w-0">
+                <h5 class="text-xs font-extrabold text-amber-950 leading-tight truncate">${escapeHtml(item.name)}</h5>
+                <span class="text-2xs bg-amber-400 text-amber-950 font-black px-1.5 py-0.2 rounded-full shrink-0">NEXT</span>
+              </div>
+              <p class="text-2xs text-amber-900 font-medium truncate">${req} hrs &bull; ${hoursLeft}h to unlock</p>
+            </div>
+          </div>
+          <span class="text-2xs font-bold text-amber-900 bg-amber-200 border border-amber-400 px-2 py-0.5 rounded-full shrink-0 tabular-nums">
+            ${totalHours} / ${req} hrs
+          </span>
+        </div>
+      `;
+    } else {
+      return `
+        <div class="relative z-10 flex items-center w-full justify-between pl-3 pr-2 ${isGuest ? 'opacity-80' : 'opacity-60'}">
+          <div class="flex items-center gap-2.5 min-w-0">
+            <div class="w-10 h-10 rounded-full bg-slate-200 text-slate-500 font-black text-xs flex items-center justify-center border-3 border-slate-300 shrink-0">
+              🔒
+            </div>
+            <div class="min-w-0">
+              <h5 class="text-xs font-bold text-slate-700 leading-tight truncate">${escapeHtml(item.name)}</h5>
+              <p class="text-2xs text-slate-400 truncate">${req} hrs &bull; ${escapeHtml(item.description || 'Reward locked')}</p>
+            </div>
+          </div>
+          <span class="text-2xs text-slate-400 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded-full shrink-0 tabular-nums">
+            ${req} hrs
+          </span>
+        </div>
+      `;
+    }
+  }).join("");
+
+  pathEl.innerHTML = `
+    <div class="absolute top-5 bottom-5 w-1.5 bg-gradient-to-b from-emerald-400 via-amber-400 to-slate-200 rounded-full z-0"></div>
+    ${nodesHtml}
+  `;
+
+  if (summaryEl) {
+    summaryEl.textContent = isGuest ? `${incentives.length} Milestones` : `${claimedCount} / ${incentives.length} Claimed`;
+  }
+}
+
+function evaluateVolunteerAchievements(userShifts, totalHours, userProfile, maxMilestoneHours) {
+  const gridEl = document.getElementById("popover-achievements-grid");
+  const summaryEl = document.getElementById("popover-achievements-summary");
+  if (!gridEl) return;
+
+  const shiftCount = (userShifts || []).length;
+  let hasNightShift = false;
+  (userShifts || []).forEach(s => {
+    const endMs = getShiftStartTimeMs(s.endTime);
+    if (endMs) {
+      const h = new Date(endMs).getHours();
+      if (h >= 20 || h < 5) hasNightShift = true;
+    }
+  });
+
+  const hasGroup = Boolean((userProfile?.groupOrClub || userProfile?.groupId || "").trim());
+
+  const badges = [
+    {
+      icon: "🌟",
+      title: "First Pour",
+      unlocked: shiftCount >= 1,
+      targetText: "1 Shift"
+    },
+    {
+      icon: "⚡",
+      title: "Double Duty",
+      unlocked: shiftCount >= 2,
+      targetText: "2 Shifts"
+    },
+    {
+      icon: "🌙",
+      title: "Night Owl",
+      unlocked: hasNightShift,
+      targetText: "Night Shift"
+    },
+    {
+      icon: "🤝",
+      title: "Crew Mate",
+      unlocked: hasGroup,
+      targetText: "Join Group"
+    },
+    {
+      icon: "⏱️",
+      title: "Pint Pioneer",
+      unlocked: totalHours >= 8,
+      targetText: `${totalHours} / 8 hrs`
+    },
+    {
+      icon: "🏆",
+      title: "Iron Brewer",
+      unlocked: shiftCount >= 3,
+      targetText: `${shiftCount} / 3 Shifts`
+    }
+  ];
+
+  const unlockedCount = badges.filter(b => b.unlocked).length;
+  if (summaryEl) summaryEl.textContent = `${unlockedCount} of 6 Unlocked`;
+
+  gridEl.innerHTML = badges.map(b => {
+    if (b.unlocked) {
+      return `
+        <div class="bg-amber-50/70 border border-amber-300 rounded-xl p-2 text-center flex flex-col items-center">
+          <span class="text-lg">${b.icon}</span>
+          <span class="text-2xs font-bold text-amber-950 mt-0.5 truncate">${b.title}</span>
+          <span class="text-2xs text-emerald-700 font-extrabold">Unlocked ✓</span>
+        </div>
+      `;
+    } else {
+      return `
+        <div class="bg-slate-50 border border-slate-200 rounded-xl p-2 text-center flex flex-col items-center opacity-65">
+          <span class="text-lg opacity-70">${b.icon}</span>
+          <span class="text-2xs font-bold text-slate-600 mt-0.5 truncate">${b.title}</span>
+          <span class="text-2xs text-slate-400 tabular-nums">${b.targetText}</span>
+        </div>
+      `;
+    }
+  }).join("");
+}
+
+function updateFloatingIncentiveWidget(totalHours, maxMilestoneHours, incentives, isGuest, userShifts = []) {
+  totalHours = Math.round(Number(totalHours || 0));
+  maxMilestoneHours = Math.max(1, Math.round(Number(maxMilestoneHours || 8)));
   const percentage = maxMilestoneHours > 0 ? Math.min((totalHours / maxMilestoneHours) * 100, 100) : 0;
 
   // 1. Update Floating Pint SVG Fill
@@ -4041,7 +4793,6 @@ function updateFloatingIncentiveWidget(totalHours, maxMilestoneHours, incentives
   const glowEl = document.getElementById("floating-incentive-glow");
   const floatingBadge = document.getElementById("floating-incentive-badge");
 
-  // Max liquid height in SVG is 31px (from y=36 to y=5)
   const maxSvgHeight = 31;
   const liquidHeight = percentage > 0 ? Math.max(2, Math.round((percentage / 100) * maxSvgHeight * 10) / 10) : 0;
   const liquidY = 36 - liquidHeight;
@@ -4069,31 +4820,26 @@ function updateFloatingIncentiveWidget(totalHours, maxMilestoneHours, incentives
   }
 
   if (fullHeadEl) {
-    if (percentage >= 100) {
-      fullHeadEl.classList.remove("hidden");
-    } else {
-      fullHeadEl.classList.add("hidden");
-    }
+    if (percentage >= 100) fullHeadEl.classList.remove("hidden");
+    else fullHeadEl.classList.add("hidden");
   }
 
   if (glowEl) {
-    if (percentage >= 100) {
-      glowEl.classList.remove("hidden");
-    } else {
-      glowEl.classList.add("hidden");
-    }
+    if (percentage >= 100) glowEl.classList.remove("hidden");
+    else glowEl.classList.add("hidden");
   }
 
   if (floatingBadge) {
     floatingBadge.innerText = isGuest ? "0h" : `${totalHours}h`;
   }
 
-  // 2. Update Popover Header & Progress Card
+  // 2. Update Popover Header
   const popoverHoursPill = document.getElementById("popover-hours-pill");
   if (popoverHoursPill) {
-    popoverHoursPill.innerText = isGuest ? `0 / ${maxMilestoneHours}h` : `${totalHours} / ${maxMilestoneHours}h`;
+    popoverHoursPill.innerText = isGuest ? "0 hrs" : `${totalHours} hrs`;
   }
 
+  // 3. Tab 1 Progress Card
   const popoverProgressBar = document.getElementById("popover-progress-bar");
   if (popoverProgressBar) {
     popoverProgressBar.style.width = `${percentage}%`;
@@ -4102,6 +4848,31 @@ function updateFloatingIncentiveWidget(totalHours, maxMilestoneHours, incentives
   const popoverProgressPercent = document.getElementById("popover-progress-percent");
   if (popoverProgressPercent) {
     popoverProgressPercent.innerText = `${Math.round(percentage)}%`;
+  }
+
+  const hoursCurrentEl = document.getElementById("popover-hours-current");
+  if (hoursCurrentEl) hoursCurrentEl.innerText = String(totalHours);
+
+  const hoursMaxEl = document.getElementById("popover-hours-max");
+  if (hoursMaxEl) hoursMaxEl.innerText = String(maxMilestoneHours);
+
+  // Tab 1 Dynamic Pint SVG
+  const tab1Liquid = document.getElementById("tab1-liquid-rect");
+  const tab1Foam = document.getElementById("tab1-foam-rect");
+  if (tab1Liquid) {
+    const tab1MaxH = 34;
+    const tab1H = percentage > 0 ? Math.max(3, Math.round((percentage / 100) * tab1MaxH)) : 0;
+    const tab1Y = 41 - tab1H;
+    tab1Liquid.setAttribute("height", tab1H);
+    tab1Liquid.setAttribute("y", tab1Y);
+    if (tab1Foam) {
+      if (percentage > 0) {
+        tab1Foam.setAttribute("y", Math.max(5, tab1Y - 2));
+        tab1Foam.classList.remove("opacity-0");
+      } else {
+        tab1Foam.classList.add("opacity-0");
+      }
+    }
   }
 
   const popoverStatusText = document.getElementById("popover-status-text");
@@ -4113,20 +4884,20 @@ function updateFloatingIncentiveWidget(totalHours, maxMilestoneHours, incentives
     } else if (incentives.length === 0) {
       popoverStatusText.innerText = `You've registered ${totalHours} hours! (No rewards currently configured).`;
     } else {
-      const unlocked = incentives.filter(inc => totalHours >= inc.hoursRequired);
-      const nextLocked = incentives.find(inc => totalHours < inc.hoursRequired);
+      const unlocked = incentives.filter(inc => totalHours >= (inc.hoursRequired ?? inc.hours ?? 0));
+      const nextLocked = incentives.find(inc => totalHours < (inc.hoursRequired ?? inc.hours ?? 0));
 
       if (unlocked.length === incentives.length) {
         const allNames = unlocked.map(inc => inc.name).join(" + ");
         popoverStatusText.innerText = `🎉 Outstanding! All rewards unlocked: ${allNames}!`;
       } else if (nextLocked) {
-        const hoursRemaining = Math.max(0, Math.round((nextLocked.hoursRequired - totalHours) * 10) / 10);
+        const hoursRemaining = Math.max(0, Math.round((nextLocked.hoursRequired ?? nextLocked.hours ?? 0) - totalHours));
         popoverStatusText.innerText = `Book ${hoursRemaining} more hour${hoursRemaining === 1 ? '' : 's'} to unlock: ${nextLocked.name}!`;
       }
     }
   }
 
-  // 3. Guest vs Authenticated Views in Popover
+  // 4. Guest vs Authenticated Views in Popover
   const guestCard = document.getElementById("incentive-guest-welcome-card");
   const authCard = document.getElementById("incentive-auth-progress-card");
   const footerGuest = document.getElementById("popover-footer-guest");
@@ -4153,76 +4924,12 @@ function updateFloatingIncentiveWidget(totalHours, maxMilestoneHours, incentives
     if (footerAuth) footerAuth.classList.remove("hidden");
   }
 
-  // 4. Milestone Roadmap Cards List
-  const milestonesList = document.getElementById("popover-milestones-list");
-  const milestonesSummary = document.getElementById("popover-milestones-summary");
+  // 5. Milestone Serpentine Path & 6 Achievements
+  renderMilestonePath(incentives, totalHours, isGuest);
+  evaluateVolunteerAchievements(userShifts, totalHours, currentUserProfile, maxMilestoneHours);
 
-  if (milestonesSummary) {
-    milestonesSummary.innerText = incentives.length > 0 ? `${incentives.length} Milestones` : "";
-  }
-
-  if (milestonesList) {
-    if (incentives.length === 0) {
-      milestonesList.innerHTML = `<p class="text-xs text-slate-500 italic text-center py-2">No reward milestones currently defined.</p>`;
-    } else {
-      let foundNextGoal = false;
-      milestonesList.innerHTML = "";
-
-      incentives.forEach(item => {
-        const req = Number(item.hoursRequired ?? item.hours ?? 0);
-        const isUnlocked = !isGuest && totalHours >= req;
-        let isNextGoal = false;
-
-        if (!isGuest && !isUnlocked && !foundNextGoal) {
-          isNextGoal = true;
-          foundNextGoal = true;
-        }
-
-        const hoursLeft = Math.max(0, Math.round((req - totalHours) * 10) / 10);
-
-        // Pick icon
-        const nameLower = (item.name || "").toLowerCase();
-        let icon = "🎁";
-        if (nameLower.includes("entry") || nameLower.includes("pass") || nameLower.includes("ticket")) {
-          icon = "🎟️";
-        } else if (nameLower.includes("shirt") || nameLower.includes("t-shirt") || nameLower.includes("tee") || nameLower.includes("merch")) {
-          icon = "👕";
-        } else if (nameLower.includes("pint") || nameLower.includes("beer") || nameLower.includes("drink")) {
-          icon = "🍺";
-        } else if (nameLower.includes("vip") || nameLower.includes("gold") || nameLower.includes("exclusive")) {
-          icon = "👑";
-        }
-
-        let cardClass = "";
-        let statusBadge = "";
-
-        if (isUnlocked) {
-          cardClass = "bg-emerald-50/70 border-emerald-300 ring-1 ring-emerald-300/40";
-          statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300 flex items-center gap-1 shrink-0">✓ Unlocked 🍺</span>`;
-        } else if (isNextGoal) {
-          cardClass = "bg-amber-100/60 border-amber-400 ring-1 ring-amber-400/50 shadow-2xs";
-          statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-amber-200 text-amber-900 border border-amber-400 flex items-center gap-1 shrink-0 animate-pulse">🎯 Next (${hoursLeft}h left)</span>`;
-        } else {
-          cardClass = isGuest ? "bg-amber-50/40 border-amber-200/80" : "bg-slate-50 border-slate-200 opacity-80";
-          statusBadge = `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-slate-100 text-slate-600 border border-slate-200 shrink-0">🔒 ${req}h Required</span>`;
-        }
-
-        const card = document.createElement("div");
-        card.className = `p-3 rounded-xl border flex items-center justify-between gap-3 transition ${cardClass}`;
-        card.innerHTML = `
-          <div class="flex items-center gap-2.5 min-w-0">
-            <span class="text-xl shrink-0">${icon}</span>
-            <div class="min-w-0">
-              <h5 class="text-xs font-bold text-slate-900 truncate">${escapeHtml(item.name || item.rewardName || 'Reward')}</h5>
-              <p class="text-[11px] text-slate-500 truncate">${escapeHtml(item.description || `${req} volunteer hours required`)}</p>
-            </div>
-          </div>
-          ${statusBadge}
-        `;
-        milestonesList.appendChild(card);
-      });
-    }
-  }
+  // 6. Compute & Render Group Pot and Leaderboard
+  computeAndRenderLeaderboardData();
 }
 
 function toggleIncentivePopover() {
@@ -4241,8 +4948,9 @@ function openIncentivePopover() {
   const backdrop = document.getElementById("incentive-popover-backdrop");
   if (!popover) return;
 
-  // Refresh content
+  // Refresh content and fetch latest leaderboard data
   updateIncentiveAndMyShifts();
+  fetchLeaderboardAndGroupData(true);
 
   popover.classList.remove("hidden");
   if (backdrop) backdrop.classList.remove("hidden");
@@ -6020,7 +6728,7 @@ function renderAdminIncentivesTable() {
     if (isEditing) {
       tr.innerHTML = `
         <td class="p-2">
-          <input type="number" min="0.5" step="0.5" id="inline-incentive-hours-${item.id}" value="${item.hoursRequired ?? item.hours ?? 1}" class="w-24 text-xs p-1.5 rounded border border-slate-300 focus:ring-1 focus:ring-amber-500 focus:outline-none" />
+          <input type="number" min="1" step="1" id="inline-incentive-hours-${item.id}" value="${Math.round(item.hoursRequired ?? item.hours ?? 1)}" class="w-24 text-xs p-1.5 rounded border border-slate-300 focus:ring-1 focus:ring-amber-500 focus:outline-none" />
         </td>
         <td class="p-2">
           <input type="text" id="inline-incentive-name-${item.id}" value="${escapeHtml(item.name || item.rewardName || '')}" placeholder="Reward Name" class="w-full text-xs p-1.5 rounded border border-slate-300 focus:ring-1 focus:ring-amber-500 focus:outline-none" />
@@ -6084,7 +6792,7 @@ async function saveEditIncentive(id) {
   const nameInput = document.getElementById(`inline-incentive-name-${id}`);
   const descInput = document.getElementById(`inline-incentive-desc-${id}`);
 
-  const hours = parseFloat(hoursInput?.value);
+  const hours = Math.round(parseFloat(hoursInput?.value));
   const name = nameInput?.value?.trim() || "";
   const desc = descInput?.value?.trim() || "";
 
@@ -6116,7 +6824,7 @@ async function handleAddIncentive() {
   const nameInput = document.getElementById("admin-new-incentive-name");
   const descInput = document.getElementById("admin-new-incentive-desc");
 
-  const hours = parseFloat(hoursInput?.value);
+  const hours = Math.round(parseFloat(hoursInput?.value));
   const name = nameInput?.value?.trim() || "";
   const desc = descInput?.value?.trim() || "";
 

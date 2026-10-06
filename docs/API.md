@@ -898,15 +898,31 @@ Global festival settings document storing brand identity, manager contacts, and 
 
 ### 2. `/config/incentives`
 
-Global volunteer incentives and milestone rewards configuration document defining reward thresholds earned as volunteers accumulate shift hours and guest welcome messaging.
+Global volunteer incentives, milestone rewards, and gamification configuration document defining reward thresholds earned as volunteers accumulate shift hours, Duolingo-style progression paths, and guest welcome messaging.
 
 | Field | Type | Description |
 | :--- | :--- | :--- |
 | `welcomeTitle` | `string` | Custom greeting title displayed to unauthenticated visitors inside the floating pint glass incentive popover. |
 | `welcomeText` | `string` | Custom explanatory text displayed to unauthenticated visitors describing the festival volunteer program and how lending a hand unlocks rewards. |
-| `items` | `array` | List of configured reward milestone objects: `[{ id: string, hours: number, hoursRequired: number, name: string, rewardName: string, description: string }]`. |
+| `items` | `array` | List of configured reward milestone objects: `[{ id: string, hours: number, hoursRequired: number, name: string, rewardName: string, description: string }]`. Hours are strictly integer whole numbers. |
 | `updatedAt` | `timestamp` | Server timestamp when incentives were last updated. |
 | `updatedBy` | `string` | UID of administrator who committed the update. |
+
+#### Gamified Overdrive Architecture & Policies
+
+The client platform features an uncluttered 3-tab modal (`#incentive-popover`) accessible via the floating Pint Glass FAB:
+- **Tab 1: 👤 My Pint**: Displays personal volunteer hours, liquid fill visualizer, a Duolingo-style serpentine milestone path (`#popover-milestones-path`), and 6 dynamically evaluated achievement badges (`First Pour`, `Double Duty`, `Night Owl`, `Crew Mate`, `Pint Pioneer`, `Iron Brewer`).
+- **Tab 2: 🪵 Group Pot**: Stylized wooden cask meter displaying the volunteer's organization's share of the post-festival charity/donation group pot and internal team contributor standings.
+- **Tab 3: 🏆 Leaderboard**: Segmented competition hub with sub-view toggle:
+  - **👥 Groups (% Pot)**: The Golden Cask League featuring a 3-step podium (1st, 2nd, 3rd) and full rankings table showing each participating club's total hours and `% Pot` allocation.
+  - **🏅 Volunteers**: Festival-wide volunteer rankings table with privacy protection.
+
+#### Group Pot Allocation Formula & Rules
+Participating volunteer clubs raise funds for their group's pot proportionally to their contributed volunteer shift hours. The payout is determined post-festival using the formula:
+$$\text{Pot Share \%} = \left(\frac{\text{groupHours}}{\text{totalFestivalGroupHours}}\right) \times 100$$
+- **Eligibility**: Only groups with `includeInGroupIncentives !== false` participate in the pot and Golden Cask League.
+- **Integer Hours Enforcement**: In accordance with festival operations (whole-hour shifts only), all shift durations, cumulative volunteer hours, group hours, and milestone targets are strictly computed and rendered as positive integer whole numbers (`Math.round(...)`), with no half-hour shifts or decimal representations.
+- **Privacy Masking**: Volunteers who set their profile to `private` (`profileVisibility === "private"`) have their identity redacted in public leaderboards and team contributor lists as `🔒 Volunteer #${maskedId}` (where `maskedId` is a deterministic 2–3 digit hash). No extraneous labels, "private" tags, or warning banners are displayed. Shift managers and administrators retain full visibility in operational management views.
 
 ### 3. `/config/roles`
 
@@ -1019,7 +1035,7 @@ Collection storing inbound WhatsApp inquiries and replies sent by volunteers to 
 
 ### 8. `/groups/{groupId}`
 
-Managed volunteer groups (clubs, CAMRA branches, brewery teams). Listed in the signup and "My Profile" group dropdowns and used for Admin Panel filtering and future Group Incentives.
+Managed volunteer groups (clubs, CAMRA branches, brewery teams). Listed in the signup and "My Profile" group dropdowns and used for Admin Panel filtering, the Golden Cask League leaderboard, and Group Pot percentage allocation.
 
 - **Document ID**: Auto-generated Firestore document ID.
 - **Read Access**: **Public** (`allow read: if true;`) so the signup screen can list groups before authentication.

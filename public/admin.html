@@ -109,6 +109,10 @@
     <symbol id="icon-shield" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
     </symbol>
+    <symbol id="icon-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+      <circle cx="12" cy="7" r="4" />
+    </symbol>
     <symbol id="icon-users" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
       <circle cx="9" cy="7" r="4" />
@@ -207,6 +211,17 @@
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
       <polyline points="16 17 21 12 16 7" />
       <line x1="21" y1="12" x2="9" y2="12" />
+    </symbol>
+    <symbol id="icon-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <circle cx="12" cy="12" r="10" />
+      <polyline points="12 6 12 12 16 14" />
+    </symbol>
+    <symbol id="icon-tag" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z" />
+      <line x1="7" y1="7" x2="7.01" y2="7" />
+    </symbol>
+    <symbol id="icon-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
     </symbol>
   </svg>
 
@@ -617,31 +632,86 @@
       <!-- ==================================================================== -->
       <!-- TAB 3: SHIFTS & COVERAGE MANAGEMENT                                  -->
       <!-- ==================================================================== -->
-      <section id="panel-shifts" class="admin-panel hidden space-y-5">
-        <div class="bg-white p-5 rounded-xl border border-amber-200 shadow-sm space-y-4">
+      <section id="panel-shifts" class="admin-panel hidden space-y-4">
+        <!-- Top Nav & Day/Session Selector Card -->
+        <div class="bg-white p-4 sm:p-5 rounded-xl border border-amber-200 shadow-sm space-y-4">
+          <!-- Section Title & Global Actions -->
           <div class="flex flex-wrap justify-between items-center gap-3 pb-3 border-b border-slate-100">
             <div>
               <h2 class="text-base font-bold text-slate-800 flex items-center gap-2">
                 <svg class="w-4 h-4 text-amber-700 shrink-0"><use href="#icon-clipboard" /></svg>
                 Shift Schedule &amp; Coverage
               </h2>
-              <p class="text-xs text-slate-500">Monitor volunteer coverage across bars, areas, and sessions. Directly assign volunteers or managers.</p>
+              <p class="text-xs text-slate-500">Organise festival working shifts by Day, Session, and Area or Time slot. Review rosters and modify allocations.</p>
             </div>
             <button type="button" onclick="openCreateShiftModal()"
-              class="text-xs bg-amber-700 hover:bg-amber-800 text-white font-bold px-4 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5 min-h-[44px]">
+              class="text-xs bg-amber-700 hover:bg-amber-800 text-white font-bold px-4 py-2 rounded-lg transition shadow-sm flex items-center gap-1.5 min-h-[44px] cursor-pointer">
               <svg class="w-3.5 h-3.5"><use href="#icon-plus" /></svg> Create New Shift
             </button>
           </div>
 
-          <!-- Session Filter Selector -->
-          <div class="flex items-center gap-2 overflow-x-auto no-scrollbar py-1" id="shifts-session-filter-pills">
-            <!-- Populated via JS -->
+          <!-- Tier 1: Festival Day Navigation -->
+          <div class="space-y-1.5">
+            <div class="flex items-center justify-between text-xs px-0.5">
+              <span class="font-bold text-slate-700 flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 text-amber-800"><use href="#icon-calendar" /></svg>
+                Festival Day
+              </span>
+              <span id="admin-shifts-day-range" class="text-2xs text-slate-500 font-medium"></span>
+            </div>
+            <div class="flex space-x-2 overflow-x-auto no-scrollbar py-0.5 sm:grid sm:grid-flow-col sm:auto-cols-fr gap-2" id="admin-shifts-day-pills">
+              <!-- Dynamically populated Day buttons -->
+            </div>
           </div>
 
-          <!-- Shifts Grid -->
-          <div id="admin-shifts-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            <!-- Populated via JS -->
+          <!-- Tier 2: Session Navigation (for active day) -->
+          <div class="pt-3 border-t border-slate-100 space-y-2">
+            <div class="flex items-center justify-between text-xs px-0.5">
+              <span class="font-bold text-slate-700 flex items-center gap-1.5" id="admin-shifts-session-header-label">
+                Sessions for Selected Day:
+              </span>
+            </div>
+            <!-- Session chips: "All Sessions" + individual session chips -->
+            <div class="flex items-center gap-2 overflow-x-auto no-scrollbar py-1" id="admin-shifts-session-chips">
+              <!-- Dynamically populated Session chips -->
+            </div>
           </div>
+        </div>
+
+        <!-- Toolbar: Live Metrics Summary + Area/Time Grouping Selector -->
+        <div class="bg-white p-3 rounded-xl border border-amber-200 shadow-2xs flex flex-wrap items-center justify-between gap-3" id="admin-shifts-toolbar">
+          <!-- Left: Live Summary Metrics -->
+          <div class="flex items-center gap-1.5 text-xs text-slate-600 font-semibold min-w-0" id="admin-shifts-metrics-summary">
+            <!-- Dynamically populated: e.g. "12 Shifts • 34/40 Volunteers (85%) • 6 Open Spots" -->
+          </div>
+
+          <!-- Right: Grouping Selector (Area vs Time) -->
+          <div class="flex items-center gap-2 ml-auto">
+            <span class="text-2xs font-bold text-slate-500 uppercase tracking-wider hidden sm:inline">Group By:</span>
+            <div class="inline-flex p-0.5 rounded-lg bg-amber-100/70 border border-amber-200/80 shadow-2xs" role="tablist" aria-label="Shift grouping mode">
+              <button type="button" id="admin-btn-group-area" onclick="setAdminShiftGroupingMode('area')"
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-all duration-150 flex items-center gap-1.5 cursor-pointer touch-manipulation bg-amber-800 text-white shadow-xs"
+                title="Group shifts by Area / Role">
+                <svg class="w-3.5 h-3.5"><use href="#icon-tag" /></svg>
+                <span>Area</span>
+              </button>
+              <button type="button" id="admin-btn-group-time" onclick="setAdminShiftGroupingMode('time')"
+                class="px-3 py-1.5 text-xs font-bold rounded-md transition-all duration-150 flex items-center gap-1.5 cursor-pointer touch-manipulation text-amber-950 hover:bg-amber-50"
+                title="Group shifts by Time window">
+                <svg class="w-3.5 h-3.5"><use href="#icon-clock" /></svg>
+                <span>Time</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Hidden legacy anchors for fallback safety -->
+        <div id="shifts-session-filter-pills" class="hidden"></div>
+        <div id="admin-shifts-grid" class="hidden"></div>
+
+        <!-- Shifts Container (Grouped by Area OR Time) -->
+        <div id="admin-shifts-grouped-container" class="space-y-4">
+          <!-- Dynamically populated grouped sections -->
         </div>
       </section>
 
@@ -1624,6 +1694,244 @@
           <span id="btn-confirm-dispatch-text">Confirm &amp; Dispatch Now</span>
         </button>
       </div>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- MODAL: REVIEW SHIFT ROSTER & VOLUNTEER ALLOCATIONS                   -->
+  <!-- ==================================================================== -->
+  <div id="modal-shift-roster" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 hidden">
+    <div class="bg-white border border-amber-200 rounded-xl max-w-2xl w-full p-5 shadow-2xl space-y-4 max-h-[90vh] flex flex-col">
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div>
+          <h3 class="text-sm font-bold text-slate-800 flex items-center gap-2">
+            <svg class="w-4 h-4 text-amber-700"><use href="#icon-users" /></svg>
+            <span id="roster-modal-title">Shift Roster &amp; Allocations</span>
+          </h3>
+          <p id="roster-modal-subtitle" class="text-2xs text-slate-500 mt-0.5 font-mono"></p>
+        </div>
+        <button type="button" onclick="closeShiftRosterModal()" class="text-slate-400 hover:text-slate-600 p-1 rounded-lg cursor-pointer">
+          <svg class="w-4 h-4"><use href="#icon-x" /></svg>
+        </button>
+      </div>
+
+      <div id="roster-modal-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+      <!-- Shift Summary & Metrics Bar -->
+      <div class="bg-stone-50 p-3.5 rounded-xl border border-slate-200 space-y-2.5">
+        <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div class="flex items-center gap-2">
+            <span class="text-2xs font-bold text-slate-500 uppercase tracking-wider">Manager:</span>
+            <span id="roster-modal-manager-name" class="font-bold text-slate-800">Unassigned</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-2xs font-bold text-slate-500 uppercase tracking-wider">Capacity:</span>
+            <span id="roster-modal-capacity-badge" class="px-2 py-0.5 rounded-full text-2xs font-bold tabular-nums"></span>
+          </div>
+        </div>
+        <!-- Fill Progress Bar -->
+        <div class="w-full bg-slate-200 h-2 rounded-full overflow-hidden">
+          <div id="roster-modal-progress-bar" class="h-full bg-amber-600 transition-all duration-300"></div>
+        </div>
+      </div>
+
+      <!-- Assigned Volunteers List Header -->
+      <div class="flex items-center justify-between text-2xs text-slate-500 font-bold uppercase tracking-wider px-1">
+        <span id="roster-modal-volunteers-count">Assigned Volunteers (0)</span>
+        <span>Allocations &amp; Actions</span>
+      </div>
+
+      <!-- Scrollable list of volunteers & open slots -->
+      <div id="roster-modal-volunteers-list" class="overflow-y-auto divide-y divide-slate-100 flex-grow min-h-[8rem] max-h-[45vh] pr-0.5 space-y-1">
+        <!-- Dynamically populated via JS -->
+      </div>
+
+      <!-- Modal Footer -->
+      <div class="flex flex-wrap justify-between items-center gap-2 pt-3 border-t border-slate-100">
+        <button type="button" id="roster-modal-btn-edit-shift"
+          class="px-3 py-2 rounded-lg text-xs font-semibold text-slate-700 bg-white border border-slate-300 hover:bg-stone-50 transition min-h-[40px] flex items-center gap-1.5 cursor-pointer">
+          <svg class="w-3.5 h-3.5"><use href="#icon-edit" /></svg> Edit Shift Details
+        </button>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="closeShiftRosterModal()"
+            class="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 transition min-h-[40px] cursor-pointer">
+            Close
+          </button>
+          <button type="button" id="roster-modal-btn-assign-vol"
+            class="px-4 py-2 rounded-lg text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white transition shadow-xs min-h-[40px] flex items-center gap-1.5 cursor-pointer">
+            <svg class="w-3.5 h-3.5"><use href="#icon-user-plus" /></svg> + Assign Volunteer
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================================================================== -->
+  <!-- MODAL: ADMIN EDIT USER PROFILE                                       -->
+  <!-- ==================================================================== -->
+  <div id="modal-admin-edit-user" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-xs p-4 hidden">
+    <div class="bg-white border border-amber-200 rounded-xl max-w-lg w-full p-5 shadow-2xl space-y-4 max-h-[92vh] flex flex-col">
+      <!-- Modal Header -->
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+        <div class="flex items-center gap-2">
+          <div class="w-8 h-8 rounded-lg bg-amber-100 text-amber-900 flex items-center justify-center border border-amber-300">
+            <svg class="w-4 h-4"><use href="#icon-user" /></svg>
+          </div>
+          <div>
+            <h3 class="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+              <span>Edit Crew Profile</span>
+              <span id="admin-edit-user-badge-role" class="px-2 py-0.5 rounded-full text-2xs font-bold uppercase tracking-wider bg-stone-100 text-slate-700"></span>
+            </h3>
+            <p id="admin-edit-user-subtitle" class="text-2xs text-slate-500 font-mono">Update volunteer contact information and preferences</p>
+          </div>
+        </div>
+        <button type="button" onclick="closeAdminEditUserModal()" aria-label="Close"
+          class="text-slate-400 hover:text-slate-600 p-1.5 rounded-lg hover:bg-slate-100 transition cursor-pointer">
+          <svg class="w-4 h-4"><use href="#icon-x" /></svg>
+        </button>
+      </div>
+
+      <!-- Alert Container -->
+      <div id="admin-edit-user-alert" class="hidden p-3 rounded-lg text-xs"></div>
+
+      <!-- Form Container (Scrollable) -->
+      <form id="form-admin-edit-user" onsubmit="handleAdminEditUserSubmit(event)" class="space-y-4 overflow-y-auto pr-1 flex-grow">
+        <input type="hidden" id="admin-edit-user-uid" value="">
+
+        <!-- User Quick Card / Summary Header -->
+        <div class="bg-stone-50 p-3.5 rounded-xl border border-slate-200 flex items-center justify-between gap-3">
+          <div class="flex items-center space-x-3 min-w-0">
+            <div id="admin-edit-user-avatar-preview" class="w-10 h-10 rounded-full bg-amber-200 text-amber-950 font-bold flex items-center justify-center text-sm shrink-0 border border-amber-300 shadow-2xs overflow-hidden">
+              <!-- Populated via JS -->
+            </div>
+            <div class="min-w-0">
+              <p id="admin-edit-user-card-name" class="font-bold text-slate-800 text-xs truncate"></p>
+              <p id="admin-edit-user-card-uid" class="text-2xs text-slate-500 font-mono truncate"></p>
+            </div>
+          </div>
+          <div class="text-right shrink-0">
+            <span id="admin-edit-user-card-status" class="px-2 py-0.5 rounded-full text-2xs font-bold bg-emerald-50 text-emerald-800 border border-emerald-300">Active</span>
+            <p id="admin-edit-user-card-shifts" class="text-2xs text-slate-500 mt-1 tabular-nums font-semibold">0 shifts</p>
+          </div>
+        </div>
+
+        <!-- Section 1: Core Contact Information -->
+        <div class="space-y-3">
+          <h4 class="text-2xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+            <svg class="w-3 h-3 text-amber-700"><use href="#icon-user" /></svg>
+            Contact Details
+          </h4>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label class="block text-2xs font-bold text-slate-700 mb-1" for="admin-edit-user-fullname">
+                Full Name <span class="text-rose-500">*</span>
+              </label>
+              <input type="text" id="admin-edit-user-fullname" required placeholder="e.g. Alex Morgan"
+                class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+
+            <div>
+              <label class="block text-2xs font-bold text-slate-700 mb-1" for="admin-edit-user-phone">
+                Contact Phone Number
+              </label>
+              <input type="tel" id="admin-edit-user-phone" placeholder="e.g. +44 7700 900123"
+                class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 font-mono focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            </div>
+          </div>
+
+          <div>
+            <label class="block text-2xs font-bold text-slate-700 mb-1" for="admin-edit-user-email">
+              Email Address <span class="text-rose-500">*</span>
+            </label>
+            <input type="email" id="admin-edit-user-email" required placeholder="e.g. alex@example.com"
+              class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 font-mono focus:outline-none focus:ring-2 focus:ring-amber-500" />
+            <p class="text-2xs text-slate-500 mt-1">
+              Updating email synchronizes the user's Firebase Authentication login credential.
+            </p>
+          </div>
+        </div>
+
+        <!-- Section 2: Group & Organization -->
+        <div class="space-y-3 pt-3 border-t border-slate-100">
+          <h4 class="text-2xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+            <svg class="w-3 h-3 text-amber-700"><use href="#icon-users" /></svg>
+            Volunteer Group / Club Affiliation
+          </h4>
+
+          <div>
+            <label class="block text-2xs font-bold text-slate-700 mb-1" for="admin-edit-user-group-select">
+              Managed Group
+            </label>
+            <select id="admin-edit-user-group-select" onchange="handleAdminEditUserGroupSelect(this.value)"
+              class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+              <option value="">No group</option>
+              <!-- Populated dynamically via JS -->
+            </select>
+          </div>
+
+          <div id="admin-edit-user-custom-group-container" class="hidden">
+            <label class="block text-2xs font-bold text-slate-700 mb-1" for="admin-edit-user-custom-group">
+              Custom Group / Club Name
+            </label>
+            <input type="text" id="admin-edit-user-custom-group" placeholder="e.g. Local Brewery Society"
+              class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-amber-500" />
+          </div>
+        </div>
+
+        <!-- Section 3: Privacy & Notifications -->
+        <div class="space-y-3 pt-3 border-t border-slate-100">
+          <h4 class="text-2xs font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+            <svg class="w-3 h-3 text-amber-700"><use href="#icon-shield" /></svg>
+            Privacy &amp; Notification Preferences
+          </h4>
+
+          <div>
+            <label class="block text-2xs font-bold text-slate-700 mb-1" for="admin-edit-user-visibility">
+              Directory Profile Visibility
+            </label>
+            <select id="admin-edit-user-visibility"
+              class="w-full text-xs px-3 py-2 rounded-lg border border-slate-300 bg-white focus:outline-none focus:ring-2 focus:ring-amber-500">
+              <option value="public">Public — Visible to all volunteers in crew directory</option>
+              <option value="private">Private — Hidden from volunteers (Visible to Managers &amp; Admins only)</option>
+            </select>
+          </div>
+
+          <div class="space-y-2 pt-1">
+            <label class="flex items-start gap-2.5 text-xs text-slate-700 cursor-pointer">
+              <input type="checkbox" id="admin-edit-user-notif-whatsapp"
+                class="mt-0.5 rounded border-slate-300 text-amber-700 focus:ring-amber-500" />
+              <div>
+                <span class="font-bold text-slate-800">WhatsApp Broadcasts &amp; Alerts</span>
+                <p class="text-2xs text-slate-500">Receive shift reminders and announcements on mobile WhatsApp</p>
+              </div>
+            </label>
+
+            <label class="flex items-start gap-2.5 text-xs text-slate-700 cursor-pointer">
+              <input type="checkbox" id="admin-edit-user-notif-email"
+                class="mt-0.5 rounded border-slate-300 text-amber-700 focus:ring-amber-500" />
+              <div>
+                <span class="font-bold text-slate-800">Email Notifications</span>
+                <p class="text-2xs text-slate-500">Receive shift confirmations, updates, and festival news via email</p>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Modal Footer Buttons inside Form -->
+        <div class="flex justify-end items-center gap-2 pt-3 border-t border-slate-100">
+          <button type="button" onclick="closeAdminEditUserModal()"
+            class="px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:bg-slate-100 transition min-h-[40px] cursor-pointer">
+            Cancel
+          </button>
+          <button type="submit" id="btn-submit-admin-edit-user"
+            class="px-4 py-2 rounded-lg text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white transition shadow-xs min-h-[40px] flex items-center gap-1.5 cursor-pointer">
+            <svg class="w-3.5 h-3.5"><use href="#icon-save" /></svg>
+            <span id="btn-submit-admin-edit-user-text">Save Changes</span>
+          </button>
+        </div>
+      </form>
     </div>
   </div>
 

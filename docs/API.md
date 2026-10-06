@@ -28,6 +28,7 @@ This document provides a comprehensive technical reference for all backend Cloud
   - [16. `mergeGroups`](#16-mergegroups)
   - [17. `deleteGroup`](#17-deletegroup)
   - [18. `setUserGroup`](#18-setusergroup)
+  - [19. `adminUpdateUserProfile`](#19-adminupdateuserprofile)
 - [HTTP Webhook Endpoints](#http-webhook-endpoints)
   - [1. `twilioWhatsAppWebhook`](#1-twiliowhatsappwebhook)
 - [Firestore Background Triggers](#firestore-background-triggers)
@@ -765,6 +766,59 @@ Assigns an individual user to a group, or clears their group.
 ```
 
 **Errors**: `invalid-argument` (missing `targetUserId`, or `groupId` neither a non-empty string nor `null`), `not-found` (user or group missing).
+
+---
+
+### 19. `adminUpdateUserProfile`
+
+Allows festival administrators to edit an existing user's core profile information, including their full name, email address, contact phone number, volunteer group/club affiliation, profile visibility, and notification preferences. Automatically synchronizes display name and email address changes with Firebase Authentication, blocks previously blacklisted emails, and updates manager contact details across all shifts where this user is assigned as Shift Manager.
+
+- **Trigger**: `onCall`
+- **Permissions**: Administrator only (`role === "admin"`, account not disabled).
+
+#### Request Parameters (`data`)
+
+| Field | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `targetUserId` | `string` | **Yes** | Target user's Firestore document ID / Firebase Auth UID in `/users`. |
+| `fullName` | `string` | No | New full display name (must be a non-empty string if provided). |
+| `email` | `string` | No | New email address (validated format, lowercased, checked against `/blockedEmails`). |
+| `phoneNumber` | `string` | No | Contact phone number (automatically normalized to E.164 if valid format provided). |
+| `groupOrClub` | `string` | No | Volunteer group or club name. |
+| `groupId` | `string` \| `null` | No | Managed group ID from `/groups` collection, or `null` for none. |
+| `profileVisibility` | `string` | No | Profile directory visibility: `"public"` or `"private"`. |
+| `whatsappNotifications` | `boolean` | No | Preference for WhatsApp shift reminders and festival broadcasts. |
+| `emailNotifications` | `boolean` | No | Preference for email notifications and announcements. |
+
+#### Response (`result`)
+
+```json
+{
+  "success": true,
+  "userId": "user123",
+  "updates": {
+    "fullName": "Jane Doe",
+    "email": "jane.doe@example.com",
+    "phoneNumber": "+447700900077"
+  }
+}
+```
+
+#### Business Logic & Safeguards
+1. Verifies caller is authenticated and has `role === "admin"`.
+2. Validates caller account is not disabled.
+3. Validates `targetUserId` is provided and document exists in `/users/{targetUserId}`.
+4. If `fullName` is provided, ensures non-empty string and stages update for Firestore and Firebase Auth `displayName`.
+5. If `email` is provided:
+   - Validates regex format and normalizes to lower case.
+   - Queries `/blockedEmails/{normalizedEmail}` to safeguard against assigning a blacklisted email (`failed-precondition`).
+   - Stages update for Firestore and Firebase Auth `email`.
+6. If `phoneNumber` is provided, normalizes via `normalizeE164`.
+7. Updates Firebase Authentication account via `admin.auth().updateUser(targetUserId, authUpdates)`:
+   - Throws `already-exists` if email is already in use by another account (`auth/email-already-exists`).
+   - Throws `invalid-argument` if email format is rejected by Firebase Auth (`auth/invalid-email`).
+8. Updates `/users/{targetUserId}` with `updatedAt: serverTimestamp()` and `updatedBy: request.auth.uid`.
+9. If `fullName` or `email` changed, queries all shifts where `managerId == targetUserId` and batch-updates `managerName` and `managerEmail` on those shift documents to keep shift roster data consistent.
 
 ---
 

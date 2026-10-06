@@ -2474,3 +2474,160 @@ exports.setUserGroup = onCall(async (request) => {
   };
 });
 
+/**
+ * Admin: Update User Profile
+ * (Name, Email, Phone, Group, Visibility, Notifications)
+ */
+exports.adminUpdateUserProfile = onCall(async (request) => {
+  await assertActiveAdmin(request);
+  const {
+    targetUserId,
+    fullName,
+    email,
+    phoneNumber,
+    groupOrClub,
+    groupId,
+    profileVisibility,
+    whatsappNotifications,
+    emailNotifications,
+  } = request.data || {};
+
+  if (!targetUserId || typeof targetUserId !== "string") {
+    throw new HttpsError("invalid-argument", "targetUserId is required.");
+  }
+
+  const userRef = db.collection("users").doc(targetUserId);
+  const userDoc = await userRef.get();
+  if (!userDoc.exists) {
+    throw new HttpsError("not-found", "Target user does not exist.");
+  }
+
+  const currentData = userDoc.data();
+  const updates = {
+    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+    updatedBy: request.auth.uid,
+  };
+
+  const authUpdates = {};
+
+  if (fullName !== undefined) {
+    if (typeof fullName !== "string" || !fullName.trim()) {
+      throw new HttpsError("invalid-argument", "Full name cannot be empty.");
+    }
+    updates.fullName = fullName.trim();
+    authUpdates.displayName = fullName.trim();
+  }
+
+  if (email !== undefined) {
+    if (typeof email !== "string" || !email.trim()) {
+      throw new HttpsError("invalid-argument", "Email cannot be empty.");
+    }
+    const normalizedEmail = email.trim().toLowerCase();
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(normalizedEmail)) {
+      throw new HttpsError(
+          "invalid-argument",
+          "Invalid email address format.",
+      );
+    }
+
+    const blockedDoc = await db
+        .collection("blockedEmails")
+        .doc(normalizedEmail)
+        .get();
+    if (blockedDoc.exists) {
+      throw new HttpsError(
+          "failed-precondition",
+          "This email address is currently blocked from registration.",
+      );
+    }
+
+    updates.email = normalizedEmail;
+    authUpdates.email = normalizedEmail;
+  }
+
+  if (phoneNumber !== undefined) {
+    if (phoneNumber && typeof phoneNumber === "string") {
+      const normalizedPhone = normalizeE164(phoneNumber);
+      updates.phoneNumber = normalizedPhone || phoneNumber.trim();
+    } else {
+      updates.phoneNumber = "";
+    }
+  }
+
+  if (groupOrClub !== undefined) {
+    updates.groupOrClub =
+      typeof groupOrClub === "string" ? groupOrClub.trim() : "";
+  }
+  if (groupId !== undefined) {
+    updates.groupId = groupId || null;
+  }
+  if (profileVisibility !== undefined) {
+    if (["public", "private"].includes(profileVisibility)) {
+      updates.profileVisibility = profileVisibility;
+    }
+  }
+  if (whatsappNotifications !== undefined &&
+      typeof whatsappNotifications === "boolean") {
+    updates.whatsappNotifications = whatsappNotifications;
+  }
+  if (emailNotifications !== undefined &&
+      typeof emailNotifications === "boolean") {
+    updates.emailNotifications = emailNotifications;
+  }
+
+  // Update Firebase Authentication
+  if (Object.keys(authUpdates).length > 0) {
+    try {
+      await admin.auth().updateUser(targetUserId, authUpdates);
+    } catch (authErr) {
+      if (authErr.code === "auth/email-already-exists") {
+        throw new HttpsError(
+            "already-exists",
+            "This email address is already in use by another account.",
+        );
+      }
+      if (authErr.code === "auth/invalid-email") {
+        throw new HttpsError(
+            "invalid-argument",
+            "The email address is invalid.",
+        );
+      }
+      console.warn("Auth updateUser warning:", authErr.message);
+    }
+  }
+
+  await userRef.update(updates);
+
+  // If fullName or email changed, update shifts where user is manager
+  if (updates.fullName || updates.email) {
+    const managerShifts = await db
+        .collection("shifts")
+        .where("managerId", "==", targetUserId)
+        .get();
+    if (!managerShifts.empty) {
+      const batch = db.batch();
+      managerShifts.docs.forEach((doc) => {
+        const shiftUpdates = {};
+        if (updates.fullName) shiftUpdates.managerName = updates.fullName;
+        if (updates.email) shiftUpdates.managerEmail = updates.email;
+        batch.update(doc.ref, shiftUpdates);
+      });
+      await batch.commit();
+    }
+  }
+
+  return {
+    success: true,
+    userId: targetUserId,
+    updates: {
+      fullName: updates.fullName || currentData.fullName,
+      email: updates.email || currentData.email,
+      phoneNumber: updates.phoneNumber !== undefined ?
+        updates.phoneNumber :
+        currentData.phoneNumber,
+    },
+  };
+});
+
+

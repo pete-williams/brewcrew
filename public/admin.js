@@ -48,8 +48,18 @@ let crewGroupFilter = "ALL"; // "ALL" | "NONE" | groupId
 let allGroupsMap = new Map();
 let editingGroupId = null;
 
-// Shift Filter State
-let shiftSessionFilter = "ALL";
+// Shift Filter & Organization State (Day -> Session -> Area OR Time)
+let shiftSelectedDayDate = "";
+let shiftSelectedSessionId = "ALL";
+let shiftGroupingMode = (function() {
+  try {
+    return localStorage.getItem("brewcrew_admin_shift_grouping") || "area";
+  } catch (e) {
+    return "area";
+  }
+})();
+let activeRosterShiftId = null;
+let shiftSessionFilter = "ALL"; // legacy compatibility fallback
 
 // Auth Gate Listener
 auth.onAuthStateChanged(async (user) => {
@@ -171,7 +181,11 @@ function initializeRealtimeSubscriptions() {
     currentShiftsDocs = snapshot.docs;
     const badgeEl = document.getElementById("badge-shifts-count");
     if (badgeEl) badgeEl.textContent = snapshot.size;
+    renderShiftsNavigation();
     renderShiftsPanel();
+    if (activeRosterShiftId) {
+      renderRosterModalContent(activeRosterShiftId);
+    }
     renderSessionsTable();
     renderRolesTable();
   }, (err) => console.warn("Shifts subscription error:", err));
@@ -180,7 +194,11 @@ function initializeRealtimeSubscriptions() {
   db.collection("registrations").where("status", "==", "confirmed").onSnapshot((snapshot) => {
     allRegistrationsDocs = snapshot.docs;
     renderCrewDirectory();
+    renderShiftsNavigation();
     renderShiftsPanel();
+    if (activeRosterShiftId) {
+      renderRosterModalContent(activeRosterShiftId);
+    }
   }, (err) => console.warn("Registrations subscription error:", err));
 
   // 4. Festival Configuration
@@ -193,7 +211,8 @@ function initializeRealtimeSubscriptions() {
       }
       populateFestivalConfigForm();
       renderSessionsTable();
-      renderShiftsSessionFilters();
+      renderShiftsNavigation();
+      renderShiftsPanel();
     }
   }, (err) => console.warn("Festival config subscription error:", err));
 
@@ -261,6 +280,11 @@ function switchAdminTab(tabName) {
 
   if (window.location.hash !== `#${tabName}`) {
     window.location.hash = `#${tabName}`;
+  }
+
+  if (tabName === "shifts") {
+    renderShiftsNavigation();
+    renderShiftsPanel();
   }
 
   if (tabName === "broadcast") {
@@ -532,20 +556,25 @@ function renderCrewDirectory() {
     tr.innerHTML = `
       <td class="p-3">
         <div class="flex items-center space-x-2.5">
-          ${u.photoURL ? `
-            <img src="${escapeHtml(u.photoURL)}" class="w-8 h-8 rounded-full object-cover shrink-0 border border-amber-300 shadow-2xs" alt="Avatar" />
-          ` : `
-            <div class="w-8 h-8 rounded-full bg-amber-200 text-amber-900 font-bold flex items-center justify-center text-xs shrink-0 border border-amber-300">
-              ${escapeHtml((u.fullName || u.email || "U")[0].toUpperCase())}
+          <button type="button" onclick="openAdminEditUserModal('${u.id}')"
+            title="Click to view & edit ${escapeJs(u.fullName || 'User')}'s profile"
+            class="group/user flex items-center space-x-2.5 text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 rounded-lg p-1 -m-1 hover:bg-amber-100/60 transition">
+            ${u.photoURL ? `
+              <img src="${escapeHtml(u.photoURL)}" class="w-8 h-8 rounded-full object-cover shrink-0 border border-amber-300 shadow-2xs group-hover/user:ring-2 group-hover/user:ring-amber-500 transition" alt="Avatar" />
+            ` : `
+              <div class="w-8 h-8 rounded-full bg-amber-200 text-amber-900 font-bold flex items-center justify-center text-xs shrink-0 border border-amber-300 group-hover/user:ring-2 group-hover/user:ring-amber-500 transition">
+                ${escapeHtml((u.fullName || u.email || "U")[0].toUpperCase())}
+              </div>
+            `}
+            <div>
+              <p class="font-bold text-slate-800 text-xs flex items-center gap-1.5 group-hover/user:text-amber-900 group-hover/user:underline">
+                <span>${escapeHtml(u.fullName || "Volunteer")}</span>
+                <svg class="w-3 h-3 text-slate-400 group-hover/user:text-amber-700 opacity-0 group-hover/user:opacity-100 transition shrink-0"><use href="#icon-edit" /></svg>
+                ${isSelf ? '<span class="text-2xs text-amber-800 font-bold bg-amber-100 px-1 py-0.2 rounded no-underline">(You)</span>' : ''}
+              </p>
+              <div class="mt-0.5" onclick="event.stopPropagation()">${renderUserGroupBadge(u)}</div>
             </div>
-          `}
-          <div>
-            <p class="font-bold text-slate-800 text-xs flex items-center gap-1.5">
-              ${escapeHtml(u.fullName || "Volunteer")}
-              ${isSelf ? '<span class="text-2xs text-amber-800 font-bold bg-amber-100 px-1 py-0.2 rounded">(You)</span>' : ''}
-            </p>
-            <div class="mt-0.5">${renderUserGroupBadge(u)}</div>
-          </div>
+          </button>
         </div>
       </td>
       <td class="p-3 text-slate-600 font-mono text-2xs">${escapeHtml(u.email || "—")}</td>
@@ -570,20 +599,26 @@ function renderCrewDirectory() {
       <td class="p-3 text-center">${statusBadge}</td>
       <td class="p-3 text-right">
         <div class="flex items-center justify-end gap-1.5">
+          <button type="button" onclick="openAdminEditUserModal('${u.id}')"
+            title="Edit ${escapeJs(u.fullName || 'User')}'s profile"
+            class="px-2 py-1 rounded-md text-2xs font-bold bg-stone-50 hover:bg-stone-100 text-slate-700 border border-slate-300 transition flex items-center gap-1 cursor-pointer">
+            <svg class="w-3 h-3 text-slate-500"><use href="#icon-edit" /></svg>
+            Edit
+          </button>
           <button type="button" onclick="openAssignVolunteerModal(null, '${u.id}', '${escapeJs(u.fullName || u.email)}')"
             title="Assign shift to this volunteer"
-            class="px-2 py-1 rounded-md text-2xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition">
+            class="px-2 py-1 rounded-md text-2xs font-bold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 transition cursor-pointer">
             + Assign Shift
           </button>
           ${!isSelf ? `
             <button type="button" onclick="openToggleDisableModal('${u.id}', '${escapeJs(u.fullName || u.email)}', ${Boolean(u.disabled)})"
               title="${u.disabled ? 'Re-activate account' : 'Deactivate account'}"
-              class="px-2 py-1 rounded-md text-2xs font-bold transition border ${u.disabled ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-stone-50 hover:bg-stone-100 text-slate-700 border-slate-300'}">
+              class="px-2 py-1 rounded-md text-2xs font-bold transition border cursor-pointer ${u.disabled ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-300' : 'bg-stone-50 hover:bg-stone-100 text-slate-700 border-slate-300'}">
               ${u.disabled ? 'Enable' : 'Disable'}
             </button>
             <button type="button" onclick="openDeleteBlockModal('${u.id}', '${escapeJs(u.fullName || u.email)}', '${escapeJs(u.email || '')}')"
               title="Permanently delete account, release shifts, and block email"
-              class="px-2 py-1 rounded-md text-2xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 transition">
+              class="px-2 py-1 rounded-md text-2xs font-bold bg-rose-50 hover:bg-rose-100 text-rose-800 border border-rose-300 transition cursor-pointer">
               Delete &amp; Block
             </button>
           ` : ''}
@@ -605,21 +640,25 @@ function renderCrewDirectory() {
 
     card.innerHTML = `
       <div class="flex items-center justify-between gap-2">
-        <div class="flex items-center space-x-2">
+        <button type="button" onclick="openAdminEditUserModal('${u.id}')"
+          title="Click to view & edit ${escapeJs(u.fullName || 'User')}'s profile"
+          class="group/user flex items-center space-x-2 text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 rounded-lg p-1 -m-1 hover:bg-amber-100/60 transition min-w-0">
           ${u.photoURL ? `
-            <img src="${escapeHtml(u.photoURL)}" class="w-8 h-8 rounded-full object-cover shrink-0 border border-amber-300" alt="Avatar" />
+            <img src="${escapeHtml(u.photoURL)}" class="w-8 h-8 rounded-full object-cover shrink-0 border border-amber-300 group-hover/user:ring-2 group-hover/user:ring-amber-500 transition" alt="Avatar" />
           ` : `
-            <div class="w-8 h-8 rounded-full bg-amber-200 text-amber-900 font-bold flex items-center justify-center text-xs shrink-0 border border-amber-300">
+            <div class="w-8 h-8 rounded-full bg-amber-200 text-amber-900 font-bold flex items-center justify-center text-xs shrink-0 border border-amber-300 group-hover/user:ring-2 group-hover/user:ring-amber-500 transition">
               ${escapeHtml((u.fullName || u.email || "U")[0].toUpperCase())}
             </div>
           `}
-          <div>
-            <p class="font-bold text-slate-800 text-xs">
-              ${escapeHtml(u.fullName || "Volunteer")} ${isSelf ? '<span class="text-2xs text-amber-800 font-bold bg-amber-100 px-1 py-0.2 rounded">(You)</span>' : ''}
+          <div class="min-w-0">
+            <p class="font-bold text-slate-800 text-xs truncate flex items-center gap-1 group-hover/user:text-amber-900 group-hover/user:underline">
+              <span class="truncate">${escapeHtml(u.fullName || "Volunteer")}</span>
+              <svg class="w-3 h-3 text-slate-400 group-hover/user:text-amber-700 opacity-60 group-hover/user:opacity-100 transition shrink-0"><use href="#icon-edit" /></svg>
+              ${isSelf ? '<span class="text-2xs text-amber-800 font-bold bg-amber-100 px-1 py-0.2 rounded shrink-0 no-underline">(You)</span>' : ''}
             </p>
-            <p class="text-2xs text-slate-500 font-mono">${escapeHtml(u.email || "No email")}</p>
+            <p class="text-2xs text-slate-500 font-mono truncate">${escapeHtml(u.email || "No email")}</p>
           </div>
-        </div>
+        </button>
         <div class="flex items-center gap-1.5 shrink-0">
           <span class="px-2 py-0.5 rounded-full text-2xs font-bold ${u.disabled ? 'bg-rose-100 text-rose-800 border border-rose-300' : 'bg-emerald-50 text-emerald-800 border border-emerald-300'}">
             ${u.disabled ? 'Disabled' : 'Active'}
@@ -651,17 +690,22 @@ function renderCrewDirectory() {
         </div>
 
         <div class="flex items-center gap-1">
+          <button type="button" onclick="openAdminEditUserModal('${u.id}')"
+            class="px-2 py-1.5 rounded-lg text-xs font-semibold bg-stone-50 hover:bg-stone-100 text-slate-700 border border-slate-300 min-h-[36px] flex items-center gap-1 cursor-pointer">
+            <svg class="w-3 h-3 text-slate-500"><use href="#icon-edit" /></svg>
+            Edit
+          </button>
           <button type="button" onclick="openAssignVolunteerModal(null, '${u.id}', '${escapeJs(u.fullName || u.email)}')"
-            class="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white min-h-[36px] shadow-2xs">
+            class="px-2.5 py-1.5 rounded-lg text-xs font-bold bg-amber-700 hover:bg-amber-800 text-white min-h-[36px] shadow-2xs cursor-pointer">
             + Assign
           </button>
           ${!isSelf ? `
             <button type="button" onclick="openToggleDisableModal('${u.id}', '${escapeJs(u.fullName || u.email)}', ${Boolean(u.disabled)})"
-              class="px-2 py-1.5 rounded-lg text-xs font-semibold border ${u.disabled ? 'bg-emerald-50 text-emerald-800 border-emerald-300' : 'bg-stone-50 text-slate-700 border-slate-300'} min-h-[36px]">
+              class="px-2 py-1.5 rounded-lg text-xs font-semibold border min-h-[36px] cursor-pointer ${u.disabled ? 'bg-emerald-50 text-emerald-800 border-emerald-300' : 'bg-stone-50 text-slate-700 border-slate-300'}">
               ${u.disabled ? 'Enable' : 'Disable'}
             </button>
             <button type="button" onclick="openDeleteBlockModal('${u.id}', '${escapeJs(u.fullName || u.email)}', '${escapeJs(u.email || '')}')"
-              class="px-2 py-1.5 rounded-lg text-xs font-bold bg-rose-50 text-rose-800 border border-rose-300 min-h-[36px]">
+              class="px-2 py-1.5 rounded-lg text-xs font-bold bg-rose-50 text-rose-800 border border-rose-300 min-h-[36px] cursor-pointer">
               Delete
             </button>
           ` : ''}
@@ -1170,6 +1214,274 @@ async function handleSetUserGroupSubmit(e) {
 }
 
 // ============================================================================
+// MODAL: ADMIN EDIT USER PROFILE
+// ============================================================================
+let editingProfileUserId = null;
+
+function openAdminEditUserModal(userId) {
+  const u = allUsersMap.get(userId);
+  if (!u) {
+    console.warn("User not found in allUsersMap:", userId);
+    return;
+  }
+
+  editingProfileUserId = userId;
+  const modal = document.getElementById("modal-admin-edit-user");
+  const alertEl = document.getElementById("admin-edit-user-alert");
+  if (!modal) return;
+
+  if (alertEl) {
+    alertEl.className = "hidden p-3 rounded-lg text-xs";
+    alertEl.textContent = "";
+  }
+
+  const role = u.role || "volunteer";
+  const roleBadgeEl = document.getElementById("admin-edit-user-badge-role");
+  if (roleBadgeEl) {
+    roleBadgeEl.textContent = role.toUpperCase();
+    roleBadgeEl.className = `px-2 py-0.5 rounded-full text-2xs font-bold uppercase tracking-wider ${
+      role === "admin" ? "bg-purple-100 text-purple-900 border border-purple-300" :
+      role === "manager" ? "bg-blue-100 text-blue-900 border border-blue-300" :
+      "bg-amber-100 text-amber-900 border border-amber-300"
+    }`;
+  }
+
+  // Summary Card
+  const avatarPreview = document.getElementById("admin-edit-user-avatar-preview");
+  if (avatarPreview) {
+    if (u.photoURL) {
+      avatarPreview.innerHTML = `<img src="${escapeHtml(u.photoURL)}" class="w-full h-full object-cover" alt="Avatar" />`;
+    } else {
+      const initial = (u.fullName || u.email || "U")[0].toUpperCase();
+      avatarPreview.innerHTML = `<span>${escapeHtml(initial)}</span>`;
+    }
+  }
+
+  const cardName = document.getElementById("admin-edit-user-card-name");
+  if (cardName) cardName.textContent = u.fullName || u.email || "Volunteer";
+
+  const cardUid = document.getElementById("admin-edit-user-card-uid");
+  if (cardUid) cardUid.textContent = `UID: ${u.id}`;
+
+  const cardStatus = document.getElementById("admin-edit-user-card-status");
+  if (cardStatus) {
+    cardStatus.textContent = u.disabled ? "Disabled" : "Active";
+    cardStatus.className = `px-2 py-0.5 rounded-full text-2xs font-bold ${
+      u.disabled ? "bg-rose-100 text-rose-800 border border-rose-300" : "bg-emerald-50 text-emerald-800 border border-emerald-300"
+    }`;
+  }
+
+  const shiftsCount = getVolunteerShiftCount(u.id);
+  const cardShifts = document.getElementById("admin-edit-user-card-shifts");
+  if (cardShifts) cardShifts.textContent = `${shiftsCount} shift${shiftsCount === 1 ? "" : "s"} allocated`;
+
+  // Form Fields
+  const uidInput = document.getElementById("admin-edit-user-uid");
+  if (uidInput) uidInput.value = u.id;
+
+  const nameInput = document.getElementById("admin-edit-user-fullname");
+  if (nameInput) nameInput.value = u.fullName || "";
+
+  const emailInput = document.getElementById("admin-edit-user-email");
+  if (emailInput) emailInput.value = u.email || "";
+
+  const phoneInput = document.getElementById("admin-edit-user-phone");
+  if (phoneInput) phoneInput.value = u.phoneNumber || "";
+
+  // Group Select
+  const groupSelect = document.getElementById("admin-edit-user-group-select");
+  const customGroupContainer = document.getElementById("admin-edit-user-custom-group-container");
+  const customGroupInput = document.getElementById("admin-edit-user-custom-group");
+
+  const resolvedGroup = resolveUserGroup(u);
+  if (groupSelect) {
+    groupSelect.innerHTML = "";
+    groupSelect.appendChild(new Option("No group", ""));
+    allGroupsMap.forEach((grp) => {
+      groupSelect.appendChild(new Option(grp.name, grp.id));
+    });
+    groupSelect.appendChild(new Option("Custom / Other...", "__CUSTOM__"));
+
+    if (resolvedGroup.id && allGroupsMap.has(resolvedGroup.id)) {
+      groupSelect.value = resolvedGroup.id;
+      if (customGroupContainer) customGroupContainer.classList.add("hidden");
+      if (customGroupInput) customGroupInput.value = "";
+    } else if (resolvedGroup.name) {
+      groupSelect.value = "__CUSTOM__";
+      if (customGroupContainer) customGroupContainer.classList.remove("hidden");
+      if (customGroupInput) customGroupInput.value = resolvedGroup.name;
+    } else {
+      groupSelect.value = "";
+      if (customGroupContainer) customGroupContainer.classList.add("hidden");
+      if (customGroupInput) customGroupInput.value = "";
+    }
+  }
+
+  // Visibility
+  const visSelect = document.getElementById("admin-edit-user-visibility");
+  if (visSelect) visSelect.value = u.profileVisibility === "private" ? "private" : "public";
+
+  // Notifications
+  const waCb = document.getElementById("admin-edit-user-notif-whatsapp");
+  if (waCb) waCb.checked = u.whatsappNotifications !== false;
+
+  const emailCb = document.getElementById("admin-edit-user-notif-email");
+  if (emailCb) emailCb.checked = u.emailNotifications !== false;
+
+  // Reset Submit Button State
+  const submitBtn = document.getElementById("btn-submit-admin-edit-user");
+  const submitText = document.getElementById("btn-submit-admin-edit-user-text");
+  if (submitBtn) submitBtn.disabled = false;
+  if (submitText) submitText.textContent = "Save Changes";
+
+  modal.classList.remove("hidden");
+}
+
+function closeAdminEditUserModal() {
+  editingProfileUserId = null;
+  const modal = document.getElementById("modal-admin-edit-user");
+  if (modal) modal.classList.add("hidden");
+}
+
+function handleAdminEditUserGroupSelect(val) {
+  const customContainer = document.getElementById("admin-edit-user-custom-group-container");
+  const customInput = document.getElementById("admin-edit-user-custom-group");
+  if (val === "__CUSTOM__") {
+    if (customContainer) customContainer.classList.remove("hidden");
+    if (customInput) customInput.focus();
+  } else {
+    if (customContainer) customContainer.classList.add("hidden");
+  }
+}
+
+async function handleAdminEditUserSubmit(e) {
+  e.preventDefault();
+  const userId = document.getElementById("admin-edit-user-uid")?.value || editingProfileUserId;
+  if (!userId) return;
+
+  const fullName = document.getElementById("admin-edit-user-fullname")?.value?.trim();
+  const email = document.getElementById("admin-edit-user-email")?.value?.trim()?.toLowerCase();
+  const phoneNumber = document.getElementById("admin-edit-user-phone")?.value?.trim();
+  const groupSelectVal = document.getElementById("admin-edit-user-group-select")?.value;
+  const customGroupVal = document.getElementById("admin-edit-user-custom-group")?.value?.trim();
+  const profileVisibility = document.getElementById("admin-edit-user-visibility")?.value || "public";
+  const whatsappNotifications = Boolean(document.getElementById("admin-edit-user-notif-whatsapp")?.checked);
+  const emailNotifications = Boolean(document.getElementById("admin-edit-user-notif-email")?.checked);
+
+  const alertEl = document.getElementById("admin-edit-user-alert");
+  const submitBtn = document.getElementById("btn-submit-admin-edit-user");
+  const submitText = document.getElementById("btn-submit-admin-edit-user-text");
+
+  if (!fullName) {
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs bg-rose-50 text-rose-800 border border-rose-200 block";
+      alertEl.textContent = "Full name cannot be empty.";
+    }
+    return;
+  }
+
+  if (!email) {
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs bg-rose-50 text-rose-800 border border-rose-200 block";
+      alertEl.textContent = "Email address cannot be empty.";
+    }
+    return;
+  }
+
+  // Resolve group
+  let groupId = null;
+  let groupOrClub = "";
+  if (groupSelectVal === "__CUSTOM__") {
+    groupOrClub = customGroupVal || "";
+    groupId = null;
+  } else if (groupSelectVal) {
+    groupId = groupSelectVal;
+    groupOrClub = allGroupsMap.get(groupSelectVal)?.name || "";
+  } else {
+    groupId = null;
+    groupOrClub = "";
+  }
+
+  if (submitBtn) submitBtn.disabled = true;
+  if (submitText) submitText.textContent = "Saving...";
+
+  try {
+    // 1. Attempt Cloud Function adminUpdateUserProfile
+    try {
+      const updateFn = functions.httpsCallable("adminUpdateUserProfile");
+      await updateFn({
+        targetUserId: userId,
+        fullName,
+        email,
+        phoneNumber,
+        groupId,
+        groupOrClub,
+        profileVisibility,
+        whatsappNotifications,
+        emailNotifications,
+      });
+    } catch (fnErr) {
+      console.warn("adminUpdateUserProfile callable returned error, attempting direct Firestore fallback if appropriate:", fnErr);
+      if (fnErr.code === "functions/not-found" || fnErr.message?.includes("not found")) {
+        // Fallback directly to Firestore update for local dev
+        await db.collection("users").doc(userId).update({
+          fullName,
+          email,
+          phoneNumber: phoneNumber || "",
+          groupId: groupId || null,
+          groupOrClub: groupOrClub || "",
+          profileVisibility,
+          whatsappNotifications,
+          emailNotifications,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedBy: currentAdminUser.uid,
+        });
+      } else {
+        throw fnErr;
+      }
+    }
+
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs bg-emerald-50 text-emerald-800 border border-emerald-200 block";
+      alertEl.textContent = `Profile for ${fullName} updated successfully!`;
+    }
+
+    // Update in-memory user map immediately for fast UI feedback
+    const existingUser = allUsersMap.get(userId) || {};
+    allUsersMap.set(userId, {
+      ...existingUser,
+      id: userId,
+      fullName,
+      email,
+      phoneNumber,
+      groupId,
+      groupOrClub,
+      profileVisibility,
+      whatsappNotifications,
+      emailNotifications,
+    });
+
+    renderCrewDirectory();
+    if (typeof activeRosterShiftId !== "undefined" && activeRosterShiftId) {
+      renderRosterModalContent(activeRosterShiftId);
+    }
+
+    setTimeout(() => {
+      closeAdminEditUserModal();
+    }, 800);
+  } catch (err) {
+    console.error("Failed to update user profile:", err);
+    if (alertEl) {
+      alertEl.className = "p-3 rounded-lg text-xs bg-rose-50 text-rose-800 border border-rose-200 block";
+      alertEl.textContent = err.message || "Failed to update profile. Please verify your permissions and input.";
+    }
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+    if (submitText) submitText.textContent = "Save Changes";
+  }
+}
+
+// ============================================================================
 // MODAL: DISABLE / RE-ENABLE ACCOUNT
 // ============================================================================
 function openToggleDisableModal(userId, userName, currentDisabled) {
@@ -1340,124 +1652,745 @@ async function handleUnblockEmail(email) {
 }
 
 // ============================================================================
-// TAB 3: SHIFTS & COVERAGE MANAGEMENT
+// TAB 3: SHIFTS & COVERAGE MANAGEMENT (Day -> Session -> Area OR Time)
 // ============================================================================
-function renderShiftsSessionFilters() {
-  const container = document.getElementById("shifts-session-filter-pills");
-  if (!container) return;
 
-  const sessions = currentFestivalConfig.sessions || [];
-  container.innerHTML = `
-    <button type="button" onclick="setShiftsSessionFilter('ALL')"
-      class="px-3 py-1.5 rounded-full text-2xs font-bold transition whitespace-nowrap ${shiftSessionFilter === 'ALL' ? 'bg-amber-700 text-white shadow-2xs' : 'bg-stone-100 text-slate-700 hover:bg-stone-200'}">
-      All Sessions
-    </button>
-  `;
-
-  sessions.forEach((sess) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.onclick = () => setShiftsSessionFilter(sess.id);
-    const isActive = shiftSessionFilter === sess.id;
-    btn.className = `px-3 py-1.5 rounded-full text-2xs font-bold transition whitespace-nowrap ${isActive ? 'bg-amber-700 text-white shadow-2xs' : 'bg-stone-100 text-slate-700 hover:bg-stone-200'}`;
-    btn.textContent = `${sess.name} (${sess.date})`;
-    container.appendChild(btn);
-  });
+function getShiftDateStr(shift) {
+  if (!shift) return "";
+  if (shift.sessionId) {
+    const session = (currentFestivalConfig.sessions || []).find((s) => s.id === shift.sessionId);
+    if (session && session.date) return session.date;
+  }
+  const ms = getTimestampMs(shift.startTime);
+  if (ms) {
+    return new Date(ms).toISOString().split("T")[0];
+  }
+  return "";
 }
 
-function setShiftsSessionFilter(sessionId) {
-  shiftSessionFilter = sessionId;
-  renderShiftsSessionFilters();
+function getUniqueFestivalDays() {
+  const datesSet = new Set();
+  (currentFestivalConfig.sessions || []).forEach((s) => {
+    if (s.date && s.date.trim()) datesSet.add(s.date.trim());
+  });
+  currentShiftsDocs.forEach((d) => {
+    const dStr = getShiftDateStr(d.data());
+    if (dStr) datesSet.add(dStr);
+  });
+  const sorted = Array.from(datesSet).sort();
+  return sorted;
+}
+
+function getDayInfoFromDateStr(dateStr) {
+  if (!dateStr || typeof dateStr !== "string") {
+    return { dateStr: "", label: "Day", dayNum: "-", month: "", displayDate: "Date TBD", fullName: "Festival Day" };
+  }
+  const parts = dateStr.split("-");
+  if (parts.length === 3) {
+    const year = parseInt(parts[0], 10);
+    const month = parseInt(parts[1], 10) - 1;
+    const day = parseInt(parts[2], 10);
+    if (!isNaN(year) && !isNaN(month) && !isNaN(day)) {
+      const d = new Date(year, month, day);
+      if (!isNaN(d.getTime())) {
+        const label = d.toLocaleDateString([], { weekday: "short" });
+        const dayNum = d.toLocaleDateString([], { day: "numeric" });
+        const monthStr = d.toLocaleDateString([], { month: "short" });
+        const fullName = d.toLocaleDateString([], { weekday: "long", day: "numeric", month: "long" });
+        return {
+          dateStr,
+          label,
+          dayNum,
+          month: monthStr,
+          displayDate: `${dayNum} ${monthStr}`,
+          fullName
+        };
+      }
+    }
+  }
+  return { dateStr, label: "Day", dayNum: dateStr, month: "", displayDate: dateStr, fullName: dateStr };
+}
+
+function setAdminShiftDay(dateStr) {
+  shiftSelectedDayDate = dateStr;
+  shiftSelectedSessionId = "ALL";
+  shiftSessionFilter = "ALL";
+  renderShiftsNavigation();
   renderShiftsPanel();
 }
 
+function setAdminShiftSession(sessionId) {
+  shiftSelectedSessionId = sessionId;
+  shiftSessionFilter = sessionId;
+  renderShiftsNavigation();
+  renderShiftsPanel();
+}
+
+function setAdminShiftGroupingMode(mode) {
+  if (shiftGroupingMode === mode) return;
+  shiftGroupingMode = mode;
+  try {
+    localStorage.setItem("brewcrew_admin_shift_grouping", mode);
+  } catch (e) {
+    console.warn("Could not save admin shift grouping preference", e);
+  }
+  updateAdminShiftGroupingButtons();
+  renderShiftsPanel();
+}
+
+function updateAdminShiftGroupingButtons() {
+  const btnArea = document.getElementById("admin-btn-group-area");
+  const btnTime = document.getElementById("admin-btn-group-time");
+  if (!btnArea || !btnTime) return;
+
+  if (shiftGroupingMode === "area") {
+    btnArea.className = "px-3 py-1.5 text-xs font-bold rounded-md transition-all duration-150 flex items-center gap-1.5 cursor-pointer touch-manipulation bg-amber-800 text-white shadow-xs";
+    btnTime.className = "px-3 py-1.5 text-xs font-bold rounded-md transition-all duration-150 flex items-center gap-1.5 cursor-pointer touch-manipulation text-amber-950 hover:bg-amber-50";
+  } else {
+    btnTime.className = "px-3 py-1.5 text-xs font-bold rounded-md transition-all duration-150 flex items-center gap-1.5 cursor-pointer touch-manipulation bg-amber-800 text-white shadow-xs";
+    btnArea.className = "px-3 py-1.5 text-xs font-bold rounded-md transition-all duration-150 flex items-center gap-1.5 cursor-pointer touch-manipulation text-amber-950 hover:bg-amber-50";
+  }
+}
+
+function renderShiftsNavigation() {
+  const dayPillsContainer = document.getElementById("admin-shifts-day-pills");
+  const sessionChipsContainer = document.getElementById("admin-shifts-session-chips");
+  const dayRangeEl = document.getElementById("admin-shifts-day-range");
+  const sessionHeaderLabel = document.getElementById("admin-shifts-session-header-label");
+
+  const uniqueDays = getUniqueFestivalDays();
+  const sessions = currentFestivalConfig.sessions || [];
+
+  // Default day if not selected or invalid
+  if (!shiftSelectedDayDate || !uniqueDays.includes(shiftSelectedDayDate)) {
+    shiftSelectedDayDate = uniqueDays[0] || "";
+  }
+
+  // Update Day Range Header
+  if (dayRangeEl) {
+    if (uniqueDays.length === 0) {
+      dayRangeEl.textContent = "No festival days scheduled";
+    } else if (uniqueDays.length === 1) {
+      dayRangeEl.textContent = getDayInfoFromDateStr(uniqueDays[0]).fullName;
+    } else {
+      const first = getDayInfoFromDateStr(uniqueDays[0]);
+      const last = getDayInfoFromDateStr(uniqueDays[uniqueDays.length - 1]);
+      dayRangeEl.textContent = `${first.displayDate} – ${last.displayDate}`;
+    }
+  }
+
+  // 1. Render Day Navigation Pills
+  if (dayPillsContainer) {
+    dayPillsContainer.innerHTML = "";
+    if (uniqueDays.length === 0) {
+      dayPillsContainer.innerHTML = `<p class="text-xs text-slate-400 italic py-2">No festival sessions configured yet. Add sessions in the Sessions & Brand tab.</p>`;
+    } else {
+      uniqueDays.forEach((dateStr) => {
+        const isSelected = dateStr === shiftSelectedDayDate;
+        const dayInfo = getDayInfoFromDateStr(dateStr);
+        const dayShifts = currentShiftsDocs.filter((d) => getShiftDateStr(d.data()) === dateStr);
+
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.onclick = () => setAdminShiftDay(dateStr);
+        btn.className = `py-2 px-3 rounded-xl text-center flex flex-col items-center justify-center transition-all duration-150 border shrink-0 min-w-[72px] sm:min-w-0 min-h-[50px] cursor-pointer touch-manipulation active:scale-95 ${
+          isSelected
+            ? "bg-amber-800 text-white border-amber-950 shadow-sm"
+            : "bg-stone-50 text-slate-800 border-amber-200/80 hover:bg-amber-50 hover:border-amber-300"
+        }`;
+        btn.innerHTML = `
+          <span class="text-2xs font-bold uppercase tracking-wider ${isSelected ? 'text-amber-300' : 'text-slate-500'}">${escapeHtml(dayInfo.label)}</span>
+          <span class="text-base font-black leading-tight tabular-nums">${escapeHtml(dayInfo.dayNum)}</span>
+          <span class="text-2xs tabular-nums font-semibold mt-0.5 ${isSelected ? 'text-amber-200' : 'text-slate-400'}">${dayShifts.length} shift${dayShifts.length === 1 ? '' : 's'}</span>
+        `;
+        dayPillsContainer.appendChild(btn);
+      });
+    }
+  }
+
+  // 2. Render Session Navigation Chips for Active Day
+  if (sessionChipsContainer) {
+    sessionChipsContainer.innerHTML = "";
+
+    const activeDayInfo = getDayInfoFromDateStr(shiftSelectedDayDate);
+    if (sessionHeaderLabel) {
+      sessionHeaderLabel.textContent = `${activeDayInfo.fullName} Sessions:`;
+    }
+
+    const daySessions = sessions.filter((s) => s.date === shiftSelectedDayDate);
+    const dayShifts = currentShiftsDocs.filter((d) => getShiftDateStr(d.data()) === shiftSelectedDayDate);
+
+    // "All Sessions" Chip
+    const isAllSelected = shiftSelectedSessionId === "ALL";
+    const allBtn = document.createElement("button");
+    allBtn.type = "button";
+    allBtn.onclick = () => setAdminShiftSession("ALL");
+    allBtn.className = `px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer touch-manipulation active:scale-95 ${
+      isAllSelected
+        ? "bg-amber-800 text-white shadow-xs"
+        : "bg-white text-slate-700 hover:bg-amber-50 border border-slate-200"
+    }`;
+    allBtn.innerHTML = `
+      <span>All Sessions</span>
+      <span class="px-1.5 py-0.2 rounded-full text-2xs tabular-nums font-bold ${isAllSelected ? 'bg-amber-950/70 text-amber-200' : 'bg-slate-100 text-slate-600'}">
+        ${dayShifts.length}
+      </span>
+    `;
+    sessionChipsContainer.appendChild(allBtn);
+
+    // Individual Session Chips
+    daySessions.forEach((sess) => {
+      const isSelected = shiftSelectedSessionId === sess.id;
+      const sessShifts = dayShifts.filter((d) => d.data().sessionId === sess.id);
+      const sessCapacity = sessShifts.reduce((acc, d) => acc + (d.data().capacity || 1), 0);
+      const sessAssigned = sessShifts.reduce((acc, d) => acc + (d.data().assignedCount || 0), 0);
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.onclick = () => setAdminShiftSession(sess.id);
+      btn.className = `px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer touch-manipulation active:scale-95 ${
+        isSelected
+          ? "bg-amber-800 text-white shadow-xs"
+          : "bg-white text-slate-700 hover:bg-amber-50 border border-slate-200"
+      }`;
+      btn.innerHTML = `
+        <span>${escapeHtml(sess.name)}</span>
+        <span class="text-2xs font-mono font-normal opacity-75">${escapeHtml(sess.startTime || '')}&ndash;${escapeHtml(sess.endTime || '')}</span>
+        <span class="px-1.5 py-0.2 rounded-full text-2xs tabular-nums font-bold ${
+          isSelected
+            ? 'bg-amber-950/70 text-amber-200'
+            : 'bg-slate-100 text-slate-600'
+        }">
+          ${sessAssigned}/${sessCapacity}
+        </span>
+      `;
+      sessionChipsContainer.appendChild(btn);
+    });
+  }
+
+  // Update grouping buttons highlight
+  updateAdminShiftGroupingButtons();
+}
+
+// Backward-compatibility alias
+function renderShiftsSessionFilters() {
+  renderShiftsNavigation();
+}
+
+function setShiftsSessionFilter(sessionId) {
+  setAdminShiftSession(sessionId);
+}
+
 function renderShiftsPanel() {
-  const grid = document.getElementById("admin-shifts-grid");
-  if (!grid) return;
+  const container = document.getElementById("admin-shifts-grouped-container");
+  if (!container) return;
+
+  const uniqueDays = getUniqueFestivalDays();
+  if (!shiftSelectedDayDate && uniqueDays.length > 0) {
+    shiftSelectedDayDate = uniqueDays[0];
+  }
 
   let shifts = currentShiftsDocs.map((d) => ({ id: d.id, ...d.data() }));
 
-  if (shiftSessionFilter !== "ALL") {
-    shifts = shifts.filter((s) => s.sessionId === shiftSessionFilter);
+  // 1. Filter by Selected Day
+  if (shiftSelectedDayDate) {
+    shifts = shifts.filter((s) => getShiftDateStr(s) === shiftSelectedDayDate);
   }
 
+  // 2. Filter by Selected Session (if not ALL)
+  if (shiftSelectedSessionId !== "ALL") {
+    shifts = shifts.filter((s) => s.sessionId === shiftSelectedSessionId);
+  }
+
+  // Update Live Toolbar Metrics Summary
+  const metricsEl = document.getElementById("admin-shifts-metrics-summary");
+  const totalShifts = shifts.length;
+  const totalCapacity = shifts.reduce((acc, s) => acc + (s.capacity || 1), 0);
+  const totalAssigned = shifts.reduce((acc, s) => acc + (s.assignedCount || 0), 0);
+  const fillPercent = totalCapacity > 0 ? Math.round((totalAssigned / totalCapacity) * 100) : 0;
+  const openSpots = Math.max(0, totalCapacity - totalAssigned);
+
+  if (metricsEl) {
+    metricsEl.innerHTML = `
+      <span class="tabular-nums font-bold text-slate-800">${totalShifts} Shift${totalShifts === 1 ? '' : 's'}</span>
+      <span class="text-slate-300">&bull;</span>
+      <span class="tabular-nums text-slate-700 font-semibold">${totalAssigned} / ${totalCapacity} Filled (${fillPercent}%)</span>
+      <span class="text-slate-300">&bull;</span>
+      <span class="tabular-nums font-bold ${openSpots > 0 ? 'text-amber-800' : 'text-emerald-700'}">${openSpots} Open Spot${openSpots === 1 ? '' : 's'}</span>
+    `;
+  }
+
+  // If no shifts exist for the active filters
   if (shifts.length === 0) {
-    grid.innerHTML = `<div class="col-span-full p-8 text-center text-slate-400 italic text-xs bg-stone-50 rounded-xl border border-dashed border-slate-200">No shifts configured for this session. Click "Create New Shift" above to add one.</div>`;
+    container.innerHTML = `
+      <div class="p-8 text-center bg-white rounded-xl border border-dashed border-amber-200 space-y-3">
+        <svg class="w-10 h-10 mx-auto text-amber-700/60"><use href="#icon-clipboard" /></svg>
+        <p class="text-xs font-semibold text-slate-600">No shifts scheduled for the selected day and session.</p>
+        <button type="button" onclick="openCreateShiftModal()"
+          class="text-xs bg-amber-700 hover:bg-amber-800 text-white font-bold px-4 py-2 rounded-lg transition shadow-sm inline-flex items-center gap-1.5 cursor-pointer">
+          <svg class="w-3.5 h-3.5"><use href="#icon-plus" /></svg> Create New Shift
+        </button>
+      </div>
+    `;
     return;
   }
 
-  // Sort shifts chronologically by startTime
-  shifts.sort((a, b) => getTimestampMs(a.startTime) - getTimestampMs(b.startTime));
+  container.innerHTML = "";
 
-  grid.innerHTML = "";
-  shifts.forEach((shift) => {
-    const card = document.createElement("div");
-    card.className = "bg-white p-4 rounded-xl border border-amber-200 shadow-2xs flex flex-col justify-between space-y-3";
+  // 3. Group Shifts according to shiftGroupingMode ('area' vs 'time')
+  if (shiftGroupingMode === "area") {
+    // Group by Area/Category
+    const groups = new Map();
+    shifts.forEach((s) => {
+      const areaName = (s.categoryName || "General Area").trim();
+      if (!groups.has(areaName)) {
+        groups.set(areaName, []);
+      }
+      groups.get(areaName).push(s);
+    });
 
-    const sTime = formatTime(shift.startTime);
-    const eTime = formatTime(shift.endTime);
-    const sDate = formatDate(shift.startTime);
-    const capacity = shift.capacity || 1;
-    const assigned = shift.assignedCount || 0;
-    const isFull = assigned >= capacity;
+    // Sort Area names alphabetically
+    const sortedAreas = Array.from(groups.keys()).sort((a, b) => a.localeCompare(b));
 
-    const fillPercent = Math.min(100, Math.round((assigned / capacity) * 100));
+    sortedAreas.forEach((areaName) => {
+      const areaShifts = groups.get(areaName);
+      // Sort shifts inside area chronologically by startTime
+      areaShifts.sort((a, b) => getTimestampMs(a.startTime) - getTimestampMs(b.startTime));
 
-    // Find assigned volunteers from allRegistrationsDocs
-    const shiftRegs = allRegistrationsDocs.filter((d) => d.data().shiftId === shift.id);
+      const groupSection = document.createElement("div");
+      groupSection.className = "space-y-2.5 pt-1";
 
-    card.innerHTML = `
-      <div class="space-y-2">
-        <div class="flex items-start justify-between gap-2">
-          <div>
-            <h4 class="font-bold text-slate-800 text-sm leading-tight">${escapeHtml(shift.categoryName || 'Shift')}</h4>
-            <p class="text-2xs text-slate-500 font-mono mt-0.5">${sDate ? `${sDate} &bull; ` : ''}${sTime} &ndash; ${eTime}</p>
+      const areaCapacity = areaShifts.reduce((acc, s) => acc + (s.capacity || 1), 0);
+      const areaAssigned = areaShifts.reduce((acc, s) => acc + (s.assignedCount || 0), 0);
+
+      const safeId = `area-grid-${areaName.replace(/[^a-zA-Z0-9]/g, '')}`;
+
+      groupSection.innerHTML = `
+        <div class="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-amber-200">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-md bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+              <svg class="w-3.5 h-3.5"><use href="#icon-tag" /></svg>
+            </div>
+            <div class="flex items-baseline gap-2">
+              <h3 class="font-bold text-slate-800 text-sm leading-tight">${escapeHtml(areaName)}</h3>
+              <span class="text-2xs text-slate-500 font-medium">(${areaShifts.length} Shift${areaShifts.length === 1 ? '' : 's'})</span>
+            </div>
           </div>
-          <span class="px-2 py-0.5 rounded-full text-2xs font-bold tabular-nums shrink-0 ${isFull ? 'bg-emerald-100 text-emerald-900 border border-emerald-300' : 'bg-amber-100 text-amber-900 border border-amber-300'}">
-            ${assigned} / ${capacity} Filled
+          <span class="px-2.5 py-0.5 rounded-full text-2xs font-bold tabular-nums ${
+            areaAssigned >= areaCapacity
+              ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+              : 'bg-amber-100 text-amber-900 border border-amber-300'
+          }">
+            ${areaAssigned} / ${areaCapacity} Volunteers Filled
           </span>
         </div>
-
-        <!-- Progress Bar -->
-        <div class="w-full bg-stone-100 h-1.5 rounded-full overflow-hidden">
-          <div class="h-full ${isFull ? 'bg-emerald-600' : 'bg-amber-600'} transition-all" style="width: ${fillPercent}%"></div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" id="${safeId}">
         </div>
+      `;
 
-        <!-- Manager -->
-        <div class="text-2xs text-slate-600 flex items-center justify-between pt-1 border-t border-slate-100">
-          <span>Shift Manager:</span>
-          <span class="font-semibold text-slate-800">${escapeHtml(shift.managerName || 'Unassigned')}</span>
-        </div>
+      const gridEl = groupSection.querySelector(`#${safeId}`);
+      areaShifts.forEach((shift) => {
+        gridEl.appendChild(createAdminShiftCard(shift, "area"));
+      });
 
-        <!-- Assigned Volunteers preview -->
-        <div class="text-2xs text-slate-500 space-y-1">
-          <span class="font-bold text-slate-600">Volunteers (${shiftRegs.length}):</span>
-          <div class="flex flex-wrap gap-1">
-            ${shiftRegs.length > 0 ? shiftRegs.map((r) => {
-              const u = allUsersMap.get(r.data().userId);
-              const name = u?.fullName || u?.email || "Volunteer";
-              return `<span class="px-1.5 py-0.5 bg-stone-100 border border-slate-200 rounded text-2xs text-slate-700">${escapeHtml(name)}</span>`;
-            }).join("") : '<span class="italic text-slate-400">None assigned</span>'}
+      container.appendChild(groupSection);
+    });
+  } else {
+    // Group by Time Window
+    const groups = new Map();
+    shifts.forEach((s) => {
+      const sTime = formatTime(s.startTime);
+      const eTime = formatTime(s.endTime);
+      const timeKey = `${sTime} – ${eTime}`;
+      const startMs = getTimestampMs(s.startTime);
+      const endMs = getTimestampMs(s.endTime);
+
+      if (!groups.has(timeKey)) {
+        groups.set(timeKey, {
+          timeKey,
+          startMs,
+          endMs,
+          shifts: []
+        });
+      }
+      groups.get(timeKey).shifts.push(s);
+    });
+
+    const sortedTimeGroups = Array.from(groups.values()).sort((a, b) => {
+      if (a.startMs !== b.startMs) return a.startMs - b.startMs;
+      return a.endMs - b.endMs;
+    });
+
+    sortedTimeGroups.forEach((timeGroup) => {
+      const timeShifts = timeGroup.shifts;
+      // Sort shifts inside time window alphabetically by categoryName
+      timeShifts.sort((a, b) => (a.categoryName || "").localeCompare(b.categoryName || ""));
+
+      const groupSection = document.createElement("div");
+      groupSection.className = "space-y-2.5 pt-1";
+
+      const timeCapacity = timeShifts.reduce((acc, s) => acc + (s.capacity || 1), 0);
+      const timeAssigned = timeShifts.reduce((acc, s) => acc + (s.assignedCount || 0), 0);
+
+      const safeId = `time-grid-${timeGroup.timeKey.replace(/[^a-zA-Z0-9]/g, '')}`;
+
+      groupSection.innerHTML = `
+        <div class="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-amber-200">
+          <div class="flex items-center gap-2">
+            <div class="w-6 h-6 rounded-md bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+              <svg class="w-3.5 h-3.5"><use href="#icon-clock" /></svg>
+            </div>
+            <div class="flex items-baseline gap-2">
+              <h3 class="font-bold text-slate-800 text-sm leading-tight">${escapeHtml(timeGroup.timeKey)}</h3>
+              <span class="text-2xs text-slate-500 font-medium">(${timeShifts.length} Shift Area${timeShifts.length === 1 ? '' : 's'})</span>
+            </div>
           </div>
+          <span class="px-2.5 py-0.5 rounded-full text-2xs font-bold tabular-nums ${
+            timeAssigned >= timeCapacity
+              ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+              : 'bg-amber-100 text-amber-900 border border-amber-300'
+          }">
+            ${timeAssigned} / ${timeCapacity} Volunteers Filled
+          </span>
         </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" id="${safeId}">
+        </div>
+      `;
+
+      const gridEl = groupSection.querySelector(`#${safeId}`);
+      timeShifts.forEach((shift) => {
+        gridEl.appendChild(createAdminShiftCard(shift, "time"));
+      });
+
+      container.appendChild(groupSection);
+    });
+  }
+}
+
+function createAdminShiftCard(shift, currentGroupingMode) {
+  const card = document.createElement("div");
+  card.className = "bg-white p-4 rounded-xl border border-amber-200 shadow-2xs hover:shadow-xs transition flex flex-col justify-between space-y-3";
+
+  const sTime = formatTime(shift.startTime);
+  const eTime = formatTime(shift.endTime);
+  const sDate = formatDate(shift.startTime);
+  const capacity = shift.capacity || 1;
+  const assigned = shift.assignedCount || 0;
+  const isFull = assigned >= capacity;
+  const fillPercent = Math.min(100, Math.round((assigned / capacity) * 100));
+
+  const session = (currentFestivalConfig.sessions || []).find((s) => s.id === shift.sessionId);
+  const sessionName = session ? session.name : "";
+
+  // Title & Subtitle based on grouping
+  const title = currentGroupingMode === "area"
+    ? `${sTime} &ndash; ${eTime}`
+    : escapeHtml(shift.categoryName || 'Shift');
+
+  const subtitle = currentGroupingMode === "area"
+    ? [sessionName, sDate].filter(Boolean).join(" &bull; ")
+    : [sessionName, `${sTime} - ${eTime}`].filter(Boolean).join(" &bull; ");
+
+  // Find assigned volunteers from allRegistrationsDocs
+  const shiftRegs = allRegistrationsDocs.filter((d) => d.data().shiftId === shift.id);
+
+  let statusBadgeClass = "bg-amber-100 text-amber-900 border border-amber-300";
+  if (isFull) {
+    statusBadgeClass = "bg-emerald-100 text-emerald-900 border border-emerald-300";
+  } else if (assigned === 0) {
+    statusBadgeClass = "bg-rose-50 text-rose-800 border border-rose-200";
+  }
+
+  card.innerHTML = `
+    <div class="space-y-2">
+      <!-- Card Header -->
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0">
+          <h4 class="font-bold text-slate-800 text-sm leading-tight truncate">${title}</h4>
+          <p class="text-2xs text-slate-500 font-medium mt-0.5">${subtitle}</p>
+        </div>
+        <span class="px-2 py-0.5 rounded-full text-2xs font-bold tabular-nums shrink-0 ${statusBadgeClass}">
+          ${assigned} / ${capacity} Filled
+        </span>
       </div>
 
-      <!-- Action Buttons -->
-      <div class="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-1.5">
-        <button type="button" onclick="openAssignVolunteerModal('${shift.id}', null, '${escapeJs(shift.categoryName)} (${sTime} - ${eTime})')"
-          ${isFull ? 'disabled class="px-2.5 py-1.5 rounded-lg text-2xs font-semibold bg-stone-100 text-slate-400 border border-slate-200 cursor-not-allowed"' : 'class="px-2.5 py-1.5 rounded-lg text-2xs font-bold bg-amber-700 hover:bg-amber-800 text-white shadow-2xs transition min-h-[36px]"'}>
-          + Assign Volunteer
-        </button>
-        <div class="flex items-center gap-1">
-          <button type="button" onclick="openEditShiftModal('${shift.id}')"
-            class="px-2 py-1.5 rounded-lg text-2xs font-semibold bg-white hover:bg-stone-100 text-slate-700 border border-slate-300 min-h-[36px]">
-            Edit
-          </button>
+      <!-- Progress Bar -->
+      <div class="w-full bg-stone-100 h-1.5 rounded-full overflow-hidden">
+        <div class="h-full ${isFull ? 'bg-emerald-600' : assigned === 0 ? 'bg-rose-400' : 'bg-amber-600'} transition-all duration-300" style="width: ${fillPercent}%"></div>
+      </div>
+
+      <!-- Shift Manager -->
+      <div class="text-2xs text-slate-600 flex items-center justify-between pt-1 border-t border-slate-100">
+        <span class="text-slate-500">Manager:</span>
+        <span class="font-semibold text-slate-800 truncate">${escapeHtml(shift.managerName || 'Unassigned')}</span>
+      </div>
+
+      <!-- Volunteers Preview Chips -->
+      <div class="text-2xs text-slate-500 space-y-1">
+        <div class="flex items-center justify-between">
+          <span class="font-bold text-slate-600">Assigned Volunteers (${shiftRegs.length}):</span>
+          ${shiftRegs.length > 0 ? `<button type="button" onclick="openShiftRosterModal('${shift.id}')" class="text-amber-800 hover:text-amber-950 font-bold hover:underline cursor-pointer">View Roster</button>` : ''}
+        </div>
+        <div class="flex flex-wrap gap-1">
+          ${shiftRegs.length > 0 ? shiftRegs.slice(0, 4).map((r) => {
+            const u = allUsersMap.get(r.data().userId);
+            const name = u?.fullName || u?.email || "Volunteer";
+            return `<span class="px-1.5 py-0.5 bg-stone-100 border border-slate-200 rounded text-2xs text-slate-700 truncate max-w-[120px]">${escapeHtml(name)}</span>`;
+          }).join("") + (shiftRegs.length > 4 ? `<span class="px-1.5 py-0.5 bg-amber-50 text-amber-800 border border-amber-200 rounded text-2xs font-bold">+${shiftRegs.length - 4} more</span>` : '') : '<span class="italic text-slate-400">None assigned</span>'}
         </div>
       </div>
-    `;
-    grid.appendChild(card);
-  });
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="pt-2 border-t border-slate-100 flex flex-wrap items-center justify-between gap-1.5">
+      <button type="button" onclick="openShiftRosterModal('${shift.id}')"
+        class="px-2.5 py-1.5 rounded-lg text-2xs font-bold bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300 transition min-h-[36px] flex items-center gap-1 cursor-pointer">
+        <svg class="w-3.5 h-3.5"><use href="#icon-users" /></svg>
+        <span>Review Roster</span>
+      </button>
+
+      <div class="flex items-center gap-1">
+        <button type="button" onclick="openAssignVolunteerModal('${shift.id}', null, '${escapeJs(shift.categoryName)} (${sTime} - ${eTime})')"
+          ${isFull ? 'disabled class="px-2 py-1.5 rounded-lg text-2xs font-semibold bg-stone-100 text-slate-400 border border-slate-200 cursor-not-allowed min-h-[36px]"' : 'class="px-2 py-1.5 rounded-lg text-2xs font-bold bg-amber-700 hover:bg-amber-800 text-white shadow-2xs transition min-h-[36px] cursor-pointer"'}
+          title="Assign a volunteer to this shift">
+          + Assign
+        </button>
+        <button type="button" onclick="openEditShiftModal('${shift.id}')"
+          class="px-2 py-1.5 rounded-lg text-2xs font-semibold bg-white hover:bg-stone-100 text-slate-700 border border-slate-300 min-h-[36px] cursor-pointer"
+          title="Edit shift details">
+          Edit
+        </button>
+        <button type="button" onclick="handleDeleteShift('${shift.id}', '${escapeJs(shift.categoryName)}')"
+          class="px-2 py-1.5 rounded-lg text-2xs font-semibold text-rose-700 hover:bg-rose-50 border border-rose-300 min-h-[36px] cursor-pointer"
+          title="Delete shift">
+          <svg class="w-3.5 h-3.5"><use href="#icon-trash" /></svg>
+        </button>
+      </div>
+    </div>
+  `;
+
+  return card;
+}
+
+// ============================================================================
+// MODAL: REVIEW SHIFT ROSTER & ALLOCATIONS
+// ============================================================================
+function openShiftRosterModal(shiftId) {
+  activeRosterShiftId = shiftId;
+  const modal = document.getElementById("modal-shift-roster");
+  if (!modal) return;
+
+  renderRosterModalContent(shiftId);
+  modal.classList.remove("hidden");
+}
+
+function closeShiftRosterModal() {
+  activeRosterShiftId = null;
+  const modal = document.getElementById("modal-shift-roster");
+  if (modal) modal.classList.add("hidden");
+}
+
+function renderRosterModalContent(shiftId) {
+  const shiftDoc = currentShiftsDocs.find((d) => d.id === shiftId);
+  if (!shiftDoc) {
+    closeShiftRosterModal();
+    return;
+  }
+  const shift = shiftDoc.data();
+
+  const titleEl = document.getElementById("roster-modal-title");
+  const subtitleEl = document.getElementById("roster-modal-subtitle");
+  const mgrNameEl = document.getElementById("roster-modal-manager-name");
+  const capBadgeEl = document.getElementById("roster-modal-capacity-badge");
+  const progressBarEl = document.getElementById("roster-modal-progress-bar");
+  const volCountEl = document.getElementById("roster-modal-volunteers-count");
+  const listEl = document.getElementById("roster-modal-volunteers-list");
+  const btnEditShift = document.getElementById("roster-modal-btn-edit-shift");
+  const btnAssignVol = document.getElementById("roster-modal-btn-assign-vol");
+  const alertEl = document.getElementById("roster-modal-alert");
+
+  if (alertEl) alertEl.classList.add("hidden");
+
+  const sTime = formatTime(shift.startTime);
+  const eTime = formatTime(shift.endTime);
+  const sDate = formatDate(shift.startTime);
+  const session = (currentFestivalConfig.sessions || []).find((s) => s.id === shift.sessionId);
+  const capacity = shift.capacity || 1;
+
+  if (titleEl) {
+    titleEl.textContent = `${shift.categoryName || 'Shift'} Roster`;
+  }
+  if (subtitleEl) {
+    subtitleEl.textContent = `${session ? `${session.name} • ` : ''}${sDate} • ${sTime} – ${eTime}`;
+  }
+  if (mgrNameEl) {
+    mgrNameEl.textContent = shift.managerName || "Unassigned (No Manager)";
+  }
+
+  // Find all confirmed registrations for this shift
+  const shiftRegs = allRegistrationsDocs.filter((d) => d.data().shiftId === shiftId);
+  const assigned = shiftRegs.length;
+  const fillPercent = Math.min(100, Math.round((assigned / capacity) * 100));
+  const isFull = assigned >= capacity;
+
+  if (capBadgeEl) {
+    capBadgeEl.textContent = `${assigned} / ${capacity} Filled (${Math.max(0, capacity - assigned)} open)`;
+    capBadgeEl.className = `px-2 py-0.5 rounded-full text-2xs font-bold tabular-nums ${
+      isFull
+        ? 'bg-emerald-100 text-emerald-900 border border-emerald-300'
+        : 'bg-amber-100 text-amber-900 border border-amber-300'
+    }`;
+  }
+
+  if (progressBarEl) {
+    progressBarEl.style.width = `${fillPercent}%`;
+    progressBarEl.className = `h-full ${isFull ? 'bg-emerald-600' : 'bg-amber-600'} transition-all duration-300`;
+  }
+
+  if (volCountEl) {
+    volCountEl.textContent = `Assigned Volunteers (${assigned} of ${capacity})`;
+  }
+
+  if (btnEditShift) {
+    btnEditShift.onclick = () => {
+      closeShiftRosterModal();
+      openEditShiftModal(shiftId);
+    };
+  }
+
+  if (btnAssignVol) {
+    btnAssignVol.onclick = () => {
+      openAssignVolunteerModal(shiftId, null, `${shift.categoryName || 'Shift'} (${sTime} - ${eTime})`);
+    };
+  }
+
+  if (listEl) {
+    listEl.innerHTML = "";
+
+    // 1. Render Assigned Volunteers
+    if (shiftRegs.length > 0) {
+      shiftRegs.forEach((r) => {
+        const regData = r.data();
+        const u = allUsersMap.get(regData.userId) || {};
+        const userName = u.fullName || u.email || "Volunteer";
+        const userEmail = u.email || "";
+        const userPhone = u.phoneNumber || "";
+        const userRole = u.role || "volunteer";
+        const groupName = u.groupId ? (allGroupsMap.get(u.groupId)?.name || u.groupOrClub) : u.groupOrClub;
+
+        const row = document.createElement("div");
+        row.className = "p-3 hover:bg-stone-50 transition rounded-lg flex flex-wrap items-center justify-between gap-3 text-xs";
+
+        row.innerHTML = `
+          <div class="flex items-start gap-2.5 min-w-0">
+            <button type="button" onclick="openAdminEditUserModal('${regData.userId}')"
+              title="Click to view & edit volunteer profile"
+              class="group/roster flex items-start gap-2.5 text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-amber-500 rounded-lg p-1 -m-1 hover:bg-amber-100/60 transition min-w-0">
+              <div class="w-8 h-8 rounded-full bg-amber-100 text-amber-900 font-bold flex items-center justify-center text-xs shrink-0 border border-amber-200 group-hover/roster:ring-2 group-hover/roster:ring-amber-500 transition">
+                ${escapeHtml(userName.charAt(0).toUpperCase())}
+              </div>
+              <div class="min-w-0">
+                <div class="flex items-center gap-1.5 flex-wrap">
+                  <span class="font-bold text-slate-800 group-hover/roster:text-amber-900 group-hover/roster:underline flex items-center gap-1">
+                    <span>${escapeHtml(userName)}</span>
+                    <svg class="w-3 h-3 text-slate-400 group-hover/roster:text-amber-700 opacity-0 group-hover/roster:opacity-100 transition shrink-0"><use href="#icon-edit" /></svg>
+                  </span>
+                  <span class="px-1.5 py-0.2 rounded-full text-2xs font-bold uppercase tracking-wider ${
+                    userRole === 'admin' ? 'bg-purple-100 text-purple-900' :
+                    userRole === 'manager' ? 'bg-blue-100 text-blue-900' :
+                    'bg-stone-100 text-slate-700'
+                  }">${escapeHtml(userRole)}</span>
+                  ${groupName ? `<span class="px-1.5 py-0.2 rounded-full text-2xs font-semibold bg-amber-50 text-amber-900 border border-amber-200 truncate max-w-[140px]">${escapeHtml(groupName)}</span>` : ''}
+                </div>
+                <div class="text-2xs text-slate-500 font-mono mt-0.5 flex flex-wrap items-center gap-2" onclick="event.stopPropagation()">
+                  ${userEmail ? `<a href="mailto:${escapeHtml(userEmail)}" class="text-slate-600 hover:underline flex items-center gap-1"><svg class="w-3 h-3"><use href="#icon-mail"/></svg>${escapeHtml(userEmail)}</a>` : ''}
+                  ${userPhone ? `<a href="tel:${escapeHtml(userPhone)}" class="text-slate-600 hover:underline flex items-center gap-1"><svg class="w-3 h-3"><use href="#icon-phone"/></svg>${escapeHtml(userPhone)}</a>` : ''}
+                </div>
+                ${regData.registeredAt ? `<div class="text-2xs text-slate-400 mt-0.5">Registered: ${formatTimestamp(regData.registeredAt)}</div>` : ''}
+              </div>
+            </button>
+          </div>
+          <button type="button" onclick="handleAdminUnassignVolunteer('${shiftId}', '${regData.userId}', '${escapeJs(userName)}')"
+            class="px-2.5 py-1.5 rounded-lg text-2xs font-bold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition flex items-center gap-1 shrink-0 cursor-pointer"
+            title="Remove volunteer from this shift">
+            <svg class="w-3.5 h-3.5"><use href="#icon-x" /></svg>
+            <span>Remove</span>
+          </button>
+        `;
+        listEl.appendChild(row);
+      });
+    }
+
+    // 2. Render Unfilled Open Spots
+    const openSpotsCount = Math.max(0, capacity - assigned);
+    if (openSpotsCount > 0) {
+      for (let i = assigned + 1; i <= capacity; i++) {
+        const openRow = document.createElement("div");
+        openRow.className = "p-3 bg-stone-50/60 border border-dashed border-amber-200/80 rounded-lg flex items-center justify-between gap-3 text-xs";
+        openRow.innerHTML = `
+          <div class="flex items-center gap-2 text-slate-500">
+            <div class="w-8 h-8 rounded-full border border-dashed border-slate-300 text-slate-400 font-mono flex items-center justify-center text-xs shrink-0">
+              #${i}
+            </div>
+            <div>
+              <span class="font-bold text-slate-600">Spot ${i} of ${capacity}: Open</span>
+              <p class="text-2xs text-slate-400">Awaiting volunteer registration or admin assignment.</p>
+            </div>
+          </div>
+          <button type="button" onclick="openAssignVolunteerModal('${shiftId}', null, '${escapeJs(shift.categoryName)} (${sTime} - ${eTime})')"
+            class="px-2.5 py-1.5 rounded-lg text-2xs font-bold bg-amber-700 hover:bg-amber-800 text-white transition shadow-2xs flex items-center gap-1 shrink-0 cursor-pointer">
+            <svg class="w-3.5 h-3.5"><use href="#icon-user-plus" /></svg>
+            <span>Fill Spot</span>
+          </button>
+        `;
+        listEl.appendChild(openRow);
+      }
+    }
+  }
+}
+
+async function handleAdminUnassignVolunteer(shiftId, targetUserId, volunteerName) {
+  if (!confirm(`Are you sure you want to remove "${volunteerName}" from this shift?\n\nTheir registration will be cancelled, their reserved spot reopened, and a cancellation notice will be dispatched.`)) {
+    return;
+  }
+
+  const alertEl = document.getElementById("roster-modal-alert");
+  try {
+    const fn = functions.httpsCallable("cancelShift");
+    await fn({ shiftId, targetUserId });
+    if (alertEl) {
+      showModalAlert(alertEl, `Successfully removed "${volunteerName}" from this shift.`, true);
+    }
+    renderRosterModalContent(shiftId);
+  } catch (err) {
+    if (alertEl) {
+      showModalAlert(alertEl, `Failed to remove volunteer: ${err.message}`, false);
+    } else {
+      alert(`Failed to remove volunteer: ${err.message}`);
+    }
+  }
+}
+
+async function handleDeleteShift(shiftId, categoryName) {
+  const shiftRegs = allRegistrationsDocs.filter((d) => d.data().shiftId === shiftId);
+  if (shiftRegs.length > 0) {
+    if (!confirm(`WARNING: This shift has ${shiftRegs.length} assigned volunteer(s).\n\nDeleting this shift will release those registrations. Are you sure you want to delete "${categoryName}"?`)) {
+      return;
+    }
+  } else {
+    if (!confirm(`Are you sure you want to delete the shift "${categoryName}"?`)) {
+      return;
+    }
+  }
+
+  try {
+    await db.collection("shifts").doc(shiftId).delete();
+    if (activeRosterShiftId === shiftId) {
+      closeShiftRosterModal();
+    }
+  } catch (err) {
+    alert(`Failed to delete shift: ${err.message}`);
+  }
 }
 
 // ============================================================================
@@ -3013,6 +3946,10 @@ window.handleDeleteGroupSubmit = handleDeleteGroupSubmit;
 window.openSetUserGroupModal = openSetUserGroupModal;
 window.closeSetUserGroupModal = closeSetUserGroupModal;
 window.handleSetUserGroupSubmit = handleSetUserGroupSubmit;
+window.openAdminEditUserModal = openAdminEditUserModal;
+window.closeAdminEditUserModal = closeAdminEditUserModal;
+window.handleAdminEditUserGroupSelect = handleAdminEditUserGroupSelect;
+window.handleAdminEditUserSubmit = handleAdminEditUserSubmit;
 window.openToggleDisableModal = openToggleDisableModal;
 window.closeToggleDisableModal = closeToggleDisableModal;
 window.handleToggleDisableSubmit = handleToggleDisableSubmit;
@@ -3021,6 +3958,13 @@ window.closeDeleteBlockModal = closeDeleteBlockModal;
 window.handleDeleteBlockSubmit = handleDeleteBlockSubmit;
 window.handleUnblockEmail = handleUnblockEmail;
 window.setShiftsSessionFilter = setShiftsSessionFilter;
+window.setAdminShiftDay = setAdminShiftDay;
+window.setAdminShiftSession = setAdminShiftSession;
+window.setAdminShiftGroupingMode = setAdminShiftGroupingMode;
+window.openShiftRosterModal = openShiftRosterModal;
+window.closeShiftRosterModal = closeShiftRosterModal;
+window.handleAdminUnassignVolunteer = handleAdminUnassignVolunteer;
+window.handleDeleteShift = handleDeleteShift;
 window.openAssignVolunteerModal = openAssignVolunteerModal;
 window.closeAssignVolunteerModal = closeAssignVolunteerModal;
 window.handleAssignVolunteerSubmit = handleAssignVolunteerSubmit;

@@ -695,7 +695,7 @@ Creates a managed volunteer group.
 | `includeInGroupIncentives` | `boolean` | No | Group Incentives eligibility. Defaults to `true`. |
 
 ```json
-{ "success": true, "groupId": "Xy12AbC", "name": "CAMRA North Branch" }
+{ "success": true, "groupId": "Xy12AbC", "name": "Venlo Round Table" }
 ```
 
 **Errors**: `invalid-argument` (bad name / non-boolean flag), `already-exists` (a group with the same `nameKey` exists; checked inside a transaction).
@@ -716,7 +716,7 @@ Renames a group and/or toggles its Group Incentives eligibility. Renames propaga
 {
   "success": true,
   "groupId": "Xy12AbC",
-  "name": "CAMRA North",
+  "name": "Venlo Round Table",
   "includeInGroupIncentives": true,
   "updatedUsers": 6
 }
@@ -734,7 +734,7 @@ Moves all members of the source group into the target group, then deletes the so
 | `targetGroupId` | `string` | **Yes** | Group that receives the members. Must differ from source. |
 
 ```json
-{ "success": true, "targetGroupId": "Xy12AbC", "targetName": "CAMRA North", "movedUsers": 3 }
+{ "success": true, "targetGroupId": "Xy12AbC", "targetName": "Venlo Round Table", "movedUsers": 3 }
 ```
 
 **Errors**: `invalid-argument` (missing IDs / same group), `not-found` (either group missing).
@@ -763,7 +763,7 @@ Assigns an individual user to a group, or clears their group.
 | `groupId` | `string` \| `null` | **Yes** | Group ID to assign, or `null` for "No group". |
 
 ```json
-{ "success": true, "userId": "user456", "groupId": "Xy12AbC", "groupName": "CAMRA North" }
+{ "success": true, "userId": "user456", "groupId": "Xy12AbC", "groupName": "Venlo Round Table" }
 ```
 
 **Errors**: `invalid-argument` (missing `targetUserId`, or `groupId` neither a non-empty string nor `null`), `not-found` (user or group missing).
@@ -911,7 +911,7 @@ Global volunteer incentives, milestone rewards, and gamification configuration d
 
 #### Gamified Overdrive Architecture & Policies
 
-The client platform features an uncluttered 3-tab modal (`#incentive-popover`) accessible via the floating Pint Glass FAB:
+The client platform features an uncluttered 3-tab modal (`#incentive-popover`) accessible via the floating Pint Glass tracker button:
 - **Tab 1: 👤 My Pint**: Displays personal volunteer hours, liquid fill visualizer, a Duolingo-style serpentine milestone path (`#popover-milestones-path`), and 6 dynamically evaluated achievement badges (`First Pour`, `Double Duty`, `Night Owl`, `Crew Mate`, `Pint Pioneer`, `Iron Brewer`).
 - **Tab 2: 🪵 Group Pot**: Stylized wooden cask meter displaying the volunteer's organization's share of the post-festival charity/donation group pot and internal team contributor standings.
 - **Tab 3: 🏆 Leaderboard**: Segmented competition hub with sub-view toggle:
@@ -974,7 +974,7 @@ User profile document created upon initial registration or OAuth sign-in, manage
 | `phoneNumber` | `string` | **Mandatory** contact phone number required on registration and onboarding. Normalized to international E.164 format (e.g. `+447123456789`). |
 | `whatsappNotifications` | `boolean` | Volunteer notification opt-out preference for WhatsApp alerts and broadcasts. Defaults to `true`. Configurable in "My Profile" modal. |
 | `emailNotifications` | `boolean` | Volunteer notification opt-out preference for email updates and announcements. Defaults to `true`. Configurable in "My Profile" modal. |
-| `groupOrClub` | `string` | Optional group/club name (e.g. CAMRA branch, brewery team). Chosen at signup / in "My Profile" from the `/groups` dropdown or typed via "Other…". Normalised server-side to the canonical group name by [`onUserGroupWrite`](#2-onusergroupwrite). Visible to other volunteers only when `profileVisibility` is `"public"`. |
+| `groupOrClub` | `string` | Optional group/club name (e.g. your Round Table, CAMRA branch, or community group). Chosen at signup / in "My Profile" from the `/groups` dropdown or typed via "Other…". Normalised server-side to the canonical group name by [`onUserGroupWrite`](#2-onusergroupwrite). Visible to other volunteers only when `profileVisibility` is `"public"`. |
 | `groupId` | `string` \| `null` | **Server-written only.** ID of the linked `/groups` document, set by `onUserGroupWrite` or admin group callables. Clients cannot create or modify this field (security rules). Missing on legacy profiles until their next write (lazy migration); the Admin Panel falls back to matching `groupOrClub` by normalised name. |
 | `profileVisibility` | `string` | Profile privacy setting: `"public"` (default) or `"private"`. When `"public"`, user name and group/club are displayed on volunteer shift rosters. When `"private"`, other volunteers see only an anonymous placeholder space. Shift managers and admins can always view full roster details. |
 | `photoURL` | `string` | Optional custom profile avatar stored as a client-compressed (128x128 JPEG) Data URL. When `profileVisibility` is `"public"`, displayed in shift rosters to volunteers. When `"private"`, masked with an anonymous lock placeholder to volunteer viewers. Shift managers and admins always see avatars. |
@@ -1036,7 +1036,7 @@ Collection storing inbound WhatsApp inquiries and replies sent by volunteers to 
 
 ### 8. `/groups/{groupId}`
 
-Managed volunteer groups (clubs, CAMRA branches, brewery teams). Listed in the signup and "My Profile" group dropdowns and used for Admin Panel filtering, the Golden Cask League leaderboard, and Group Pot percentage allocation.
+Managed volunteer groups (Round Tables, CAMRA branches, community clubs). Listed in the signup and "My Profile" group dropdowns and used for Admin Panel filtering, the Golden Cask League leaderboard, and Group Pot percentage allocation.
 
 - **Document ID**: Auto-generated Firestore document ID.
 - **Read Access**: **Public** (`allow read: if true;`) so the signup screen can list groups before authentication.
